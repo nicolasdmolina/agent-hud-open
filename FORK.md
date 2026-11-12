@@ -15,7 +15,7 @@ Remotes: `origin` is this fork, `upstream` is the author's repo with pushing dis
 
 1. Fetch both remotes: `git fetch upstream && git fetch origin`.
 2. Fast-forward the fork's `main` to upstream: `git push origin upstream/main:main`. This must be a fast-forward. If it is refused, someone committed to `main`; move that commit to `fork` first.
-3. Bring `fork` up to date by merging, not rebasing: `git checkout fork && git merge origin/main`, fix any conflicts, then `git push origin fork`. Merging keeps `fork` history stable, so open ticket branches built on it stay valid and no force push to a shared branch is needed.
+3. Bring `fork` up to date by merging, not rebasing: `git checkout fork && git merge --ff-only origin/fork && git merge origin/main`, fix any conflicts, then `git push origin fork`. Merging keeps `fork` history stable, so open ticket branches built on it stay valid and no force push to a shared branch is needed.
 4. Run the checks:
 
    ```sh
