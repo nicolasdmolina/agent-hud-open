@@ -123,4 +123,10 @@ export interface AppSettings {
   claudeMessages?: boolean;
   /** Messages may go into DeepSeek Harness sessions through Agent HUD's plugin; on unless turned off. */
   deepseekMessages?: boolean;
+  /** Play a sound when an agent needs the user or finishes a turn; off unless turned on. */
+  sound?: boolean;
+  /** The system sound, by name, for an agent that needs the user. */
+  soundNeedsYou?: string;
+  /** The system sound, by name, for a finished turn. */
+  soundFinished?: string;
 }

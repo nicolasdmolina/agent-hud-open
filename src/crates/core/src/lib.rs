@@ -43,6 +43,7 @@ mod session_usage;
 mod sessions;
 mod settings;
 mod snapshot;
+mod sound_alerts;
 mod source_batches;
 mod source_db;
 mod statistics;
@@ -89,6 +90,7 @@ pub struct AgentHudCore {
     requests: requests::Requests,
     hook_events: hook_events::HookEvidence,
     island_events: island_events::Tracker,
+    sound_alerts: sound_alerts::Tracker,
     source_notice: Option<String>,
     provider_roots: Vec<(PathBuf, &'static str)>,
     settings_path: PathBuf,
@@ -169,7 +171,7 @@ impl AgentHudCore {
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or(Value::Null);
-        let mut settings = json!({"quotaDisplay":"consumed","codexHomes":[],"claudeHomes":[],"antigravityCliSettings":[],"appearance":"system","appearanceFollowsScreen":false,"language":"system","clientHooks":false,"optInApprovals":[],"readCopilotQuota":false,"approvalWaitMinutes":10,"launchAtLogin":true,"animations":true,"hudVisible":true,"showMenuBarIcon":true,"hudTools":false,"claudeAnswers":true,"agentMessages":false,"agentMessagesAsUser":false,"agentMessagesLimit":10,"claudeMessages":true,"deepseekMessages":true,"relayReading":[],"customPrices":{},"relayMultipliers":{},"localKinds":{}});
+        let mut settings = json!({"quotaDisplay":"consumed","codexHomes":[],"claudeHomes":[],"antigravityCliSettings":[],"appearance":"system","appearanceFollowsScreen":false,"language":"system","clientHooks":false,"optInApprovals":[],"readCopilotQuota":false,"approvalWaitMinutes":10,"launchAtLogin":true,"animations":true,"hudVisible":true,"showMenuBarIcon":true,"hudTools":false,"claudeAnswers":true,"agentMessages":false,"agentMessagesAsUser":false,"agentMessagesLimit":10,"claudeMessages":true,"deepseekMessages":true,"relayReading":[],"customPrices":{},"relayMultipliers":{},"localKinds":{},"sound":false,"soundNeedsYou":sound_alerts::NEEDS_YOU_SOUND,"soundFinished":sound_alerts::FINISHED_SOUND});
         if let Some(values) = stored["settings"].as_object() {
             for (key, value) in values {
                 if settings.get(key).is_some() {
@@ -210,6 +212,7 @@ impl AgentHudCore {
             requests,
             hook_events: hook_events::HookEvidence::default(),
             island_events: island_events::Tracker::new(),
+            sound_alerts: sound_alerts::Tracker::new(),
             source_notice: None,
             provider_roots: roots
                 .into_iter()

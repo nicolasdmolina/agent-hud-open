@@ -119,3 +119,13 @@ export interface IslandEvent {
   /** Where in the agent the user allows its hooks. */
   step?: string | null;
 }
+/** A moment Core decided deserves a sound; the host plays `sound` once per `id`.
+ * Only while the Sound setting is on. */
+export interface SoundAlert {
+  id: string;
+  kind: "needs-you" | "finished";
+  source: string;
+  sessionId: string;
+  sound: string;
+  at: string;
+}

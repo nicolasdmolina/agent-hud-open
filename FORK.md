@@ -8,6 +8,7 @@ Add one row for every difference the fork introduces.
 
 | Area | Change | Files | Reason | Ticket |
 | ---- | ------ | ----- | ------ | ------ |
+| Sound | Core decides which moments deserve a sound: `needs-you` when a session starts waiting on the user (a request, a question, or a wait its hooks report), `finished` when a turn ends; steps make none, and each alert has an id played once. Snapshot field `soundAlerts`; settings `sound` (off), `soundNeedsYou` (`Glass`), `soundFinished` (`Hero`). No playback yet. | `src/crates/core/src/sound_alerts.rs`, `core/src/settings.rs`, `core/src/lib.rs`, `core/src/snapshot.rs`, `src/packages/protocol/src/{settings,requests,snapshot}.ts` | Upstream removed its sound on 2026-10-21 (parity c09 #40b); Nicky wants to hear when an agent needs him or finishes without watching the panel. | 05 |
 
 ## Updating from upstream
 
