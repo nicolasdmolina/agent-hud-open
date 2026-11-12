@@ -107,11 +107,11 @@ impl NativePlatform {
             .map_err(|error| error.to_string())
     }
     /// The lock every Agent HUD that owns client hooks claims, whatever its
-    /// data directory: agent-hud-native-open's `~/Library/Caches/app.agenthud/instance.lock`
-    /// on macOS, so this app and the Swift app never run side by side.
+    /// data directory. The fork's is in its own caches folder, not the
+    /// official app's `~/Library/Caches/app.agenthud` (FORK.md).
     pub fn shared_instance_lock(&self) -> PathBuf {
         os::caches_dir(&self.home)
-            .join("app.agenthud")
+            .join(os::DATA_FOLDER)
             .join("instance.lock")
     }
     /// The lock that keeps two copies from collecting into one data directory.

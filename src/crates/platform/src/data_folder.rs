@@ -13,13 +13,15 @@ use std::{
 
 /// The folder's name on each system: the app's identifier there, as the
 /// desktop app's Tauri configuration gives it. A build uses its own system's
-/// name; the test below checks all three on every system.
+/// name; the test below checks all three on every system. The fork's
+/// identifier (`tauri.fork.conf.json`) on all three, so it never shares the
+/// official app's folder (FORK.md).
 #[allow(dead_code)]
-pub(crate) const MAC: &str = "app.agenthud.mac";
+pub(crate) const MAC: &str = "com.nickymolina.agenthud";
 #[allow(dead_code)]
-pub(crate) const WINDOWS: &str = "app.agenthud.windows";
+pub(crate) const WINDOWS: &str = MAC;
 #[allow(dead_code)]
-pub(crate) const LINUX: &str = "app.agenthud.linux";
+pub(crate) const LINUX: &str = MAC;
 /// The name earlier builds used on every system.
 const EARLIER: &str = "app.agenthud.next";
 /// The file every collector locks in the folder it uses. Once it is in this
@@ -101,13 +103,11 @@ mod tests {
 
     #[test]
     fn each_name_is_the_apps_identifier_on_its_system() {
+        // The fork's overlay sets one identifier on every system (FORK.md).
         let tauri = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/desktop/src-tauri");
-        for (file, name) in [
-            ("tauri.conf.json", MAC),
-            ("tauri.windows.conf.json", WINDOWS),
-            ("tauri.linux.conf.json", LINUX),
-        ] {
-            let config: serde_json::Value = serde_json::from_str(&read(&tauri.join(file))).unwrap();
+        let file = "tauri.fork.conf.json";
+        let config: serde_json::Value = serde_json::from_str(&read(&tauri.join(file))).unwrap();
+        for name in [MAC, WINDOWS, LINUX] {
             assert_eq!(config["identifier"], name, "{file}");
         }
     }

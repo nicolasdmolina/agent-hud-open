@@ -6,7 +6,7 @@ import App from "@agent-hud/app";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <React.Suspense fallback={null}>
-      <App />
+      <App productName="Agent HUD Fork" />
     </React.Suspense>
   </React.StrictMode>,
 );

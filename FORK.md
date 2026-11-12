@@ -9,6 +9,14 @@ Add one row for every difference the fork introduces.
 | Area | Change | Files | Reason | Ticket |
 | ---- | ------ | ----- | ------ | ------ |
 | Hermes sessions | Each Hermes session shows "Hermes Agent", or "Hermes Agent · <profile>" for a named profile, in the Sessions list, the session page and search. Database readers can now name a session's client. The Hermes reader version goes from 2 to 3 so sessions already read are read again and pick up the label. | `src/crates/agents/src/transcript/records.rs`, `src/crates/agents/src/hermes/transcript.rs`, `src/crates/agents/src/naming/clients.rs`, `src/crates/core/src/source_db/scan.rs`, `src/crates/core/src/source_db.rs` | Profiles looked the same. Matches the Swift reference (`HermesSessions.swift:62-66`), so it is no difference from Swift. | 09 |
+| Identity | Name `Agent HUD Fork` and bundle id `com.nickymolina.agenthud`, set by an overlay passed at build time; the base config is untouched | `src/apps/desktop/src-tauri/tauri.fork.conf.json` | Never confused with the official app; its web view data and preferences live under the fork's id | 03 |
+| Identity | Settings and the menu bar item's tooltip say the fork's name | `src/apps/desktop/src/main.tsx`, `src/crates/host/src/tray.rs` | Tell the fork from the official app at a glance | 03 |
+| Data folder | Folder `com.nickymolina.agenthud` on every system, in place of `app.agenthud.mac`/`.windows`/`.linux`; the identifier test reads the overlay | `src/crates/platform/src/data_folder.rs` | Never reads or writes the official app's data. Not `AGENTHUD_DATA_DIR`: hook callbacks inherit the agent's environment and would dial the default folder | 03 |
+| Data folder | Cursor's turn log is read from the fork's folder | `src/crates/agents/src/cursor/mod.rs` | Follows the folder above | 03 |
+| Instance lock | Hook owners lock `~/Library/Caches/com.nickymolina.agenthud/instance.lock`, not `~/Library/Caches/app.agenthud/instance.lock`; parity rows c03 #83 and c09 #3 say so | `src/crates/platform/src/lib.rs`, `docs/parity/` | The fork and the official app never refuse or hand over to each other | 03 |
+| Naming | Processes started by bundle `com.nickymolina.agenthud` count as Agent HUD | `src/crates/agents/src/naming/apps.rs` | Sessions the fork starts are labeled as upstream labels its own | 03 |
+| Self-update | None, verified: the open build has no updater plugin or feed URL, and Settings → Updates says the build does not update itself. A merge that adds `tauri-plugin-updater` or a product extension's update check must be turned off here | — | Never fetch the author's feeds or replace the fork with the official release | 03 |
+| Install | `src/tooling/fork-install.sh` builds the bundle with the overlay and installs it to `/Applications/Agent HUD Fork.app`. `src/apps/installer` is upstream's release installer and is not used | `src/tooling/fork-install.sh` | One command for every later rebuild | 03 |
 
 ## Updating from upstream
 
@@ -29,5 +37,4 @@ Remotes: `origin` is this fork, `upstream` is the author's repo with pushing dis
    git diff --check
    ```
 
-5. Rebuild the app with the fork's build command. Placeholder: ticket 04 adds this command.
-6. Quit the running app, replace it in `/Applications` with the new build, and relaunch it.
+5. Rebuild and reinstall: `sh src/tooling/fork-install.sh`. It builds the bundle with the fork's overlay, quits the running fork, replaces `/Applications/Agent HUD Fork.app` and opens it (`--no-open` skips that). Set `CARGO_TARGET_DIR` first if you share a build folder.
