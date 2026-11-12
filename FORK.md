@@ -37,4 +37,4 @@ Remotes: `origin` is this fork, `upstream` is the author's repo with pushing dis
    git diff --check
    ```
 
-5. Rebuild and reinstall: `sh src/tooling/fork-install.sh`. It builds the bundle with the fork's overlay, quits the running fork, replaces `/Applications/Agent HUD Fork.app` and opens it (`--no-open` skips that). Set `CARGO_TARGET_DIR` first if you share a build folder.
+5. Rebuild and reinstall: `sh src/tooling/fork-install.sh`. It builds the bundle with the fork's overlay, quits the running fork, replaces `/Applications/Agent HUD Fork.app` and opens it (`--no-open` skips that). It always builds in this checkout's own `target/`: a build folder shared between worktrees can reuse another worktree's crates.
