@@ -98,6 +98,7 @@ pub(super) fn session(path: &Path) -> Option<Vec<Record>> {
             records.push(Record {
                 id: id.clone(),
                 title: title.clone(),
+                client: None,
                 title_fallback: None,
                 cwd: cwd.clone(),
                 model: routed(

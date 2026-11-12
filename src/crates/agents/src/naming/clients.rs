@@ -56,6 +56,11 @@ pub fn client_name(source: &str, client: Option<&str>) -> Option<String> {
             None | Some("Antigravity") => None,
             Some(other) => Some(other.into()),
         },
+        // The client is a profile's name; the default profile names none.
+        "hermes" => Some(match client {
+            Some(profile) => format!("Hermes Agent · {profile}"),
+            None => "Hermes Agent".into(),
+        }),
         _ => None,
     }
 }
@@ -128,6 +133,15 @@ mod tests {
         );
         assert_eq!(client_name("claude", None).as_deref(), Some("Claude Code"));
         assert_eq!(client_name("deepseek", None), None);
+    }
+
+    #[test]
+    fn hermes_sessions_are_named_by_their_profile() {
+        assert_eq!(
+            client_name("hermes", Some("coder")).as_deref(),
+            Some("Hermes Agent · coder")
+        );
+        assert_eq!(client_name("hermes", None).as_deref(), Some("Hermes Agent"));
     }
 
     #[test]

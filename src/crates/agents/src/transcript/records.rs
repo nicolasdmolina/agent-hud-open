@@ -8,6 +8,10 @@ pub struct Record {
     pub title: Option<String>,
     /// The client's own last resort, such as "Hermes · telegram".
     pub title_fallback: Option<String>,
+    /// The client the record names for its session, as the session's log
+    /// would (`naming::clients::client_name` shows it), such as a Hermes
+    /// profile; None when it names none.
+    pub client: Option<String>,
     pub cwd: Option<String>,
     pub model: String,
     pub key: String,

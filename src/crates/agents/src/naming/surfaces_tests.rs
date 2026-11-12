@@ -118,6 +118,25 @@ fn a_session_continued_elsewhere_keeps_where_it_began() {
 }
 
 #[test]
+fn a_hermes_profile_is_not_where_its_session_runs() {
+    let none = PromptStamps::default();
+    for profile in [None, Some("reports")] {
+        assert_eq!(
+            origins(resolve("hermes", &none, profile, &Reports::default())),
+            (Some("cli:others".into()), Some("cli:others".into()))
+        );
+        let reports = Reports {
+            hook: report("others:telegram", T),
+            ..Reports::default()
+        };
+        assert_eq!(
+            origins(resolve("hermes", &none, profile, &reports)),
+            (Some("cli:others".into()), Some("others:telegram".into()))
+        );
+    }
+}
+
+#[test]
 fn hooks_name_the_terminal_of_the_prompts_they_ran_for() {
     let prompts = stamps(stamp(T, "cli", None), stamp(T + 600_000, "cli", None));
     let reports = Reports {

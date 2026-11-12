@@ -882,3 +882,55 @@ fn a_session_opens_where_its_row_says_from_the_detail_too() {
         assert_eq!(detail["navigationTarget"], expected, "{source} detail");
     }
 }
+
+#[test]
+fn hermes_sessions_name_their_profile_in_the_list_and_on_their_page() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join(".hermes");
+    let now = Utc::now().timestamp();
+    for (folder, profile) in [
+        (home.clone(), None),
+        (home.join("profiles/reports"), Some("reports")),
+    ] {
+        fs::create_dir_all(&folder).unwrap(); // plain directory
+        let db = rusqlite::Connection::open(folder.join("state.db")).unwrap();
+        db.execute_batch(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, model TEXT, started_at REAL NOT NULL, input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, title TEXT, profile_name TEXT);",
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO sessions VALUES ('s1', 'cli', 'claude-test', ?1, 10, 3, 'Fix the build', ?2)",
+            rusqlite::params![now - 60, profile],
+        )
+        .unwrap();
+    }
+    let mut backend = AgentHudCore::new(vec![], temp.path().join("app"));
+    backend.provider_roots = vec![(home, "hermes")];
+    backend.request("refresh", json!({})).unwrap();
+    for _ in 0..10 {
+        if backend.reads.pending.is_empty() {
+            break;
+        }
+        backend.request("snapshot", json!({})).unwrap();
+    }
+    let items = backend.request("sessions", json!({"scope":"all"})).unwrap()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| (item["id"].to_string(), item["client"].to_string()))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        items,
+        [
+            (r#""hermes:reports:s1""#, r#""Hermes Agent · reports""#),
+            (r#""hermes:s1""#, r#""Hermes Agent""#),
+        ]
+        .map(|(id, client)| (id.to_owned(), client.to_owned()))
+        .into_iter()
+        .collect()
+    );
+    let detail = backend
+        .request("session_detail", json!({"id":"hermes:reports:s1"}))
+        .unwrap();
+    assert_eq!(detail["session"]["client"], "Hermes Agent · reports");
+}

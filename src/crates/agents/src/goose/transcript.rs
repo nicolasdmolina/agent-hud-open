@@ -206,6 +206,7 @@ fn record(
     let id = format!("goose:{raw}");
     Record {
         title: field(0).or_else(|| field(6)),
+        client: None,
         title_fallback: None,
         cwd: field(1),
         model: routed(model, field(4).as_deref()),

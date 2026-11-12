@@ -135,6 +135,7 @@ pub fn read(db: &Connection, cursor: &Value) -> rusqlite::Result<Page> {
             key: format!("{id}:store:{last}"),
             id,
             title: None,
+            client: None,
             title_fallback: None,
             cwd: sql_text(row, 11),
             model,

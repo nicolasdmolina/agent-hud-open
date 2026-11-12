@@ -181,6 +181,8 @@ pub fn resolve(
     client: Option<&str>,
     reports: &Reports,
 ) -> Origins {
+    // A Hermes client is the session's profile, not where it runs.
+    let client = client.filter(|_| agent != "hermes");
     // A log that marks no prompts and names no client (Devin's, which the
     // CLI and Devin Desktop share): its hooks name them, as they name a
     // session with no log.

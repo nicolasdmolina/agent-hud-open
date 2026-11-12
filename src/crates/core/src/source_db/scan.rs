@@ -144,6 +144,9 @@ impl AgentHudCore {
             if stamp.source == "antigravity" && log.client.is_none() {
                 log.client = agent_hud_agents::antigravity::transcript::client_from_path(path);
             }
+            if record.client.is_some() {
+                log.client = record.client.clone();
+            }
             if record.parent.is_some() {
                 log.live.parent_id = record.parent.clone();
                 log.live.is_subagent = true;
