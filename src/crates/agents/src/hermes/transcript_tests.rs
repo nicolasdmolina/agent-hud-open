@@ -172,3 +172,233 @@ fn a_pass_keeps_one_map_of_counts_and_rereads_a_session_that_grew_behind_the_wat
     assert_eq!(prints.len(), 249);
     assert!(!prints.contains_key("7"));
 }
+
+/// A far machine's key, as a mirror's writer stores it (made up).
+const KEY: &str = "aaeda597d860920c";
+
+/// Makes `db` a mirror: the `hud_mirror` table, with one row of these
+/// values, typed as given.
+fn mirror(db: &Connection, row: [rusqlite::types::Value; 4]) {
+    db.execute_batch(
+        "CREATE TABLE hud_mirror (schema INTEGER, machine TEXT, label TEXT, profile TEXT);",
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO hud_mirror VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params_from_iter(row),
+    )
+    .unwrap();
+}
+
+fn row(schema: i64, machine: &str, label: &str, profile: &str) -> [rusqlite::types::Value; 4] {
+    use rusqlite::types::Value::{Integer, Text};
+    [
+        Integer(schema),
+        Text(machine.into()),
+        Text(label.into()),
+        Text(profile.into()),
+    ]
+}
+
+/// What a record counts and is shown as, with its id taken out of its key.
+fn counted(record: &Record) -> String {
+    format!(
+        "{} {:?} {:?} {:?} {} {} {:?} {:?} {:?} {:?}",
+        record.key.replacen(&record.id, "<id>", 1),
+        record.title,
+        record.title_fallback,
+        record.cwd,
+        record.model,
+        record.at,
+        record.usage,
+        record.running,
+        record.updated,
+        record.archived,
+    )
+}
+
+#[test]
+fn a_mirror_names_far_sessions_and_counts_what_the_same_rows_count() {
+    let home = tempfile::tempdir().unwrap();
+    let plain_path = home.path().join("plain/state.db");
+    let plain = read(&state_db(&plain_path, None), &plain_path, &Value::Null).unwrap();
+    let path = home.path().join(format!("profiles/{KEY}-default/state.db"));
+    let db = state_db(&path, None);
+    mirror(&db, row(1, KEY, "Mac mini", "default"));
+    let far = read(&db, &path, &Value::Null).unwrap();
+
+    // The same database without the table reads as it always has.
+    let ids = |page: &Page| {
+        page.records
+            .iter()
+            .map(|r| r.id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&plain), ["hermes:s1"]);
+    assert!(plain.records.iter().all(|r| r.machine.is_none()));
+    // The mirror's sessions are far ones, named by the table's machine.
+    assert_eq!(ids(&far), [format!("hermes:{KEY}/default:s1")]);
+    for record in &far.records {
+        assert_eq!(record.machine.as_deref(), Some("Mac mini"));
+        assert_eq!(record.client, None);
+    }
+    // And they count exactly what the same rows count on this machine.
+    assert_eq!(
+        far.records.iter().map(counted).collect::<Vec<_>>(),
+        plain.records.iter().map(counted).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_mirror_takes_its_profile_from_its_table_and_never_its_folder() {
+    let home = tempfile::tempdir().unwrap();
+    // `profiles/work` is where this machine keeps its profile `work`.
+    for (n, (profile, id, client)) in [
+        ("default", format!("hermes:{KEY}/default:s1"), None),
+        (
+            "reports",
+            format!("hermes:{KEY}/reports:s1"),
+            Some("reports"),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let path = home.path().join(format!("{n}/profiles/work/state.db"));
+        let db = state_db(&path, None);
+        mirror(&db, row(1, KEY, "Mac mini", profile));
+        let page = read(&db, &path, &Value::Null).unwrap();
+        let records = page
+            .records
+            .iter()
+            .map(|r| (r.id.clone(), r.client.as_deref()))
+            .collect::<Vec<_>>();
+        assert_eq!(records, [(id, client)], "{profile}");
+    }
+}
+
+#[test]
+fn a_new_label_reads_every_session_again_and_nothing_else_does() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join(format!("profiles/{KEY}-default/state.db"));
+    let db = state_db(&path, None);
+    db.execute(
+        "INSERT INTO sessions (id, source, started_at, input_tokens) VALUES ('s2', 'telegram', 1760000100, 5)",
+        [],
+    )
+    .unwrap();
+    mirror(&db, row(1, KEY, "Mac mini", "default"));
+    let first = read(&db, &path, &Value::Null).unwrap();
+    let watermark = first.watermark.unwrap();
+    assert_eq!(first.records.len(), 2);
+    // Nothing changed: nothing is read again.
+    let again = read(&db, &path, &watermark).unwrap();
+    assert!(again.records.is_empty());
+
+    db.execute("UPDATE hud_mirror SET label='Studio'", [])
+        .unwrap();
+    let renamed = read(&db, &path, &watermark).unwrap();
+    assert_eq!(
+        renamed.records.iter().map(|r| &r.key).collect::<Vec<_>>(),
+        first.records.iter().map(|r| &r.key).collect::<Vec<_>>()
+    );
+    assert!(renamed
+        .records
+        .iter()
+        .all(|r| r.machine.as_deref() == Some("Studio")));
+    assert_eq!(
+        renamed.records.iter().map(counted).collect::<Vec<_>>(),
+        first.records.iter().map(counted).collect::<Vec<_>>()
+    );
+    let after = read(&db, &path, &renamed.watermark.unwrap()).unwrap();
+    assert!(after.records.is_empty());
+}
+
+#[test]
+fn a_mirror_that_cannot_be_trusted_is_refused_whole() {
+    use rusqlite::types::Value::{Integer, Null, Text};
+    let text = |s: &str| Text(s.into());
+    let cases: Vec<(&str, Vec<[rusqlite::types::Value; 4]>)> = vec![
+        ("schema 2", vec![row(2, KEY, "Mac mini", "default")]),
+        ("schema 0", vec![row(0, KEY, "Mac mini", "default")]),
+        (
+            "schema null",
+            vec![[Null, text(KEY), text("Mac mini"), text("default")]],
+        ),
+        (
+            "schema text",
+            vec![[text("one"), text(KEY), text("Mac mini"), text("default")]],
+        ),
+        (
+            "machine 15",
+            vec![row(1, &KEY[..15], "Mac mini", "default")],
+        ),
+        (
+            "machine 17",
+            vec![row(1, &format!("{KEY}0"), "Mac mini", "default")],
+        ),
+        (
+            "machine upper",
+            vec![row(1, &KEY.to_uppercase(), "Mac mini", "default")],
+        ),
+        (
+            "machine not hex",
+            vec![row(1, "aaeda597d860920g", "Mac mini", "default")],
+        ),
+        (
+            "machine install id",
+            vec![row(
+                1,
+                "0123456789abcdef0123456789abcdef",
+                "Mac mini",
+                "default",
+            )],
+        ),
+        (
+            "machine null",
+            vec![[Integer(1), Null, text("Mac mini"), text("default")]],
+        ),
+        ("label empty", vec![row(1, KEY, "", "default")]),
+        (
+            "label null",
+            vec![[Integer(1), text(KEY), Null, text("default")]],
+        ),
+        ("profile empty", vec![row(1, KEY, "Mac mini", "")]),
+        ("profile upper", vec![row(1, KEY, "Mac mini", "Work")]),
+        ("profile slash", vec![row(1, KEY, "Mac mini", "a/b")]),
+        (
+            "profile null",
+            vec![[Integer(1), text(KEY), text("Mac mini"), Null]],
+        ),
+        ("no row", vec![]),
+        (
+            "two rows",
+            vec![
+                row(1, KEY, "Mac mini", "default"),
+                row(1, KEY, "Mac mini", "default"),
+            ],
+        ),
+    ];
+    let home = tempfile::tempdir().unwrap();
+    for (n, (case, rows)) in cases.into_iter().enumerate() {
+        let path = home
+            .path()
+            .join(format!("{n}/profiles/{KEY}-default/state.db"));
+        let db = state_db(&path, None);
+        db.execute_batch(
+            "CREATE TABLE hud_mirror (schema INTEGER, machine TEXT, label TEXT, profile TEXT);",
+        )
+        .unwrap();
+        for row in rows {
+            db.execute(
+                "INSERT INTO hud_mirror VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params_from_iter(row),
+            )
+            .unwrap();
+        }
+        // Refused on the first page and on any later one.
+        for cursor in [Value::Null, json!({"scan": 1}), json!({"rowid_after": 9})] {
+            assert!(read(&db, &path, &cursor).is_err(), "{case} {cursor}");
+        }
+    }
+}

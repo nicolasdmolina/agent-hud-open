@@ -231,7 +231,7 @@ fn batch_card_must_distinguish_locked_and_unanswered_questions() {
             ask,
             wait_ms,
         }
-        .view(0)
+        .view(0, None)
     };
     let (unlocked, locked) = (card(json!({})), card(json!({"q0": "a", "q1": null})));
     assert_ne!(unlocked, locked);

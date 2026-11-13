@@ -340,7 +340,7 @@ fn a_set_of_questions_is_answered_by_a_result_frame_and_never_a_call() {
 
 #[test]
 fn a_card_offers_only_what_hermes_offers() {
-    let question = asked("question-answered-here", "clarify.request").view(1_794_525_600_000);
+    let question = asked("question-answered-here", "clarify.request").view(1_794_525_600_000, None);
     assert_eq!(question["id"], "hermes:local:hud-spike:local-f200386683510182cd45c8e38361a3bfecfa23934bacf51c394ec5b828f7ee9b:715a2db63d");
     assert_eq!(
         question["sessionId"],
@@ -353,7 +353,7 @@ fn a_card_offers_only_what_hermes_offers() {
     // The default profile's card has the plain label, as its sessions do.
     let mut default = asked("question-answered-here", "clarify.request");
     default.session.profile = Profile::Default;
-    assert_eq!(default.view(0)["vendor"], "Hermes Agent");
+    assert_eq!(default.view(0, None)["vendor"], "Hermes Agent");
     // One question has no Skip; a set of questions has.
     assert_eq!(question["canSkip"], false);
     assert_eq!(
@@ -374,10 +374,10 @@ fn a_card_offers_only_what_hermes_offers() {
         (&json!(false), &json!([]))
     );
 
-    let open = asked("question-open-ended", "clarify.request").view(0);
+    let open = asked("question-open-ended", "clarify.request").view(0, None);
     assert_eq!(open["questions"][0]["options"], json!([]));
 
-    let set = asked("question-batch-answered-here", "clarify").view(0);
+    let set = asked("question-batch-answered-here", "clarify").view(0, None);
     assert_eq!(set.get("canSkip"), None);
     let keys: Vec<&Value> = set["questions"]
         .as_array()
@@ -392,7 +392,7 @@ fn a_card_offers_only_what_hermes_offers() {
         Some("srq-be9ca8d8cb91")
     );
 
-    let approval = asked("approval-answered-once", "approval.request").view(0);
+    let approval = asked("approval-answered-once", "approval.request").view(0, None);
     assert_eq!(
         (&approval["kind"], &approval["answersQuestion"]),
         (&json!("permission"), &json!(false))
@@ -424,7 +424,7 @@ fn a_card_offers_only_what_hermes_offers() {
     }
 
     // Limited by Hermes: no lasting choice on the card at all.
-    let limited = asked("approval-limited-choice", "approval.request").view(0);
+    let limited = asked("approval-limited-choice", "approval.request").view(0, None);
     assert_eq!(limited["input"], "<write to AGENTS.md>");
     assert_eq!(limited["allowsAlways"], false);
     assert_eq!(limited["suggestions"], json!([]));

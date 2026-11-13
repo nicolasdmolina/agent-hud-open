@@ -198,6 +198,7 @@ fn record(id: &str, session: Option<&Session>, key: String, at: i64, usage: Usag
         id: format!("zcode:{id}"),
         title: session.and_then(|s| s.title.clone()),
         client: None,
+        machine: None,
         title_fallback: None,
         cwd: session.and_then(|s| s.cwd.clone()),
         model: "Unknown".into(),

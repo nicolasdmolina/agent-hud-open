@@ -33,6 +33,10 @@ pub struct Log {
     /// `originator` name (`naming::clients`).
     #[serde(default)]
     pub client: Option<String>,
+    /// The label of the far machine the session runs on
+    /// (`Record::machine`); None on this one.
+    #[serde(default)]
+    pub machine: Option<String>,
     /// The session's first and latest prompts, for where each was typed
     /// (`naming::surfaces`).
     #[serde(default)]
@@ -132,6 +136,7 @@ impl Log {
             naming: TitleEvidence::default(),
             stored_title: None,
             client: None,
+            machine: None,
             prompts: PromptStamps::default(),
             id,
             model: "Unknown".into(),

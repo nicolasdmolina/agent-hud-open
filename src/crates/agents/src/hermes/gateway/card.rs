@@ -9,8 +9,10 @@ use crate::naming::clients::client_name;
 use serde_json::{json, Value};
 
 impl Pending {
-    /// The card, first seen at `now_ms`.
-    pub fn view(&self, now_ms: i64) -> Value {
+    /// The card, first seen at `now_ms`. `machine` is the label of the far
+    /// machine the session runs on, as its rows carry it; None on this one,
+    /// and then the card has no `machine` at all.
+    pub fn view(&self, now_ms: i64, machine: Option<&str>) -> Value {
         let mut view = json!({
             "id": self.id(),
             "source": AGENT.id,
@@ -22,6 +24,10 @@ impl Pending {
             "plan": null,
             "answersPlan": false,
         });
+        if let Some(machine) = machine {
+            // A card can show before its session has a row.
+            view["machine"] = json!(machine);
+        }
         let shown = match &self.ask {
             Ask::Question(question) => {
                 let mut card = questions(vec![question_item(

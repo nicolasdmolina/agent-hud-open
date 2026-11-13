@@ -12,6 +12,10 @@ pub struct Record {
     /// would (`naming::clients::client_name` shows it), such as a Hermes
     /// profile; None when it names none.
     pub client: Option<String>,
+    /// The far machine the session runs on, as its label shows it; None on
+    /// the machine Agent HUD runs on, which is every client's but a mirror
+    /// of a far machine's sessions.
+    pub machine: Option<String>,
     pub cwd: Option<String>,
     pub model: String,
     pub key: String,

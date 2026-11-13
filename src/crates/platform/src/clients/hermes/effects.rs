@@ -11,6 +11,10 @@ use agent_hud_agents::hermes::{
 use agent_hud_agents::SOLE_READER;
 use agent_hud_core::l10n;
 
+/// The machine label on the cards made here: none, since every gateway
+/// this channel follows runs on this machine.
+const MACHINE: Option<&str> = None;
+
 impl Shared {
     /// Carries out `effects` in order. Called with the model locked, so two
     /// threads never interleave what they were told to do.
@@ -34,7 +38,8 @@ impl Shared {
                     let id = pending.id();
                     self.log.line(&format!("change id={id}"));
                     let opened = model.opened.get(&id).copied().unwrap_or(now);
-                    self.requests.refresh_native(&id, pending.view(opened));
+                    let view = pending.view(opened, MACHINE);
+                    self.requests.refresh_native(&id, view);
                 }
                 Effect::Close { id, session, why } => {
                     self.log.line(&format!("close id={id} why={why:?}"));
@@ -90,7 +95,7 @@ impl Shared {
     fn show(&self, model: &mut Model, pending: &Pending, now: i64) {
         let id = pending.id();
         let opened = *model.opened.entry(id.clone()).or_insert(now);
-        let view = pending.view(opened);
+        let view = pending.view(opened, MACHINE);
         if let Some(waiter) = self.requests.register_native(id.clone(), view, now) {
             model.waiters.insert(id, waiter);
         }
