@@ -1,9 +1,10 @@
 //! Whose host it is and who may sign in.
-use super::lab::{entries, far, free_port, Lab};
+use super::lab::{closed_port, entries, far, Lab};
 use crate::ssh_link::{Failure, Link, Lost};
 use std::fs;
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn an_unknown_host_is_not_trusted_yet_and_known_hosts_stays_as_it_was() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -25,6 +26,7 @@ fn an_unknown_host_is_not_trusted_yet_and_known_hosts_stays_as_it_was() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_changed_host_key_is_refused() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -40,6 +42,7 @@ fn a_changed_host_key_is_refused() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_refused_sign_in_and_a_closed_port_each_say_which() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -47,10 +50,10 @@ fn a_refused_sign_in_and_a_closed_port_each_say_which() {
     let refused = Link::open(&folder, &lab.target(), &lab.settings_with("s", &stranger));
     assert_eq!(refused.err(), Some(Failure::Lost(Lost::SignInRefused)));
 
-    let closed = lab.config_text().replace(
-        &format!("Port {}", lab.port),
-        &format!("Port {}", free_port()),
-    );
+    let nobody = closed_port();
+    let closed = lab
+        .config_text()
+        .replace(&format!("Port {}", lab.port), &format!("Port {nobody}"));
     let refused = Link::open(&folder, &lab.target(), &lab.settings_with("p", &closed));
     assert_eq!(refused.err(), Some(Failure::Lost(Lost::CannotReach)));
     assert_eq!(lab.link_processes(&folder), Vec::<String>::new());
@@ -58,6 +61,7 @@ fn a_refused_sign_in_and_a_closed_port_each_say_which() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn the_agent_may_sign_in_and_is_never_forwarded() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();

@@ -160,7 +160,7 @@ To check against a real gateway, never use a Hermes home in use. Make a throwawa
 | `unix/folder.rs`, `unix/sweep.rs` | `Folder`: the control folder, and `sweep`, the start-up cleanup. |
 | `unix/process.rs`, `unix/words.rs` | One process waited for against a deadline without blocking on a pipe; the far command line; what the master's last words mean. |
 | `windows.rs` | "Not implemented", for every entry point. |
-| `unix/tests/` | The tests, against a throwaway `sshd` on loopback with its own keys, configuration and `known_hosts` (`lab.rs`, which later tickets' tests can use as `crate::ssh_link::unix::tests::lab`). |
+| `unix/tests/` | The tests, against a throwaway `sshd` on loopback with its own keys, configuration and `known_hosts` (`lab.rs`, which later tickets' tests can use as `crate::ssh_link::unix::tests::lab`). The ones that start processes are marked `#[ignore]` and run by `the_lab_tests_pass`, in a process of their own. |
 
 What a caller must know:
 
@@ -173,6 +173,7 @@ What a caller must know:
 - **Clients never dial.** A command or a forward is a second `ssh` that speaks to the master's socket. It reads no configuration file, and is given a host name no network resolves, a proxy that fails, no key, no agent and an empty host list. So with the master gone, nothing reconnects by itself, and a client never opens the user's keys or `known_hosts` (without those last settings `ssh` reads the default key files before it finds the proxy dead).
 - **A forward request must not carry `ClearAllForwardings`:** `ssh` then drops the very forward asked for and reports success (measured). The master carries it; forward and cancel requests do not, and read no configuration file instead.
 - **`alive()` empties the master's log once it passes 256 KB.** Call it now and then on a link that stays up.
+- **Lab tests run in a process of their own.** Starting a process shares this process's open files with it for a moment, a held file lock among them. The instance lock's tests (upstream's) let a lock go and take it again at once, and then find it still held: beside one existing test that starts a single process (`os::unix::pids`) they failed in 9 runs of 15 on a busy machine, with none of this code involved. A lab test starts hundreds of processes, so in the same test program they failed in 14 of 15. A later ticket's lab tests should be marked `#[ignore]` too and started with `lab::in_a_process_of_their_own("<their module path>::")` from one test that is not. To run the link's here and see what each prints: `cargo test -p agent-hud-platform --lib ssh_link::unix::tests -- --ignored --nocapture`.
 - **Not verified here:** Linux (the same code, never run), an `ssh` older than 8.7 (it does not know `ForkAfterAuthentication`), a far login shell other than zsh, a host reached through the user's own `ProxyCommand`, and the user's real `~/.ssh/config`, which no test reads.
 
 ## Upstream syncs

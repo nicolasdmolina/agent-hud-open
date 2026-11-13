@@ -4,6 +4,7 @@ use crate::ssh_link::{Cut, End, Failure, FarCommand, Link, Refused};
 use std::time::{Duration, Instant};
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_command_past_its_time_limit_is_cut_off_never_ended() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -29,6 +30,7 @@ fn a_command_past_its_time_limit_is_cut_off_never_ended() {
 /// ignores a closed channel runs on. The wait on this side still ends on
 /// time, though the far program holds the far end of its output open.
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_far_command_that_ignores_hangup_survives_a_cut_off_and_nothing_waits_on_its_pipe() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -62,6 +64,7 @@ fn a_far_command_that_ignores_hangup_survives_a_cut_off_and_nothing_waits_on_its
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_long_program_goes_on_standard_input_and_never_on_the_command_line() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -98,6 +101,7 @@ fn a_long_program_goes_on_standard_input_and_never_on_the_command_line() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn what_comes_back_is_bounded() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();

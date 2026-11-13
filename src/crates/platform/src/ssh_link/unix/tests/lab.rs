@@ -9,7 +9,7 @@
 use crate::ssh_link::{FarCommand, Folder, Settings, Target};
 use std::{
     fs,
-    net::{Ipv4Addr, TcpListener, TcpStream},
+    net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
@@ -44,6 +44,45 @@ fn quiet(program: &str, args: &[&str]) -> bool {
 pub(crate) fn free_port() -> u16 {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback port");
     listener.local_addr().expect("its address").port()
+}
+
+/// A port on 127.0.0.1 that refuses a connection. It lies below the range
+/// the system hands out, so no other test's lab is ever given it. (A port
+/// that is bound and not listening would not do: macOS drops what is sent
+/// to one, and a connection there times out.)
+pub(crate) fn closed_port() -> u16 {
+    let start = std::process::id() % 10_000;
+    (0..500)
+        .map(|step| 20_000 + ((start + step * 37) % 10_000) as u16)
+        .find(|port| {
+            let at = SocketAddr::from((Ipv4Addr::LOCALHOST, *port));
+            TcpStream::connect_timeout(&at, Duration::from_secs(2))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused)
+        })
+        .expect("a port that refuses")
+}
+
+/// Runs this test program's lab tests under `filter` in a process of their
+/// own, and fails if one of them does. They are marked `#[ignore]` so the
+/// program's other tests never share a process with them: a lab test
+/// starts hundreds of processes, and each start shares this process's open
+/// files with the new process for a moment, a held file lock among them.
+/// The instance lock's tests, which let a lock go and take it again at
+/// once, then find it still held (measured: 14 runs in 15).
+pub(crate) fn in_a_process_of_their_own(filter: &str) {
+    let ran = Command::new(std::env::current_exe().expect("this test program"))
+        .args([filter, "--ignored", "--test-threads", "6"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the test program starts");
+    let said = String::from_utf8_lossy(&ran.stdout);
+    println!("{said}");
+    assert!(
+        ran.status.success(),
+        "a lab test failed:\n{said}\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert!(!said.contains("running 0 tests"), "no test under {filter}");
 }
 
 pub(crate) fn until(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
@@ -113,35 +152,50 @@ impl Lab {
             |name: &str| fs::read_to_string(at(&format!("{name}.pub"))).unwrap_or_default();
         fs::write(at("authorized_keys"), public("id") + &public("agentkey"))
             .map_err(|error| error.to_string())?;
-        let port = free_port();
-        fs::write(
-            at("sshd_config"),
-            format!(
-                "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nAuthorizedKeysFile {}\n\
-                 PidFile none\nUsePAM no\nStrictModes no\nPasswordAuthentication no\n\
-                 KbdInteractiveAuthentication no\nAllowTcpForwarding yes\n\
-                 AllowAgentForwarding yes\nMaxStartups 100\n",
-                text("hostkey"),
-                text("authorized_keys"),
-            ),
-        )
-        .map_err(|error| error.to_string())?;
-        let log = fs::File::create(at("sshd.log")).map_err(|error| error.to_string())?;
-        let sshd = Command::new("/usr/sbin/sshd")
-            .args(["-D", "-e", "-f", &text("sshd_config")])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(log)
-            .spawn()
+        // A port found free can be taken before `sshd` binds it, by another
+        // test's lab. So `sshd` itself says when it listens, and one that
+        // could not bind is started again on another port.
+        let mut started = None;
+        for _ in 0..5 {
+            let port = free_port();
+            fs::write(
+                at("sshd_config"),
+                format!(
+                    "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nAuthorizedKeysFile {}\n\
+                     PidFile none\nUsePAM no\nStrictModes no\nPasswordAuthentication no\n\
+                     KbdInteractiveAuthentication no\nAllowTcpForwarding yes\n\
+                     AllowAgentForwarding yes\nMaxStartups 100\n",
+                    text("hostkey"),
+                    text("authorized_keys"),
+                ),
+            )
             .map_err(|error| error.to_string())?;
-        let mut lab = Self { dir, port, sshd };
-        if !until(Duration::from_secs(10), || {
-            TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_ok()
-        }) {
-            let said = fs::read_to_string(lab.at("sshd.log")).unwrap_or_default();
-            let _ = lab.sshd.kill();
-            return Err(format!("sshd is not listening: {said}"));
+            let log = fs::File::create(at("sshd.log")).map_err(|error| error.to_string())?;
+            let mut sshd = Command::new("/usr/sbin/sshd")
+                .args(["-D", "-e", "-f", &text("sshd_config")])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(log)
+                .spawn()
+                .map_err(|error| error.to_string())?;
+            let listening = format!("Server listening on 127.0.0.1 port {port}.");
+            let mut up = false;
+            until(Duration::from_secs(15), || {
+                up = fs::read_to_string(at("sshd.log")).is_ok_and(|said| said.contains(&listening));
+                up || !matches!(sshd.try_wait(), Ok(None))
+            });
+            if up {
+                started = Some((port, sshd));
+                break;
+            }
+            let _ = sshd.kill();
+            let _ = sshd.wait();
         }
+        let Some((port, sshd)) = started else {
+            let said = fs::read_to_string(at("sshd.log")).unwrap_or_default();
+            return Err(format!("sshd is not listening: {said}"));
+        };
+        let lab = Self { dir, port, sshd };
         fs::write(lab.at("known_hosts"), lab.host_line("hostkey")).map_err(|e| e.to_string())?;
         fs::write(lab.at("config"), lab.config_text()).map_err(|e| e.to_string())?;
         Ok(lab)

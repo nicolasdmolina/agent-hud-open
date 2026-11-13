@@ -45,6 +45,7 @@ fn up(folder: &Folder, name: &str) -> bool {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn start_up_closes_every_master_left_behind_wanted_or_not() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -84,6 +85,7 @@ fn start_up_closes_every_master_left_behind_wanted_or_not() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_dead_masters_socket_goes_and_a_master_still_coming_up_is_ended() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -139,6 +141,7 @@ fn a_dead_masters_socket_goes_and_a_master_still_coming_up_is_ended() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_link_in_the_folder_is_not_followed_and_what_it_points_at_stays() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -235,6 +238,7 @@ fn a_folder_with_the_wrong_owner_or_mode_is_refused() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn the_control_path_is_held_to_the_socket_limit() {
     let Some(lab) = Lab::start() else { return };
     // A socket's name is eight characters after the folder and a slash.
@@ -281,6 +285,7 @@ fn the_control_path_is_held_to_the_socket_limit() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_percent_in_the_folders_path_is_plain_text_to_ssh() {
     let Some(lab) = Lab::start() else { return };
     // `ssh` would read `%h` in a control path as the host's name.

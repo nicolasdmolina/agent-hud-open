@@ -49,6 +49,7 @@ fn exchange(far: &TcpListener, local: u16) {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn open_run_forward_exchange_cancel_close_leaves_nothing() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -101,6 +102,7 @@ fn open_run_forward_exchange_cancel_close_leaves_nothing() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn the_running_masters_arguments_hold_every_option() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -129,6 +131,7 @@ fn the_running_masters_arguments_hold_every_option() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_configuration_file_cannot_weaken_the_link() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -199,6 +202,7 @@ fn a_configuration_file_cannot_weaken_the_link() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_forward_listens_on_loopback_only_and_leads_only_to_the_far_loopback() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -235,6 +239,7 @@ fn a_forward_listens_on_loopback_only_and_leads_only_to_the_far_loopback() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_host_that_is_not_plain_makes_no_target_and_starts_no_ssh() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -260,6 +265,7 @@ fn a_host_that_is_not_plain_makes_no_target_and_starts_no_ssh() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_far_path_with_a_quote_a_space_and_a_dollar_arrives_as_plain_text() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -282,6 +288,7 @@ fn a_far_path_with_a_quote_a_space_and_a_dollar_arrives_as_plain_text() {
 /// A client is given a proxy that fails and a host no network resolves, so
 /// it ends at once instead.
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_client_with_no_master_does_not_dial() {
     let temp = tempfile::tempdir().unwrap();
     let folder = Folder::open(&temp.path().join("c")).unwrap();
@@ -326,6 +333,7 @@ fn a_client_with_no_master_does_not_dial() {
 /// no test's `ssh` reads the user's. `-G` prints the settings a master
 /// would use and opens none of those files.
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_lab_master_is_pointed_at_the_labs_own_files_whatever_the_host() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();

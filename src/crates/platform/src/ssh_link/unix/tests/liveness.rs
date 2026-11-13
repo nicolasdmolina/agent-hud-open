@@ -9,6 +9,7 @@ use std::{
 };
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_killed_master_is_lost_within_the_keepalive_bound_and_a_new_link_works() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -38,6 +39,7 @@ fn a_killed_master_is_lost_within_the_keepalive_bound_and_a_new_link_works() {
 }
 
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_silent_far_side_is_lost_as_timed_out_within_the_keepalive_bound() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -64,6 +66,7 @@ fn a_silent_far_side_is_lost_as_timed_out_within_the_keepalive_bound() {
 /// forward could not make. Its log is emptied once it is long, and what it
 /// writes afterwards, its last words among it, starts the file again.
 #[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_long_log_is_emptied_and_the_masters_last_words_are_still_read() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
@@ -75,7 +78,7 @@ fn a_long_log_is_emptied_and_the_masters_last_words_are_still_read() {
         .map(|name| folder.path().join(name))
         .unwrap();
     // A forward with no far listener makes the master write a line.
-    let nobody = SocketAddr::from((Ipv4Addr::LOCALHOST, super::lab::free_port()));
+    let nobody = SocketAddr::from((Ipv4Addr::LOCALHOST, super::lab::closed_port()));
     let forward = link.forward(nobody).unwrap();
     assert!(until(Duration::from_secs(10), || {
         let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, forward.local));
