@@ -93,16 +93,57 @@ fn a_sound_is_a_plain_name() {
 }
 
 #[test]
-fn a_refused_name_is_logged_and_not_played() {
+fn a_refused_name_is_logged_as_one_short_line_without_the_name() {
     let temp = tempfile::tempdir().unwrap();
     let sounds = Sounds::new(temp.path());
     assert!(sounds.preview("../Glass").is_err());
+    assert!(sounds.preview("bad\nforged entry").is_err());
+    assert!(sounds.preview(&"x".repeat(1 << 20)).is_err());
     let log = std::fs::read_to_string(temp.path().join("sound.log")).unwrap();
-    assert!(
-        log.trim_end().ends_with(
-            "failed kind=preview sound=../Glass error=A sound is a plain name, not a path"
-        ),
-        "{log}"
-    );
-    assert_eq!(log.lines().count(), 1);
+    assert_eq!(log.lines().count(), 3, "{log}");
+    for line in log.lines() {
+        assert!(
+            line.ends_with(
+                "failed kind=preview sound=<refused> error=A sound is a plain name, not a path"
+            ),
+            "{line}"
+        );
+    }
+    assert!(!log.contains("forged") && !log.contains("Glass") && log.len() < 1024);
+}
+
+#[test]
+fn a_line_is_one_line_and_bounded_whatever_it_holds() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("sound.log");
+    record(&log, &format!("id=a\nb\r{}", "y".repeat(10_000)));
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    assert!(text.len() < LINE_LIMIT + 64, "{}", text.len());
+}
+
+#[test]
+fn writers_at_once_keep_every_line_across_a_start_over() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("sound.log");
+    for round in 0..20 {
+        std::fs::write(&log, vec![b'.'; LOG_LIMIT as usize + 1]).unwrap();
+        let writers = (0..30)
+            .map(|writer| {
+                let log = log.clone();
+                std::thread::spawn(move || record(&log, &format!("round={round} writer={writer}")))
+            })
+            .collect::<Vec<_>>();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        let text = std::fs::read_to_string(&log).unwrap();
+        for writer in 0..30 {
+            assert!(
+                text.contains(&format!("round={round} writer={writer}\n")),
+                "round {round} lost writer {writer}"
+            );
+        }
+        assert!(text.len() < LOG_LIMIT as usize);
+    }
 }

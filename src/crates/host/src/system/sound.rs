@@ -98,10 +98,14 @@ pub(super) fn plain(name: &str) -> bool {
 }
 
 fn play(log: &Path, kind: &str, sound: &str, id: Option<&str>) -> Result<(), String> {
-    let result = if plain(sound) {
-        super::target::play_sound(sound)
+    let (result, sound) = if plain(sound) {
+        (super::target::play_sound(sound), sound)
     } else {
-        Err("A sound is a plain name, not a path".to_owned())
+        // A refused name is never written: it may hold line breaks or be huge.
+        (
+            Err("A sound is a plain name, not a path".to_owned()),
+            "<refused>",
+        )
     };
     let id = id.map(|id| format!(" id={id}")).unwrap_or_default();
     let line = match &result {
@@ -112,9 +116,23 @@ fn play(log: &Path, kind: &str, sound: &str, id: Option<&str>) -> Result<(), Str
     result
 }
 
+/// One writer at a time: the size check, the start-over and the write are one
+/// step, so threads playing at once never erase each other's lines.
+static LOG: Mutex<()> = Mutex::new(());
+/// The longest line written; a longer one is cut.
+const LINE_LIMIT: usize = 512;
+
+/// Writes `line` as exactly one line: control characters become spaces and
+/// the line is cut at `LINE_LIMIT` characters.
 fn record(log: &Path, line: &str) {
+    let line = line
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(LINE_LIMIT)
+        .collect::<String>();
     let line = format!("{} {line}\n", chrono::Utc::now().to_rfc3339());
     eprint!("Agent HUD sound: {line}");
+    let _writer = LOG.lock().unwrap_or_else(PoisonError::into_inner);
     let mut options = std::fs::OpenOptions::new();
     options.create(true);
     if std::fs::metadata(log).is_ok_and(|meta| meta.len() > LOG_LIMIT) {
