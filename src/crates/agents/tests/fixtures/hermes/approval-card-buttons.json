@@ -1,0 +1,116 @@
+{
+  "about": "Two Hermes approval cards as the gateway model shows them (English), and the buttons the HUD draws on each, left to right, with the decision each sends. The Rust test hermes::gateway::tests::buttons checks the cards are the model's and that each decision is the approval.respond frame the named recording sent. The HUD test permission-choices.test.ts checks it draws exactly these buttons from these cards.",
+  "full": {
+    "recording": "approval-answered-once",
+    "card": {
+      "allowsAlways": true,
+      "alwaysAllowRule": "delete in root path",
+      "answersPlan": false,
+      "answersQuestion": false,
+      "createdAt": "1970-01-01T00:00:00+00:00",
+      "cwd": null,
+      "detail": "rm -r -- /Users/USER/project/owned/t-once",
+      "id": "hermes:local:hud-spike:local-e36d3be55be794058a8299d205c02a11513f18e745c8e6320c9f24cb02d2b709:5c1c13ce8c354c329a25dafa08886e9f",
+      "input": "rm -r -- /Users/USER/project/owned/t-once",
+      "kind": "permission",
+      "plan": null,
+      "questions": [],
+      "sessionId": "hermes:hud-spike:local-e36d3be55be794058a8299d205c02a11513f18e745c8e6320c9f24cb02d2b709",
+      "source": "hermes",
+      "suggestions": [
+        {
+          "type": "scope",
+          "scope": "session",
+          "label": "Allow this session"
+        },
+        {
+          "type": "scope",
+          "scope": "always",
+          "label": "Always allow"
+        }
+      ],
+      "summary": "delete in root path",
+      "title": "delete in root path",
+      "toolName": "",
+      "vendor": "Hermes"
+    },
+    "buttons": [
+      {
+        "label": "Deny",
+        "decision": {
+          "kind": "deny"
+        },
+        "recording": "approval-answered-deny"
+      },
+      {
+        "label": "Allow this session",
+        "decision": {
+          "kind": "always",
+          "suggestion": {
+            "type": "scope",
+            "scope": "session",
+            "label": "Allow this session"
+          }
+        },
+        "recording": "approval-answered-session"
+      },
+      {
+        "label": "Always allow",
+        "decision": {
+          "kind": "always",
+          "suggestion": {
+            "type": "scope",
+            "scope": "always",
+            "label": "Always allow"
+          }
+        },
+        "recording": "approval-answered-always"
+      },
+      {
+        "label": "Allow once",
+        "decision": {
+          "kind": "allow"
+        },
+        "recording": "approval-answered-once"
+      }
+    ]
+  },
+  "limited": {
+    "recording": "approval-limited-choice",
+    "card": {
+      "allowsAlways": false,
+      "alwaysAllowRule": null,
+      "answersPlan": false,
+      "answersQuestion": false,
+      "createdAt": "1970-01-01T00:00:00+00:00",
+      "cwd": null,
+      "detail": "<write to AGENTS.md>",
+      "id": "hermes:local:hud-spike:local-edafc723366f0cedfc0ab7f3bb4f3063bd146eabaeea6aaef95b6be814288783:f35d8a347d6948779355543383299262",
+      "input": "<write to AGENTS.md>",
+      "kind": "permission",
+      "plan": null,
+      "questions": [],
+      "sessionId": "hermes:hud-spike:local-edafc723366f0cedfc0ab7f3bb4f3063bd146eabaeea6aaef95b6be814288783",
+      "source": "hermes",
+      "suggestions": [],
+      "summary": "Write to protected agent-instruction file(s): AGENTS.md. These files steer future agent behavior; approval is always required (not bypassed by auto-approve).",
+      "title": "Write to protected agent-instruction file(s): AGENTS.md. These files steer future agent behavior; approval is always required (not bypassed by auto-approve).",
+      "toolName": "",
+      "vendor": "Hermes"
+    },
+    "buttons": [
+      {
+        "label": "Deny",
+        "decision": {
+          "kind": "deny"
+        }
+      },
+      {
+        "label": "Allow once",
+        "decision": {
+          "kind": "allow"
+        }
+      }
+    ]
+  }
+}

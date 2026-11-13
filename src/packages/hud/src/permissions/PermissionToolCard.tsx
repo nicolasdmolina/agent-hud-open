@@ -1,5 +1,7 @@
+import { Fragment } from "react";
 import { BadgeCheck, Check, LoaderCircle, X } from "lucide-react";
 import type { Approval, RequestDecision } from "@agent-hud/protocol";
+import { permissionChoices } from "./permission-choices";
 import { permissionColors } from "../tokens";
 import { useGround } from "../ground";
 import { cardColumn } from "../card-column";
@@ -158,45 +160,35 @@ export function PermissionToolCard({
         </div>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <CardButton
-          disabled={disabled}
-          onClick={() => void answer({ kind: "deny" })}
-          edge={denyStroke}
-          fill={denyFill}
-          color={denyText}
-          style={{ whiteSpace: "nowrap" }}
-        >
-          <X size={9} strokeWidth={2.6} />
-          {t("Deny", "拒绝")}
-        </CardButton>
-        <span style={{ flex: 1, minWidth: 8 }} />
-        {request.allowsAlways && (
-          <CardButton
-            disabled={disabled}
-            title={request.alwaysAllowRule ?? undefined}
-            onClick={() => void answer({ kind: "always" })}
-            edge={allowEdge}
-            color={allowText}
-            style={{ whiteSpace: "nowrap" }}
-          >
-            <BadgeCheck size={9} strokeWidth={2.6} />
-            {t("Always allow", "总是允许")}
-          </CardButton>
-        )}
-        <CardButton
-          disabled={disabled}
-          onClick={() => void answer({ kind: "allow" })}
-          fill={allow}
-          color={onAllow}
-          style={{ whiteSpace: "nowrap" }}
-        >
-          {pending ? (
-            <LoaderCircle size={9} className="animate-spin" />
-          ) : (
-            <Check size={9} strokeWidth={2.6} />
-          )}
-          {request.allowLabel ?? t("Allow once", "批准一次")}
-        </CardButton>
+        {permissionChoices(request, zh).map((choice, index) => (
+          <Fragment key={index}>
+            <CardButton
+              disabled={disabled}
+              title={choice.title}
+              onClick={() => void answer(choice.decision)}
+              {...(choice.tone === "deny"
+                ? { edge: denyStroke, fill: denyFill, color: denyText }
+                : choice.tone === "lasting"
+                  ? { edge: allowEdge, color: allowText }
+                  : { fill: allow, color: onAllow })}
+              style={{ whiteSpace: "nowrap" }}
+            >
+              {choice.tone === "deny" ? (
+                <X size={9} strokeWidth={2.6} />
+              ) : choice.tone === "lasting" ? (
+                <BadgeCheck size={9} strokeWidth={2.6} />
+              ) : pending ? (
+                <LoaderCircle size={9} className="animate-spin" />
+              ) : (
+                <Check size={9} strokeWidth={2.6} />
+              )}
+              {choice.label}
+            </CardButton>
+            {choice.tone === "deny" && (
+              <span style={{ flex: 1, minWidth: 8 }} />
+            )}
+          </Fragment>
+        ))}
       </div>
     </div>
   );
