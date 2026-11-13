@@ -96,7 +96,15 @@ impl Stream {
 }
 
 #[derive(Default)]
+pub struct Hold {
+    pub entered: AtomicBool,
+    pub released: AtomicBool,
+}
+
+#[derive(Default)]
 pub struct World {
+    pub hint_on_resume: bool,
+    pub hold_next: Option<(&'static str, Arc<Hold>)>,
     /// What `identify` answers; None closes the socket without a word.
     pub identify: Option<Value>,
     pub instance: String,
@@ -431,6 +439,34 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
             }
             answer(&mut world, &frame, &mut subscribed)
         };
+        let hold = {
+            let mut world = world.lock().unwrap();
+            if world.hold_next.as_ref().is_some_and(|(method, _)| {
+                frame["method"] == *method
+                    || (*method == "nonempty-replay"
+                        && frame["method"] == "session.events.since"
+                        && reply.as_ref().is_some_and(|r| {
+                            r["result"]["events"]
+                                .as_array()
+                                .is_some_and(|events| !events.is_empty())
+                        }))
+            }) {
+                world.hold_next.take().map(|(_, hold)| hold)
+            } else {
+                None
+            }
+        };
+        if let Some(hold) = hold {
+            hold.entered.store(true, Ordering::Release);
+            let limit = std::time::Instant::now() + Duration::from_secs(15);
+            while !hold.released.load(Ordering::Acquire) && std::time::Instant::now() < limit {
+                thread::sleep(Duration::from_millis(2));
+            }
+        }
+        if frame["method"] == "session.resume" && world.lock().unwrap().hint_on_resume {
+            let hint = json!({"jsonrpc":"2.0", "method":"event", "params":{"type":"sessions.changed", "payload":{}}});
+            let _ = ws.send(Message::Text(hint.to_string().into()));
+        }
         if let Some(reply) = reply {
             let _ = ws.send(Message::Text(reply.to_string().into()));
         }

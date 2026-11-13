@@ -56,6 +56,10 @@ pub enum Unsupported {
     SessionAuthority,
     /// Its control socket does not know the `session-ticket` verb.
     TicketVerb,
+    /// Its API is not plain HTTP on this machine, the one kind Agent HUD
+    /// dials: the local gateway serves it, and a far gateway is reached
+    /// through a forwarded port of this machine that serves it too.
+    Origin,
 }
 
 impl Unsupported {
@@ -64,6 +68,7 @@ impl Unsupported {
             Self::RuntimeProtocol => "runtime_protocol",
             Self::SessionAuthority => "session_authority_unavailable",
             Self::TicketVerb => "unknown_verb",
+            Self::Origin => "api_origin_not_local_http",
         }
     }
 }
@@ -165,8 +170,10 @@ pub fn identify(answer: &Value, home: &str) -> Identified {
     ) else {
         return Identified::Failed(Failure::Invalid("invalid_runtime_identity"));
     };
+    // Never dialled: it is left to the hooks, like a build without the
+    // live connection.
     let Some((origin, port)) = told["api_origin"].as_str().and_then(local_origin) else {
-        return Identified::Failed(Failure::Invalid("invalid_api_origin"));
+        return Identified::Unsupported(Unsupported::Origin);
     };
     Identified::Ready(Instance {
         id: id.to_owned(),
@@ -214,7 +221,8 @@ pub fn refused(answer: &Value) -> Option<Denied> {
     })
 }
 
-/// The origin and its port, when it is plain `http(s)://<loopback>:<port>`.
+/// The origin and its port, when it is plain `http://<loopback>:<port>`.
+/// No TLS: nothing but this machine is ever dialled.
 fn local_origin(origin: &str) -> Option<(String, u16)> {
     let url = Url::parse(origin).ok()?;
     let local = match url.host()? {
@@ -222,7 +230,7 @@ fn local_origin(origin: &str) -> Option<(String, u16)> {
         Host::Ipv6(address) => address.is_loopback(),
         Host::Domain(_) => false,
     };
-    let plain = matches!(url.scheme(), "http" | "https")
+    let plain = url.scheme() == "http"
         && url.username().is_empty()
         && url.password().is_none()
         && matches!(url.path(), "" | "/")

@@ -9,7 +9,10 @@
 //!
 //! It reads Hermes and never writes under a Hermes home. It takes no part
 //! in collection: it never holds the collection gate, and every wait on
-//! the network happens with nothing locked.
+//! the gateway happens with nothing locked. The one thing done under the
+//! model's lock that touches a socket is the write of an answer's frame
+//! (`answer.rs`), so that an answer never leaves once the observer stopped
+//! or its card closed.
 use crate::hooks::Wake;
 use agent_hud_agents::hermes::{
     gateway::{Connection, Gateway, GatewayId, Input, Instance},
@@ -32,57 +35,15 @@ mod control;
 mod effects;
 mod link;
 mod log;
+mod pace;
 mod polls;
 mod socket;
 mod visit;
 
+pub(crate) use pace::Pace;
+
 /// The one gateway phase 1 follows: the one on this machine.
 const LOCAL: &str = "local";
-
-/// How the connection paces itself. Tests shorten it.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Pace {
-    /// The first wait before dialling again, doubled each time it fails.
-    pub retry: Duration,
-    /// The longest wait before dialling again while a gateway may come back.
-    pub retry_limit: Duration,
-    /// How long before asking a gateway without the live connection again:
-    /// an update can add it.
-    pub unsupported: Duration,
-    /// The least time between the starts of two polls, however many ask.
-    pub gap: Duration,
-    /// The longest time between the starts of two polls while the gateway
-    /// has a live session: a turn can begin and ask in any of them, and
-    /// nothing tells of it but the poll. The model's own timer is slower
-    /// while every session is idle; measured against a real gateway, that
-    /// showed a question up to ten seconds late, or never when it was
-    /// answered sooner elsewhere. Hermes's desktop app asks the same list
-    /// every 1.5 s.
-    pub watch: Duration,
-    /// How long that pace is kept after a hint or a hook asked for a poll:
-    /// they tell that something is about to happen, not what.
-    pub warm: Duration,
-    /// How long the control socket and one call may take.
-    pub answer: Duration,
-    /// Whether the log says every poll and every hint, for looking at what
-    /// a real gateway does. Never on in the app.
-    pub trace: bool,
-}
-
-impl Default for Pace {
-    fn default() -> Self {
-        Self {
-            retry: Duration::from_millis(250),
-            retry_limit: Duration::from_secs(5),
-            unsupported: Duration::from_secs(300),
-            gap: Duration::from_millis(250),
-            watch: Duration::from_millis(800),
-            warm: Duration::from_secs(5),
-            answer: Duration::from_secs(5),
-            trace: false,
-        }
-    }
-}
 
 pub struct Observer {
     shared: Arc<Shared>,
@@ -115,6 +76,20 @@ pub(super) struct Model {
     /// whether each is a set of questions.
     answered: HashMap<String, bool>,
     stopped: bool,
+}
+
+impl Model {
+    /// Whether an answer to `request` may still go to `instance`: the
+    /// observer has not stopped, the request still has its card, and the
+    /// gateway that is ready is still the instance that asked. Anything
+    /// else and the answer is for nobody.
+    pub(super) fn current(&self, request: &str, instance: &Instance) -> bool {
+        let same = matches!(
+            self.gateway.connection(),
+            Connection::Ready(ready) if ready.id == instance.id
+        );
+        !self.stopped && same && self.gateway.pending(request).is_some()
+    }
 }
 
 /// The Hermes home on this machine: `HERMES_HOME`, or `~/.hermes`.
@@ -221,15 +196,24 @@ impl Shared {
     }
 
     /// The instance to answer `request` on: the one that is ready, while
-    /// the request still has its card. A gateway that restarted since the
-    /// card was answered closed the card, and its new instance never asked.
+    /// the observer runs and the request still has its card. A gateway
+    /// that restarted since the card was answered closed the card, and
+    /// its new instance never asked.
     pub(super) fn instance_of(&self, request: &str) -> Option<Instance> {
         let model = self.model();
+        if model.stopped {
+            return None;
+        }
         model.gateway.pending(request)?;
         match model.gateway.connection() {
             Connection::Ready(instance) => Some(instance.clone()),
             _ => None,
         }
+    }
+
+    /// Whether an answer to `request` may still go to `instance`.
+    pub(super) fn current(&self, request: &str, instance: &Instance) -> bool {
+        self.model().current(request, instance)
     }
 
     pub(super) fn want_poll(&self) {

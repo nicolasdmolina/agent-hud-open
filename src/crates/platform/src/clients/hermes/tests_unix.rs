@@ -14,6 +14,8 @@ use std::{
 };
 
 // Unix only, as the control socket is; the files sit in `tests/`.
+#[path = "tests/cancelled.rs"]
+mod cancelled;
 #[path = "tests/cards.rs"]
 mod cards;
 #[path = "tests/fake.rs"]
@@ -24,6 +26,8 @@ mod handshake;
 mod live;
 #[path = "tests/reconnect.rs"]
 mod reconnect;
+#[path = "tests/verifier.rs"]
+mod verifier;
 
 /// The pace of the tests: everything the app waits seconds for, in
 /// hundredths of them.

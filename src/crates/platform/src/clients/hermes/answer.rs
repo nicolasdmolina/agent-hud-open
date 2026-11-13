@@ -5,12 +5,12 @@
 //! answer was written and then what Hermes replied; it closes the card or
 //! brings it back.
 use super::{
-    socket::{result, Reply as Came},
+    socket::{result, Reply as Came, Socket},
     visit::Visit,
     Shared,
 };
 use agent_hud_agents::hermes::gateway::{
-    refusal, resume, Ask, Command, Input, Pending, Refusal, Reply, Scope,
+    refusal, resume, Ask, Command, Failure, Input, Instance, Pending, Refusal, Reply, Scope,
 };
 use agent_hud_core::l10n;
 use serde_json::{json, Value};
@@ -85,71 +85,103 @@ fn deliver(shared: &Shared, pending: Pending, decision: &Value) {
         return shared.undelivered(&pending, unreachable());
     };
     let wait = shared.pace.answer * 2;
+    let still = || shared.current(&id, &instance);
     // An answer from a socket that is not subscribed is refused.
-    let Some((mut visit, _)) = Visit::begin(shared, &instance, &pending.session, wait) else {
+    let visit = Visit::begin_while(shared, &instance, &pending.session, wait, &still);
+    let Some((mut visit, _)) = visit else {
         return shared.undelivered(&pending, unreachable());
     };
-    match reply {
+    let going = Going {
+        shared,
+        pending: &pending,
+        instance: &instance,
+    };
+    let told = match reply {
         // Nothing replies to the answer to a set of questions: a poll
         // tells what became of it.
-        Reply::Result(frame) => {
-            if visit.socket.write(&frame).is_ok() {
-                sent(shared, &pending);
-            } else {
-                shared.undelivered(&pending, unreachable());
-            }
-        }
-        Reply::Call(command) => {
-            let mut told = call(shared, &mut visit, &pending, &command, wait);
-            if refusal(&told).is_some_and(|refused| refused.retryable()) && shared.active() {
-                shared.pause(AGAIN);
-                if refusal(&told) == Some(Refusal::PermissionDenied) {
-                    let again = resume(&pending.session, Scope::Host);
-                    let _ = visit.socket.call(&again, wait, &mut |_| {});
-                }
-                told = call(shared, &mut visit, &pending, &command, wait);
-            }
-            shared.apply(Input::Responded {
-                request: &id,
-                reply: &told,
-            });
-        }
+        Reply::Result(frame) => going
+            .written(&mut visit, |socket| socket.write(&frame))
+            .map(|()| None),
+        Reply::Call(command) => going.asked(&mut visit, &command, wait).map(Some),
+    };
+    match told {
+        Some(Some(told)) => shared.apply(Input::Responded {
+            request: &id,
+            reply: &told,
+        }),
+        Some(None) => {}
+        // Nothing was written. A card that closed, or an observer that
+        // stopped, is left alone; a card that still shows comes back.
+        None => shared.undelivered(&pending, unreachable()),
     }
     visit.end();
 }
 
-/// Sends the answer, tells the model it was written, and returns the reply
-/// frame; where none came, a frame that says so.
-fn call(
-    shared: &Shared,
-    visit: &mut Visit,
-    pending: &Pending,
-    command: &Command,
-    wait: Duration,
-) -> Value {
-    let silent = || json!({"error": {"message": NO_REPLY, "data": {"reason": NO_REPLY}}});
-    let Ok(id) = visit.socket.send(command) else {
-        return silent();
-    };
-    sent(shared, pending);
-    match visit.socket.reply(id, wait, &mut |_| {}) {
-        Ok(Came::Frame(reply)) if result(&reply).is_ok() || refusal(&reply).is_some() => reply,
-        _ => silent(),
-    }
+/// One answer on its way: what it answers, and the instance that asked.
+struct Going<'a> {
+    shared: &'a Shared,
+    pending: &'a Pending,
+    instance: &'a Instance,
 }
 
-/// The answer was written: the model hears it, and the card is remembered
-/// as answered here so its receipt can be given when it closes.
-fn sent(shared: &Shared, pending: &Pending) {
-    let id = pending.id();
-    let mut model = shared.model();
-    if model.stopped {
-        return;
+impl Going<'_> {
+    /// Writes one frame of the answer, if the answer may still go: the
+    /// observer runs, the request still has its card, the gateway is still
+    /// the instance that asked. The check and the write are one step under
+    /// the model's lock, so stopping the observer, or closing the card,
+    /// comes wholly before it, and nothing is written, or wholly after.
+    /// Then the model hears the answer was written, and the card is
+    /// remembered as answered here for its receipt. The frame is a few
+    /// hundred bytes to a socket on this machine: writing it does not wait
+    /// on the gateway. None where nothing was written.
+    fn written<T>(
+        &self,
+        visit: &mut Visit,
+        write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
+    ) -> Option<T> {
+        let id = self.pending.id();
+        let mut model = self.shared.model();
+        if !model.current(&id, self.instance) {
+            return None;
+        }
+        let done = write(&mut visit.socket).ok()?;
+        self.shared.log.line(&format!("answer sent id={id}"));
+        let batch = matches!(self.pending.ask, Ask::Batch(_));
+        model.answered.insert(id.clone(), batch);
+        self.shared.take(&mut model, Input::Sent { request: &id });
+        Some(done)
     }
-    shared.log.line(&format!("answer sent id={id}"));
-    let batch = matches!(pending.ask, Ask::Batch(_));
-    model.answered.insert(id.clone(), batch);
-    shared.take(&mut model, Input::Sent { request: &id });
+
+    /// Sends the answer and returns the reply frame; where none came, a
+    /// frame that says so. An answer Hermes could not take just now is
+    /// sent once more, while it may still go. None where it never left.
+    fn asked(&self, visit: &mut Visit, command: &Command, wait: Duration) -> Option<Value> {
+        let told = self.heard(visit, command, wait)?;
+        if !refusal(&told).is_some_and(|refused| refused.retryable()) {
+            return Some(told);
+        }
+        self.shared.pause(AGAIN);
+        let id = self.pending.id();
+        if refusal(&told) == Some(Refusal::PermissionDenied) {
+            // Not subscribed after all: subscribe again, if it still matters.
+            if !self.shared.current(&id, self.instance) {
+                return Some(told);
+            }
+            let _ = visit.call(&resume(&self.pending.session, Scope::Host), wait);
+        }
+        // What the first try was told stands where the second never left.
+        Some(self.heard(visit, command, wait).unwrap_or(told))
+    }
+
+    /// One try: the write, then the reply.
+    fn heard(&self, visit: &mut Visit, command: &Command, wait: Duration) -> Option<Value> {
+        let silent = || json!({"error": {"message": NO_REPLY, "data": {"reason": NO_REPLY}}});
+        let id = self.written(visit, |socket| socket.send(command))?;
+        Some(match visit.reply(id, wait) {
+            Ok(Came::Frame(reply)) if result(&reply).is_ok() || refusal(&reply).is_some() => reply,
+            _ => silent(),
+        })
+    }
 }
 
 fn unreachable() -> String {

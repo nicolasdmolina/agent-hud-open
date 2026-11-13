@@ -343,8 +343,11 @@ fn a_gateway_waiting_to_restart_can_still_be_answered() {
         identify(&answer, home),
         Identified::Failed(Failure::Invalid("invalid_runtime_state"))
     );
-    // Only this machine's own gateway is ever dialled.
+    // Only this machine's own gateway is ever dialled, and only over plain
+    // HTTP: any other origin is left to the hooks.
     for origin in [
+        "https://127.0.0.1:5000",
+        "https://[::1]:5000",
         "http://192.168.1.4:5000",
         "http://example.com:5000",
         "http://127.0.0.1",
@@ -355,10 +358,15 @@ fn a_gateway_waiting_to_restart_can_still_be_answered() {
         answer["api_origin"] = json!(origin);
         assert_eq!(
             identify(&answer, home),
-            Identified::Failed(Failure::Invalid("invalid_api_origin")),
+            Identified::Unsupported(Unsupported::Origin),
             "{origin}"
         );
     }
+    let mut answer = ready("one", &["default"]);
+    answer["api_origin"] = json!("http://[::1]:5000/");
+    assert!(
+        matches!(identify(&answer, home), Identified::Ready(instance) if instance.port == 5000)
+    );
 }
 
 #[test]

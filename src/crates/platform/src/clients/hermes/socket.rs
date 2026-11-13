@@ -149,18 +149,6 @@ impl Socket {
         }
     }
 
-    /// Makes one call and waits for its reply, passing every other frame
-    /// that arrives meanwhile to `other`.
-    pub(super) fn call(
-        &mut self,
-        command: &Command,
-        wait: Duration,
-        other: &mut dyn FnMut(&Value),
-    ) -> Result<Reply, Failure> {
-        let id = self.send(command)?;
-        self.reply(id, wait, other)
-    }
-
     /// Waits for the reply to the call sent with `id`.
     pub(super) fn reply(
         &mut self,
