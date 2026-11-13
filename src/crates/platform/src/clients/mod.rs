@@ -5,6 +5,7 @@
 pub mod antigravity;
 pub mod codex;
 pub(crate) mod deepseek;
+pub mod hermes;
 
 /// Whether the client's native channel runs on this OS.
 pub(crate) fn runs(channel: &agent_hud_agents::Channel) -> bool {

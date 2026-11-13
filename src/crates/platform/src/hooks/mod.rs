@@ -62,6 +62,7 @@ pub struct Hooks {
     antigravity: Option<crate::clients::antigravity::permissions::Observer>,
     deepseek: Option<crate::clients::deepseek::questions::Observer>,
     deepseek_plugin: Option<crate::deepseek_plugin::asks::Observer>,
+    hermes: Option<crate::clients::hermes::Observer>,
     server: Option<transport::Server>,
     desktop: Option<crate::clients::codex::desktop::CodexDesktopObserver>,
 }
@@ -80,6 +81,7 @@ impl Hooks {
             antigravity: None,
             deepseek: None,
             deepseek_plugin: None,
+            hermes: None,
             clients: clients::Clients::with_channel(data.join("hook-channel")),
             data,
             requests,
@@ -165,6 +167,7 @@ impl Hooks {
             self.antigravity.take();
             self.deepseek.take();
             self.deepseek_plugin.take();
+            self.hermes.take();
             self.desktop.take();
             self.server.take();
             return Ok(());
@@ -182,7 +185,7 @@ impl Hooks {
         )?;
         // Each client's native channel starts only where its descriptor
         // says it runs.
-        use crate::clients::{self, antigravity, codex, deepseek};
+        use crate::clients::{self, antigravity, codex, deepseek, hermes};
         use agent_hud_agents as agents;
         let desktop = clients::runs(&agents::codex::DESKTOP)
             .then(|| {
@@ -208,6 +211,13 @@ impl Hooks {
             use crate::deepseek_plugin::{asks, channel_directory, DeepSeekChannel};
             self.deepseek_plugin = Some(asks::Observer::start(
                 DeepSeekChannel::new(channel_directory(&self.data)),
+                self.requests.clone(),
+                self.wake.clone(),
+            )?);
+        }
+        if clients::runs(&agents::hermes::GATEWAY) {
+            self.hermes = Some(hermes::Observer::start(
+                &self.data,
                 self.requests.clone(),
                 self.wake.clone(),
             )?);
@@ -244,6 +254,14 @@ impl Hooks {
                     flag,
                     &serde_json::json!({"transcript_path":path}),
                 );
+            }
+        }
+        // A turn that started, waits or ended is a reason to ask its
+        // client's native channel what waits now.
+        if let Some(hermes) = &self.hermes {
+            let its = agent_hud_agents::hermes::AGENT.id;
+            if events.iter().any(|event| event.source == its) {
+                hermes.nudge();
             }
         }
         events.sort_by_key(|event| event.at_ms);

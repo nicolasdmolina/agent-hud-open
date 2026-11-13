@@ -1,0 +1,137 @@
+//! The connection against a gateway: a pretend one on real sockets that
+//! speaks the frames Hermes 0.22.5 was recorded sending (`fake.rs`), and,
+//! when asked for by hand, a real one in a Hermes home of its own
+//! (`live.rs`).
+use super::{Observer, Pace};
+use agent_hud_agents::hermes::AGENT;
+use agent_hud_core::requests::Requests;
+use fake::Fake;
+use serde_json::Value;
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+// Unix only, as the control socket is; the files sit in `tests/`.
+#[path = "tests/cards.rs"]
+mod cards;
+#[path = "tests/fake.rs"]
+mod fake;
+#[path = "tests/handshake.rs"]
+mod handshake;
+#[path = "tests/live.rs"]
+mod live;
+#[path = "tests/reconnect.rs"]
+mod reconnect;
+
+/// The pace of the tests: everything the app waits seconds for, in
+/// hundredths of them.
+fn quick() -> Pace {
+    Pace {
+        retry: Duration::from_millis(20),
+        retry_limit: Duration::from_millis(80),
+        unsupported: Duration::from_millis(120),
+        gap: Duration::from_millis(5),
+        watch: Duration::from_millis(30),
+        warm: Duration::from_millis(300),
+        // Long enough for a machine busy with other builds to answer.
+        answer: Duration::from_secs(2),
+        trace: false,
+    }
+}
+
+/// A Hermes home and an app data folder of the user's own, and the
+/// requests the connection registers its cards with.
+struct Lab {
+    home: PathBuf,
+    data: PathBuf,
+    requests: Requests,
+    observer: Option<Observer>,
+    _temp: tempfile::TempDir,
+}
+
+fn lab() -> Lab {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let (home, data) = (root.join("home"), root.join("data"));
+    crate::os::private_directory(&home).unwrap();
+    crate::os::private_directory(&data).unwrap();
+    Lab {
+        home,
+        data,
+        requests: Requests::default(),
+        observer: None,
+        _temp: temp,
+    }
+}
+
+impl Lab {
+    /// Starts following the gateway of the home, as turning hooks on does.
+    fn follow(&mut self) {
+        let wake = Arc::new(|| {});
+        let observer = Observer::start_at(
+            self.home.clone(),
+            &self.data,
+            self.requests.clone(),
+            wake,
+            quick(),
+        );
+        self.observer = Some(observer.unwrap());
+    }
+    fn cards(&self) -> Vec<Value> {
+        self.requests.views(crate::hooks::now_ms())
+    }
+    fn log(&self) -> String {
+        std::fs::read_to_string(self.data.join("hermes-gateway.log")).unwrap_or_default()
+    }
+    /// The sessions core was told wait on a card.
+    fn waiting(&self) -> Vec<String> {
+        let all = self.requests.native_waiting_sessions();
+        let mut sessions: Vec<String> = all.get(AGENT.id).into_iter().flatten().cloned().collect();
+        sessions.sort();
+        sessions
+    }
+    /// Plays a recording into the gateway and has it say that its sessions
+    /// changed, as Hermes does when a turn starts.
+    fn hears(&self, gateway: &Fake, recording: &str, through: &str) -> String {
+        let session = gateway.play(recording, Some(through));
+        gateway.say("sessions.changed");
+        session
+    }
+    /// Waits until exactly one card shows and returns it.
+    fn card(&self) -> Value {
+        until("one card shows", || self.cards().len() == 1);
+        self.cards().remove(0)
+    }
+    fn delivery(&self, id: &str) -> Value {
+        let found = |row: &Value| row["id"] == id;
+        until("the answer has a receipt", || {
+            self.requests
+                .deliveries(crate::hooks::now_ms())
+                .iter()
+                .any(found)
+        });
+        let rows = self.requests.deliveries(crate::hooks::now_ms());
+        rows.into_iter().find(found).unwrap()
+    }
+}
+
+/// A test that fails says what the connection logged.
+impl Drop for Lab {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("the connection's log:\n{}", self.log());
+        }
+    }
+}
+
+/// Waits for `met`, which takes hundredths of a second; the limit is for a
+/// machine busy with other builds.
+fn until(what: &str, mut met: impl FnMut() -> bool) {
+    let limit = Instant::now() + Duration::from_secs(20);
+    while !met() {
+        assert!(Instant::now() < limit, "never happened: {what}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}

@@ -26,11 +26,12 @@ Add one row for every difference the fork introduces.
 | Known gaps | Not changed, upstream behavior: turning hooks off leaves `"hooks": {}` in a settings file that had no `hooks` key (Devin's `config.json`), and leaves the files and folders turning on created (Cursor `hooks.json`, Gemini `config/hooks.json`, Copilot `hooks/agent-hud.json`, empty `opencode/plugin` and `copilot/hooks`). Claude Code, Codex and Hermes files come back byte-identical | `src/crates/agents/src/hooks/patch.rs` | Harmless to the clients; fixing it means remembering what existed before turning on | 04 |
 | Known gaps | Not changed, unverified: Linux autostart still moves and deletes the official `com.agenthud.next.preview.desktop` entry (`src/crates/host/src/system/linux.rs`); local network sharing names its keychain items `app.agenthud.local-network.<device>` like the official app (`src/crates/lan/src/credentials.rs`, `identity/macos.rs`, `identity/windows.rs`), so a reused `share.json` device id would share them; inert since ticket 08, as phone sharing never starts (row Phone sharing) | — | Linux is out of scope; the official app is never installed | 03, 08 |
 | Hermes usage | A running session's usage rows count as running totals: the first counts stay at `first_seen`, and later growth is its own event per 15-minute period, dated at the read, or at the row's `last_seen` when that moved past the previous read's stamp (Open always dates it at the read). A session is read again when its activity or its token counts change. | `src/crates/agents/src/transcript/running_totals.rs`, `src/crates/agents/src/transcript/records.rs`, `src/crates/agents/src/hermes/transcript.rs`, `src/crates/core/src/source_db/scan.rs` | Hermes tokens froze until a session ended, then landed at its start. Dating at a `last_seen` that moved keeps growth read after a relaunch at the time it happened; a stale stamp falls back to the read time. Parity c02c rows 59 (better) and 60 (fixed). | 10 |
-| Hermes | Declares Hermes's local gateway as a native channel that carries requests, and adds its pure half: the shapes, frames to cards, decisions to frames, and the polls that keep the cards matching what Hermes says waits. Nothing connects yet. | `src/crates/agents/src/hermes/mod.rs`, `src/crates/agents/src/hermes/gateway/`, `src/crates/agents/tests/fixtures/hermes/gateway/`, `docs/agent-contract.md`, `docs/third-party.md` | Hermes's shell hooks only observe. The gateway is the only way to show what a session asks and to answer it. See "Hermes live channel" below. | 12 |
+| Hermes | Declares Hermes's local gateway as a native channel that carries requests, and adds its pure half: the shapes, frames to cards, decisions to frames, and the polls that keep the cards matching what Hermes says waits. The connection is the next row. | `src/crates/agents/src/hermes/mod.rs`, `src/crates/agents/src/hermes/gateway/`, `src/crates/agents/tests/fixtures/hermes/gateway/`, `docs/agent-contract.md`, `docs/third-party.md` | Hermes's shell hooks only observe. The gateway is the only way to show what a session asks and to answer it. See "Hermes live channel" below. | 12 |
+| Hermes | The connection to Hermes's local gateway: finds the control socket in the Hermes home, gets a ticket as the same user, opens the WebSocket, runs the model's polls and does what it says. A question or an approval Hermes waits on shows as a request card within a second and goes when Hermes settles it; an answer given on the card is sent on a socket of its own. It starts and stops with the client hooks setting, reconnects when the gateway restarts, leaves a gateway without the live connection to the hooks, and logs to `hermes-gateway.log` in the data folder. It never writes under a Hermes home and never keeps a ticket. | `src/crates/platform/src/clients/hermes/`, `src/crates/platform/src/clients/mod.rs`, `src/crates/platform/src/hooks/mod.rs` | The model of ticket 12 connected nothing. See "The connection, as built" below. | 13 |
 
 ## Hermes live channel
 
-Design for tickets 12 to 16. The pure half is built (ticket 12). The connection is ticket 13.
+Design for tickets 12 to 16. The pure half is built (ticket 12), and so is the connection (ticket 13, "The connection, as built" below).
 
 ### Shapes
 
@@ -87,6 +88,45 @@ The connection goes in `src/crates/platform/src/clients/hermes/`, started from `
 11. **Never.** Write under a Hermes home. Send `end_reason` on detach, which would close Nicky's session. Answer or show a `sudo` or `secret` request. Hold the collection gate while waiting on the network.
 
 Still to measure in ticket 13: how long a whole poll takes against the one-second target (one list for each profile, two or more calls for each busy session, and the poll's own time adds to the age of what it found); how often real sessions need a snapshot, what one costs Hermes, and how large its reply is; how many calls the search for the oldest event takes on real streams; whether the poll's own list call makes Hermes publish a late `approval.settled`; and whether Hermes's `on_human_input_request` hook should be installed as the push for questions (today's hooks push approvals only). Unproven against a real gateway: the `profile` parameter on calls other than the two list calls (Hermes's dispatch routes every method by it, `gateway/session_controls.py:280`), a JSON list as an answer inside a set of questions (`tools/clarify_tool.py`, `_clean_answer`), Telegram sessions, a real old gateway, a draining one, and a stream past 512 events (the search for its oldest event is from source and a pretend gateway, not a recording).
+
+### The connection, as built (ticket 13)
+
+In `src/crates/platform/src/clients/hermes/`. `hooks::configure` starts it with the other native channels when client hooks are turned on and drops it when they are turned off, which withdraws its cards.
+
+| File | Holds |
+| --- | --- |
+| `mod.rs` | `Observer`: the Hermes home, the model behind one lock, the pace. `nudge()` is the hooks saying a turn started, waits or ended. |
+| `control.rs`, `control/unix.rs` | The control socket: one line in, one out. Unix checks that the home, the pointer, its folder and the socket are the user's own and that the listener is the same user. `control/windows.rs` answers that nothing is there. |
+| `socket.rs` | One WebSocket opened with a ticket. Every wait has an end. |
+| `link.rs` | Identify, ticket, dial, polls until the socket is lost, then again with a growing wait. |
+| `polls.rs` | One poll: the steps of a round go out together, each reply goes to the model. |
+| `visit.rs` | A socket of its own for one session: ticket, `session.resume`, the snapshot or the answer, `session.detach` without `end_reason`, close. |
+| `answer.rs` | A decision made on a card, sent on a visit, and what Hermes replied given to the model. |
+| `effects.rs` | Each effect as a call on core's requests, and the receipt of each answer. |
+| `log.rs` | `hermes-gateway.log`: the connection's state, each card by id as it opens and closes, each answer sent. Never a question's words, an answer or a ticket. |
+
+Where it differs from the list above:
+
+- **Answers come through core's waiter, not `Requests::checked`.** `register_native` returns the place a card's decision arrives, as for the other native channels. Core puts the card away when it is answered. The connection sends the answer; if Hermes refuses it or says nothing, the card comes back under the same id with a failed or uncertain receipt (`Effect::Unanswered`). A reply of `already_resolved` or `stale_generation` closes it with a failed receipt saying Hermes no longer waited.
+- **Frames up to 64 MiB, not 8.** `session.resume` returns a session's whole history and answering needs it. At 8 MiB a long session could never be answered.
+- **The timer.** The wait runs from when a poll began, not from when it ended. While the gateway lists any live session, a poll begins at least every 0.8 s (`Pace::watch`), whatever the model's timer says; for 5 s after a hint or a hook asked for a poll, too (`Pace::warm`). With the model's timer alone (10 s while every session is idle), a question asked just after a turn began showed 1.5 to 2.7 s late, and one answered elsewhere within 3 s never showed: Hermes's hints arrived 6 s apart and `sessions.changed` not at all. Hermes's desktop app asks the same list every 1.5 s. Two polls never begin less than 250 ms apart, and never run together.
+- **A home its group may write is refused**, where Hermes looks up whether the group is the user's private one.
+- **A socket for one answer or one snapshot that fails tells the model nothing.** Only the socket the polls run on says whether the gateway is there.
+- **An answer is sent only while its card still exists.** A gateway that restarted between the answer and its sending closed the card; nothing is sent to the new instance for it.
+- **A gateway that cannot be reached is said once.** The state does not go back and forth with every dial. Dials wait 250 ms, then twice as long each time up to 5 s; a gateway without the live connection is asked again every 5 minutes.
+
+Measured against Hermes 0.22.5 in a home of its own, a profile set to ask, a scripted model (ticket 13's Answer has the runs):
+
+- From Hermes asking to the card, on the installed fork: 2 to 732 ms over 12 questions and 6 approvals, median about 230 ms. In a development build: 13 to 775 ms over 27, median about 400 ms. That is polling alone: no hook of that gateway reached the fork.
+- One poll with nothing running: two calls (one list for each of two profiles). With a session working: four calls. On the installed fork 120 polls took 13 to 25 ms on average, the slowest 371 ms, and one of them took a snapshot.
+- Killing the gateway while a question waits: the card stays until the gateway is back as another instance, then closes as `GatewayRestarted`, and the next question shows, with no relaunch. The same after a clean stop, where Hermes cancels the request as it goes: the card still stays the 15 s until the new instance is up, because a lost socket alone closes nothing.
+- The `profile` parameter routes every call on a host's socket, not only the lists: questions in the default profile and in a named one were read and answered on the same socket.
+- A set of questions answered with a result frame is taken: Hermes sent `request.cancel` with reason `resolved`.
+- `on_human_input_request` is not installed as a hook. Polling meets the target without it, and each new handler is one more that Hermes asks the person to approve.
+
+Not exercised against a real gateway: a stream past 512 events (the one snapshot above was of a short stream; how large a long session's snapshot is was not measured), a poll started by a hook (the test home's path is too long for the fork's hook socket, so that gateway's hooks could not reach it; `nudge()` is tested against the pretend gateway), Telegram sessions, a real old gateway, a draining one, a pointer file, Linux. Windows is not built: `control/windows.rs` is a stub.
+
+To check against a real gateway, never use a Hermes home in use. Make a throwaway home with its own gateway (`HOME` and `HERMES_HOME` both redirected, as ticket 11 did), and run the hand-run test in `tests/live.rs`: `AGENT_HUD_HERMES_LAB=<home> cargo test -p agent-hud-platform --lib hermes::tests_unix::live -- --ignored --nocapture`.
 
 ### For tickets 14 to 16
 
