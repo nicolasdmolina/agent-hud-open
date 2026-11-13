@@ -1,6 +1,6 @@
 # Development
 
-An independent monorepo for migrating Agent HUD to Tauri 2, React and a portable Rust runtime. **This is an implementation in progress, not full feature parity with the Swift app.** It uses its own settings and database. It reads legacy preferences once when its own settings are absent, and never writes the original usage database. Client hooks require explicit enablement and a delegated canonical executable.
+An independent monorepo for migrating Agent HUD to Tauri 2, React and a portable Rust runtime. **This is an implementation in progress, not full feature parity with the Swift app.** It uses its own settings and database. It reads legacy preferences once when its own settings are absent, and never writes the original usage database. Client hooks require explicit enablement and a delegated canonical executable, which a build gets only from `AGENT_HUD_HOOK_OWNER` (see [client hooks](client-hooks.md)).
 
 All implementation code lives under `src/`:
 
@@ -69,7 +69,7 @@ provider acquisition are not yet qualified.
 
 For MCP clients, launch the `tsx` binary with the absolute path to `src/apps/mcp/src/index.ts`, or use the configuration in [the MCP app](../src/apps/mcp/README.md). `AGENTHUD_ENGINE` can point to an installed engine executable; the local default is `target/debug/agent-hud-engine`.
 
-Settings, Statistics and the floating HUD run as separate windows of the single running application. Preview builds keep client-hook installation disabled unless a delegated canonical executable path is provided, preserving existing client hook configurations.
+Settings, Statistics and the floating HUD run as separate windows of the single running application. Preview builds keep client-hook installation disabled unless a delegated canonical executable path is provided, preserving existing client hook configurations. Set `AGENT_HUD_HOOK_OWNER` to the installed executable's absolute path when building to provide it; `src/tooling/fork-install.sh` does this for the fork.
 
 ## Implemented
 
