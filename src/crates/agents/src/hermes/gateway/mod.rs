@@ -9,6 +9,7 @@
 //! all there is for a gateway without this connection (`Unsupported`).
 mod ask;
 mod card;
+mod cards;
 mod command;
 mod connection;
 mod decision;
@@ -27,10 +28,10 @@ pub use connection::{
     SESSION_AUTHORITY,
 };
 pub use decision::{Answer, NotOffered, Reply};
-pub use effect::{Closed, Effect, Input, Status};
+pub use effect::{Closed, Effect, Input, Run, Status};
 pub use frame::{answered, event, frame, refusal, Answered, Cursor, Event, Frame, Refusal};
 pub use identity::{GatewayId, Profile, SessionRef};
-pub use state::Gateway;
+pub use state::{Gateway, BUSY_POLL_MS, IDLE_POLL_MS};
 pub use ticket::{
     granted, identify_line, pointed_socket, ticket_line, Scope, Ticket, CONTROL_POINTER,
     CONTROL_SOCKET, SOCKET_PATH, SUBPROTOCOL,

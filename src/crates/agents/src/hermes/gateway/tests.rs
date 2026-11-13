@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 mod decisions;
 mod handshake;
+mod regressions;
 mod replay;
 mod scenarios;
 mod transitions;

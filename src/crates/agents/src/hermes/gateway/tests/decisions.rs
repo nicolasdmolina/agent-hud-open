@@ -14,6 +14,7 @@ fn asked(name: &str, kind: &str) -> Pending {
         if entry["dir"] == "in" && is {
             let effects = gateway.apply(
                 Input::Frame {
+                    run: gateway.run(),
                     profile: &spike(),
                     frame: sent,
                 },
@@ -115,6 +116,7 @@ fn several_picks_go_as_a_list_in_the_answer() {
     for entry in doc["clients"]["hud"].as_array().unwrap() {
         let effects = gateway.apply(
             Input::Frame {
+                run: gateway.run(),
                 profile: &spike(),
                 frame: &entry["frame"],
             },
@@ -308,7 +310,7 @@ fn a_card_offers_only_what_hermes_offers() {
     assert_eq!(question["createdAt"], "2026-11-12T23:20:00+00:00");
     assert_eq!(
         question["questions"],
-        json!([{"id": "715a2db63d", "answerKey": "715a2db63d", "header": null, "multiSelect": false,
+        json!([{"id": "715a2db63d", "answerKey": "715a2db63d", "header": null, "multiSelect": false, "lock": null,
             "question": "Which color should the widget be?", "options": [
                 {"label": "blue (Recommended)", "description": null},
                 {"label": "green", "description": null}, {"label": "red", "description": null}]}])

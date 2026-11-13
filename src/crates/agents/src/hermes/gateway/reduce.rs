@@ -1,13 +1,13 @@
 //! How the gateway's state follows what Hermes says as it happens: each
 //! event of a session's stream, and each request the gateway makes of its
 //! viewers. `readings` holds what is read on request.
-use super::ask::{Ask, Pending};
+use super::ask::Ask;
+use super::cards::Heard;
 use super::effect::{Closed, Effect, Status};
 use super::frame::{frame, Event, Frame};
-use super::identity::{Profile, SessionRef};
-use super::state::{Gateway, Open, Session};
+use super::identity::Profile;
+use super::state::Gateway;
 use serde_json::Value;
-use std::collections::BTreeSet;
 
 impl Gateway {
     pub(super) fn frame(
@@ -18,12 +18,15 @@ impl Gateway {
         effects: &mut Vec<Effect>,
     ) {
         match frame(value) {
-            Frame::Event(event) => self.event(profile, &event, now_ms, effects),
+            Frame::Event(event) => self.event(profile, &event, Heard::Live, now_ms, effects),
             Frame::Request { id, method, params } => {
                 let session = params["session_id"].as_str().unwrap_or("");
                 if let (false, Some(ask)) = (session.is_empty(), Ask::batch(id, method, params)) {
-                    self.entry_mut(profile, session);
-                    self.show(self.session(profile, session), ask, None, effects);
+                    // A request is not an event and has no place in the
+                    // stream of its own: it waits from where the stream is.
+                    let seen = self.entry_mut(profile, session).cursor.clone();
+                    let at = self.session(profile, session);
+                    self.show(at, ask, seen, Heard::Live, None, now_ms, effects);
                 }
             }
             Frame::Reply { .. } | Frame::Other => {}
@@ -34,6 +37,7 @@ impl Gateway {
         &mut self,
         profile: &Profile,
         event: &Event<'_>,
+        heard: Heard,
         now_ms: i64,
         effects: &mut Vec<Effect>,
     ) {
@@ -47,24 +51,46 @@ impl Gateway {
         }
         let at = self.session(profile, event.session);
         let session = self.entry_mut(profile, event.session);
+        let mut moved = false;
         if let Some(seen) = &event.at {
             match &mut session.cursor {
-                // Read already, through the socket or an earlier replay.
-                Some(cursor) if cursor.epoch == seen.epoch && seen.seq <= cursor.seq => return,
-                Some(cursor) if cursor.epoch == seen.epoch => cursor.seq = seen.seq,
+                Some(cursor) if cursor.epoch == seen.epoch => {
+                    // Read already, through the socket or an earlier replay.
+                    if seen.seq <= cursor.seq {
+                        return;
+                    }
+                    cursor.seq = seen.seq;
+                }
+                // From a stream the session had before: it arrives late.
+                Some(_) if session.left.contains(&seen.epoch) => return,
+                Some(cursor) => {
+                    let before = std::mem::replace(cursor, seen.clone());
+                    session.left.push(before.epoch);
+                    moved = true;
+                }
                 cursor => *cursor = Some(seen.clone()),
             }
         }
+        // An event of a turn says that turn is under way, or was.
+        if let Some(turn) = event.generation {
+            session.active = session.active.max(Some(turn));
+        }
+        let newest = event
+            .generation
+            .is_none_or(|turn| session.active == Some(turn));
         match event.kind {
             "clarify.request" | "approval.request" => {
                 if let Some((ask, wait_ms)) = Ask::prompt(event.payload) {
-                    let deadline = wait_ms.map(|wait| now_ms.saturating_add(wait));
-                    self.show(at, ask, deadline, effects);
+                    let seen = event.at.clone();
+                    self.show(at.clone(), ask, seen, heard, wait_ms, now_ms, effects);
                 }
             }
             "clarify.settled" | "approval.settled" => {
                 if let Some(prompt) = crate::text(&event.payload["prompt_id"]) {
-                    self.close(&at.request_id(prompt), Closed::Settled, effects);
+                    let turn = event.payload["execution_generation"]
+                        .as_u64()
+                        .or(event.generation);
+                    self.end(&at, &at.request_id(prompt), Closed::Settled, turn, effects);
                 }
             }
             "request.cancel" => {
@@ -76,103 +102,43 @@ impl Gateway {
                     other => Closed::Withdrawn(other.to_owned()),
                 };
                 if let Some(request) = crate::text(&event.payload["id"]) {
-                    self.close(&at.request_id(request), why, effects);
+                    self.end(&at, &at.request_id(request), why, None, effects);
                 }
             }
-            "message.start" => session.phase = Status::Working,
+            "message.start" if newest => session.phase = Status::Working,
             "message.complete" => {
-                session.phase = Status::Idle;
-                session.retired.clear();
+                // Only the turn that ended, and those before it: a
+                // completion read late does not make a newer turn idle,
+                // take its card, or forget what it settled. A set of
+                // questions names no turn; Hermes withdraws it.
+                let Some(ended) = event.generation else {
+                    return;
+                };
+                if newest {
+                    session.phase = Status::Idle;
+                }
+                session.ended = session.ended.max(Some(ended));
                 let why = match event.payload["status"].as_str() {
                     Some("interrupted") => Closed::Interrupted,
                     _ => Closed::TurnEnded,
                 };
-                // Only what was asked in the turn that ended, or before it:
-                // a completion read late must not take a newer turn's card.
-                // A set of questions names no turn; Hermes withdraws it.
-                let Some(ended) = event.generation else {
-                    return;
-                };
                 for id in self.asked(&at, |ask| ask.generation().is_some_and(|g| g <= ended)) {
                     self.close(&id, why.clone(), effects);
                 }
+                // What ended with the turn needs no memory of its own: a
+                // request of a turn that ended is never shown.
+                self.entry_mut(profile, event.session)
+                    .retired
+                    .retain(|_, turn| turn.is_none_or(|turn| turn > ended));
             }
             _ => {}
         }
-    }
-
-    /// Shows a request, unless it is shown already or was closed this turn.
-    pub(super) fn show(
-        &mut self,
-        at: SessionRef,
-        ask: Ask,
-        deadline_ms: Option<i64>,
-        effects: &mut Vec<Effect>,
-    ) {
-        let id = at.request_id(ask.key());
-        let retired = self
-            .sessions
-            .get(&(at.profile.clone(), at.id.clone()))
-            .is_some_and(|session| session.retired.contains(&id));
-        if retired || self.open.contains_key(&id) {
-            return;
+        // The stream is a new one. What was last seen in the old one can
+        // no longer be settled by events, and events may have been missed
+        // between the two: a snapshot says what waits now.
+        let gap = event.at.as_ref().is_some_and(|seen| seen.seq > 1);
+        if moved && heard == Heard::Live && (gap || self.strays(&at)) {
+            Self::resume(&at, effects);
         }
-        let pending = Pending {
-            session: at,
-            ask,
-            deadline_ms,
-        };
-        effects.push(Effect::Open(pending.clone()));
-        self.open.insert(
-            id,
-            Open {
-                pending,
-                sent_ms: None,
-            },
-        );
-    }
-
-    pub(super) fn close(&mut self, id: &str, why: Closed, effects: &mut Vec<Effect>) {
-        let Some(open) = self.open.remove(id) else {
-            return;
-        };
-        let at = open.pending.session;
-        if let Some(session) = self.sessions.get_mut(&(at.profile.clone(), at.id.clone())) {
-            session.retired.insert(id.to_owned());
-        }
-        effects.push(Effect::Close {
-            id: id.to_owned(),
-            session: at.hud_id(),
-            why,
-        });
-    }
-
-    /// Forgets everything about the gateway's sessions, closing every card.
-    pub(super) fn reset(&mut self, why: Closed, effects: &mut Vec<Effect>) {
-        for id in self.open.keys().cloned().collect::<Vec<_>>() {
-            self.close(&id, why.clone(), effects);
-        }
-        self.sessions.clear();
-    }
-
-    /// The ids of the session's open requests that `which` picks.
-    pub(super) fn asked(&self, at: &SessionRef, which: impl Fn(&Ask) -> bool) -> Vec<String> {
-        self.open
-            .iter()
-            .filter(|(_, open)| open.pending.session == *at && which(&open.pending.ask))
-            .map(|(id, _)| id.clone())
-            .collect()
-    }
-
-    pub(super) fn entry_mut(&mut self, profile: &Profile, id: &str) -> &mut Session {
-        self.sessions
-            .entry((profile.clone(), id.to_owned()))
-            .or_insert_with(|| Session {
-                phase: Status::Idle,
-                cursor: None,
-                subscription: None,
-                snapshot_at: None,
-                retired: BTreeSet::new(),
-            })
     }
 }

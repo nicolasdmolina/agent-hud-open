@@ -1,7 +1,7 @@
 //! The card a pending request shows, in the one shape every request view
 //! has (`Approval` in the protocol package). The card offers only what
 //! Hermes offers.
-use super::ask::{Approval, Ask, Choice, Pending};
+use super::ask::{Approval, Ask, Choice, Locked, Pending};
 use crate::hermes::AGENT;
 use serde_json::{json, Value};
 
@@ -29,7 +29,11 @@ impl Pending {
                 batch
                     .questions
                     .iter()
-                    .map(|q| question_item(&q.qid, &q.text, &q.choices, q.multi_select))
+                    .map(|q| {
+                        let mut item = question_item(&q.qid, &q.text, &q.choices, q.multi_select);
+                        item["lock"] = lock(q.locked.as_ref());
+                        item
+                    })
                     .collect(),
             ),
             Ask::Approval(approval) => permission(approval),
@@ -52,7 +56,19 @@ fn question_item(key: &str, text: &str, choices: &[String], multi_select: bool) 
             .map(|label| json!({"label": label, "description": null}))
             .collect::<Vec<_>>(),
         "multiSelect": multi_select,
+        "lock": null,
     })
+}
+
+/// What another viewer already did with one question of a set: answered
+/// it, or skipped it. An answer given on this card replaces it; a question
+/// left alone keeps it.
+fn lock(locked: Option<&Locked>) -> Value {
+    match locked {
+        Some(Locked::Answered(answer)) => json!({"state": "answered", "answer": answer}),
+        Some(Locked::Skipped) => json!({"state": "skipped"}),
+        None => Value::Null,
+    }
 }
 
 fn questions(items: Vec<Value>) -> Value {

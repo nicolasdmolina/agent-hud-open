@@ -3,27 +3,44 @@
 //! what to do about it; nothing here reads a socket or a clock.
 //!
 //! A card is never left for a request that is over. It closes when Hermes
-//! says the request settled, when its turn ends, when its own time runs
-//! out, when an answer to it comes back as already resolved or stale, when
-//! its session leaves the live list, and when the gateway restarts.
+//! says the request settled, when its turn ends, when its known deadline
+//! passes, when an answer to it comes back as already resolved or stale,
+//! when a newer snapshot no longer lists it, when its session leaves the
+//! live list, and when the gateway restarts.
 use super::ask::Pending;
 use super::connection::{identify, Connection, Denied, Failure, Identified, Unsupported};
-use super::effect::{Closed, Effect, Input, Status};
+use super::effect::{Closed, Effect, Input, Run, Status};
 use super::frame::{answered, Answered, Cursor, Refusal};
 use super::identity::{GatewayId, Profile, SessionRef};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+
+/// How often to list the sessions while any of them starts, works or waits,
+/// or a card shows.
+pub const BUSY_POLL_MS: i64 = 1_000;
+/// How often to list them when nothing seems to happen: Hermes's hints and
+/// the hooks can be missed, and this is what finds a turn they did not tell.
+pub const IDLE_POLL_MS: i64 = 10_000;
 
 #[derive(Debug)]
 pub(super) struct Session {
     pub(super) phase: Status,
     pub(super) cursor: Option<Cursor>,
+    /// The epochs its stream had before this one. What is read from one of
+    /// them arrives late and is dropped.
+    pub(super) left: Vec<String>,
+    /// The newest turn seen under way, and the newest seen ended.
+    pub(super) active: Option<u64>,
+    pub(super) ended: Option<u64>,
     pub(super) subscription: Option<String>,
     /// Where the stream was when a snapshot was last asked for.
     pub(super) snapshot_at: Option<Cursor>,
-    /// Requests closed in the turn under way, so that a reading that lags
-    /// behind does not show one again.
-    pub(super) retired: BTreeSet<String>,
+    /// Where a reading went on from without having read what came before.
+    pub(super) skipped: Option<Cursor>,
+    /// Requests known to be over, each with its turn where it names one,
+    /// whether or not a card ever showed: a reading from before the end
+    /// does not show one again. A turn that ended takes its entries.
+    pub(super) retired: BTreeMap<String, Option<u64>>,
 }
 
 #[derive(Debug)]
@@ -31,6 +48,10 @@ pub(super) struct Open {
     pub(super) pending: Pending,
     /// When its answer was sent, until Hermes says what became of it.
     pub(super) sent_ms: Option<i64>,
+    /// Where in the session's stream it was last known to wait.
+    pub(super) seen: Option<Cursor>,
+    /// How long Hermes said it waits.
+    pub(super) wait_ms: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -39,6 +60,8 @@ pub struct Gateway {
     pub(super) connection: Connection,
     /// The last instance that was ready; another one means a restart.
     pub(super) instance: Option<String>,
+    /// Counts the instances: what an earlier one answers late is dropped.
+    pub(super) run: Run,
     pub(super) sessions: BTreeMap<(Profile, String), Session>,
     pub(super) open: BTreeMap<String, Open>,
 }
@@ -49,6 +72,7 @@ impl Gateway {
             id,
             connection: Connection::Disconnected,
             instance: None,
+            run: Run(0),
             sessions: BTreeMap::new(),
             open: BTreeMap::new(),
         }
@@ -67,9 +91,28 @@ impl Gateway {
     pub fn waiting(&self) -> impl Iterator<Item = &Pending> {
         self.open.values().map(|open| &open.pending)
     }
-    /// The earliest time a card runs out, for the one timer that waits.
+    /// The run to give back with whatever is read from a socket from now on.
+    pub fn run(&self) -> Run {
+        self.run
+    }
+    /// The earliest known deadline of a card.
     pub fn next_deadline(&self) -> Option<i64> {
         self.waiting().filter_map(|p| p.deadline_ms).min()
+    }
+    /// When to send the next `Tick`, for the one timer that waits: the
+    /// earliest deadline or recheck.
+    pub fn next_wake(&self) -> Option<i64> {
+        let rechecks = self.waiting().filter_map(|p| p.recheck_ms);
+        self.next_deadline().into_iter().chain(rechecks).min()
+    }
+    /// How long to wait before listing the sessions again.
+    pub fn poll_ms(&self) -> i64 {
+        let busy = |session: &Session| session.phase != Status::Idle;
+        if !self.open.is_empty() || self.sessions.values().any(busy) {
+            BUSY_POLL_MS
+        } else {
+            IDLE_POLL_MS
+        }
     }
     pub fn session(&self, profile: &Profile, id: &str) -> SessionRef {
         SessionRef {
@@ -111,39 +154,44 @@ impl Gateway {
     }
 
     /// Takes what happened at `now_ms` and returns what to do, in order. A
-    /// request that opens and closes within one reading is never shown.
+    /// request that opens and closes within one reading is never shown, and
+    /// what was read in an earlier run of the gateway is dropped.
     pub fn apply(&mut self, input: Input<'_>, now_ms: i64) -> Vec<Effect> {
         let mut effects = Vec::new();
+        let current = self.run;
         match input {
+            Input::Frame { run, .. }
+            | Input::Listed { run, .. }
+            | Input::Replayed { run, .. }
+            | Input::Resumed { run, .. }
+            | Input::Responded { run, .. }
+                if run != current => {}
             Input::Dialing => self.connect(Connection::Connecting, &mut effects),
             Input::Identified { answer, home } => self.identified(answer, home, &mut effects),
             Input::Denied(Denied::Failed(failure)) | Input::Lost(failure) => {
                 self.lost(failure, &mut effects)
             }
             Input::Denied(Denied::Unsupported(why)) => self.unsupported(why, &mut effects),
-            Input::Frame { profile, frame } => self.frame(profile, frame, now_ms, &mut effects),
-            Input::Listed { profile, result } => self.listed(profile, result, &mut effects),
+            Input::Frame { profile, frame, .. } => self.frame(profile, frame, now_ms, &mut effects),
+            Input::Listed {
+                profile, result, ..
+            } => self.listed(profile, result, &mut effects),
             Input::Replayed {
                 profile,
                 session,
                 result,
+                ..
             } => self.replayed(profile, session, result, now_ms, &mut effects),
-            Input::Resumed { profile, result } => {
-                self.resumed(profile, result, now_ms, &mut effects)
-            }
+            Input::Resumed {
+                profile, result, ..
+            } => self.resumed(profile, result, now_ms, &mut effects),
             Input::Sent { request } => {
                 if let Some(open) = self.open.get_mut(request) {
                     open.sent_ms = Some(now_ms);
                 }
             }
-            Input::Responded { request, reply } => self.responded(request, reply, &mut effects),
-            Input::Tick => {
-                let due = |open: &&Open| open.pending.deadline_ms.is_some_and(|at| at <= now_ms);
-                let late: Vec<String> = self.open.values().filter(due).map(Open::id).collect();
-                for id in late {
-                    self.close(&id, Closed::TimedOut, &mut effects);
-                }
-            }
+            Input::Responded { request, reply, .. } => self.responded(request, reply, &mut effects),
+            Input::Tick => self.tick(now_ms, &mut effects),
         }
         net(effects)
     }
@@ -213,12 +261,6 @@ impl Gateway {
             }
         };
         self.close(request, why, effects);
-    }
-}
-
-impl Open {
-    pub(super) fn id(&self) -> String {
-        self.pending.id()
     }
 }
 

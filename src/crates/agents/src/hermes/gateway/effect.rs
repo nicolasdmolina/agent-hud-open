@@ -28,6 +28,12 @@ impl Status {
     }
 }
 
+/// One run of the gateway as the model follows it: it changes when the
+/// gateway restarts. Everything read from a socket is given back with the
+/// run it was asked in, and what an earlier run answers late is dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Run(pub(super) u64);
+
 /// What happened. A profile comes with everything read through a call,
 /// since the gateway's rows and events do not name theirs.
 #[derive(Clone, Debug)]
@@ -40,32 +46,41 @@ pub enum Input<'a> {
     Denied(Denied),
     /// The gateway could not be reached, or the socket closed.
     Lost(Failure),
-    /// A frame the gateway sent on a socket: an event or a request of its own.
+    /// A frame the gateway sent on a subscribed socket as it happened: an
+    /// event or a request of its own.
     Frame {
+        run: Run,
         profile: &'a Profile,
         frame: &'a Value,
     },
     /// The result of `session.active_list` for one profile.
     Listed {
+        run: Run,
         profile: &'a Profile,
         result: &'a Value,
     },
     /// The result of `session.events.since` for one session.
     Replayed {
+        run: Run,
         profile: &'a Profile,
         session: &'a str,
         result: &'a Value,
     },
     /// The result of `session.resume`: a snapshot, and a subscription.
     Resumed {
+        run: Run,
         profile: &'a Profile,
         result: &'a Value,
     },
     /// The answer to the request with this id was written to the socket.
     Sent { request: &'a str },
     /// The gateway's reply frame to an answer.
-    Responded { request: &'a str, reply: &'a Value },
-    /// Time passed: `now_ms` may be past a deadline.
+    Responded {
+        run: Run,
+        request: &'a str,
+        reply: &'a Value,
+    },
+    /// Time passed: `now_ms` may be past a deadline or a recheck.
     Tick,
 }
 
@@ -98,6 +113,9 @@ pub enum Effect {
     Connection(Connection),
     /// Show the card: register the request.
     Open(Pending),
+    /// The card changed while it waits: show it as it is now, under the
+    /// request it already has (another viewer answered one of its questions).
+    Changed(Pending),
     /// Withdraw the card: the request is over.
     Close {
         id: String,

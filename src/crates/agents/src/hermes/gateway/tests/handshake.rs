@@ -174,6 +174,7 @@ fn a_gateway_describes_itself_and_grants_a_ticket() {
     assert_eq!(
         gateway.apply(
             Input::Frame {
+                run: gateway.run(),
                 profile: &spike(),
                 frame: ready
             },

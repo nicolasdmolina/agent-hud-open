@@ -44,6 +44,7 @@ fn complete(generation: u64, seq: u64, status: &str) -> Value {
 fn feed(gateway: &mut Gateway, frame: &Value, now_ms: i64) -> Vec<Effect> {
     gateway.apply(
         Input::Frame {
+            run: gateway.run(),
             profile: &spike(),
             frame,
         },
@@ -183,6 +184,7 @@ fn an_answer_that_came_too_late_closes_its_card() {
         gateway.apply(Input::Sent { request: &request }, 10);
         let effects = gateway.apply(
             Input::Responded {
+                run: gateway.run(),
                 request: &request,
                 reply,
             },
@@ -329,6 +331,7 @@ fn what_already_waits_is_found_from_the_start_of_the_stream() {
     ]);
     let effects = gateway.apply(
         Input::Listed {
+            run: gateway.run(),
             profile: &spike(),
             result: &rows,
         },
@@ -345,6 +348,7 @@ fn what_already_waits_is_found_from_the_start_of_the_stream() {
     let nothing = replay(&[], 11, true, json!([]));
     let effects = gateway.apply(
         Input::Replayed {
+            run: gateway.run(),
             profile: &spike(),
             session: SESSION,
             result: &nothing,
@@ -356,6 +360,7 @@ fn what_already_waits_is_found_from_the_start_of_the_stream() {
     let held = replay(&[question("p1", 1, 11, Some(20))], 11, false, json!([]));
     let effects = gateway.apply(
         Input::Replayed {
+            run: gateway.run(),
             profile: &spike(),
             session: SESSION,
             result: &held,
@@ -376,6 +381,7 @@ fn what_already_waits_is_found_from_the_start_of_the_stream() {
     assert_eq!(
         gateway.apply(
             Input::Replayed {
+                run: gateway.run(),
                 profile: &spike(),
                 session: SESSION,
                 result: &held
@@ -389,6 +395,7 @@ fn what_already_waits_is_found_from_the_start_of_the_stream() {
     let rows = listed(&[(SESSION, "idle")]);
     let effects = gateway.apply(
         Input::Listed {
+            run: gateway.run(),
             profile: &spike(),
             result: &rows,
         },
@@ -409,6 +416,7 @@ fn what_already_waits_is_found_from_the_start_of_the_stream() {
     );
     let effects = gateway.apply(
         Input::Replayed {
+            run: gateway.run(),
             profile: &spike(),
             session: SESSION,
             result: &tail,
@@ -436,6 +444,7 @@ fn a_request_asked_and_settled_within_one_reading_is_never_shown() {
     );
     gateway.apply(
         Input::Replayed {
+            run: gateway.run(),
             profile: &spike(),
             session: SESSION,
             result: &replay(&[], 2, true, json!([])),
@@ -445,6 +454,7 @@ fn a_request_asked_and_settled_within_one_reading_is_never_shown() {
     assert_eq!(
         gateway.apply(
             Input::Replayed {
+                run: gateway.run(),
                 profile: &spike(),
                 session: SESSION,
                 result: &both
@@ -471,6 +481,7 @@ fn a_stream_cut_short_is_made_whole_by_a_snapshot() {
     let cut = replay(&[], 900, true, json!([]));
     let effects = gateway.apply(
         Input::Replayed {
+            run: gateway.run(),
             profile: &spike(),
             session: SESSION,
             result: &cut,
@@ -490,6 +501,7 @@ fn a_stream_cut_short_is_made_whole_by_a_snapshot() {
     let whole = snapshot(json!([asked]), open, 900);
     let effects = gateway.apply(
         Input::Resumed {
+            run: gateway.run(),
             profile: &spike(),
             result: &whole,
         },
@@ -498,10 +510,9 @@ fn a_stream_cut_short_is_made_whole_by_a_snapshot() {
     // What it does not list is over; what it lists is shown.
     assert_eq!(closed(&effects), [("gone", &Closed::Gone)]);
     assert_eq!(opened(&effects), ["kept", "srq-9"]);
-    assert_eq!(
-        gateway.pending(&id(&gateway, "kept")).unwrap().deadline_ms,
-        Some(31_000)
-    );
+    // Read, not seen as it was asked: how long it has waited is unknown.
+    let kept = gateway.pending(&id(&gateway, "kept")).unwrap();
+    assert_eq!((kept.deadline_ms, kept.recheck_ms), (None, Some(31_000)));
     assert_eq!(
         gateway.cursor(&at),
         Some(&Cursor {
@@ -522,6 +533,7 @@ fn a_stream_cut_short_is_made_whole_by_a_snapshot() {
         json!({"jsonrpc": "2.0", "id": 4, "result": {"status": "resolved", "prompt_id": "kept"}});
     gateway.apply(
         Input::Responded {
+            run: gateway.run(),
             request: &request,
             reply: &reply,
         },
@@ -529,6 +541,7 @@ fn a_stream_cut_short_is_made_whole_by_a_snapshot() {
     );
     let effects = gateway.apply(
         Input::Resumed {
+            run: gateway.run(),
             profile: &spike(),
             result: &whole,
         },
@@ -548,6 +561,7 @@ fn a_stream_cut_short_is_made_whole_by_a_snapshot() {
     feed(&mut fresh, &question("held", 1, 5, None), 0);
     let effects = fresh.apply(
         Input::Replayed {
+            run: fresh.run(),
             profile: &spike(),
             session: SESSION,
             result: &other,
@@ -562,6 +576,7 @@ fn a_snapshot_is_asked_for_only_where_a_request_may_wait_unseen() {
     let read = |gateway: &mut Gateway, result: &Value| {
         gateway.apply(
             Input::Replayed {
+                run: gateway.run(),
                 profile: &spike(),
                 session: SESSION,
                 result,
@@ -572,6 +587,7 @@ fn a_snapshot_is_asked_for_only_where_a_request_may_wait_unseen() {
     let list = |gateway: &mut Gateway, status: &str| {
         gateway.apply(
             Input::Listed {
+                run: gateway.run(),
                 profile: &spike(),
                 result: &listed(&[(SESSION, status)]),
             },
@@ -617,6 +633,7 @@ fn a_snapshot_is_asked_for_only_where_a_request_may_wait_unseen() {
     // it is not asked for again until the stream moves.
     silent.apply(
         Input::Resumed {
+            run: silent.run(),
             profile: &spike(),
             result: &snapshot(json!([]), json!([]), 900),
         },
@@ -636,6 +653,7 @@ fn a_set_of_questions_follows_what_is_open_now() {
     let open = json!([{"id": "srq-1", "method": "clarify", "params": entry["params"]}]);
     gateway.apply(
         Input::Replayed {
+            run: gateway.run(),
             profile: &spike(),
             session: SESSION,
             result: &replay(&[], 4, true, json!([])),
@@ -646,6 +664,7 @@ fn a_set_of_questions_follows_what_is_open_now() {
     let listing = replay(&[], 4, false, open.clone());
     let effects = gateway.apply(
         Input::Replayed {
+            run: gateway.run(),
             profile: &spike(),
             session: SESSION,
             result: &listing,
@@ -661,6 +680,7 @@ fn a_set_of_questions_follows_what_is_open_now() {
     assert_eq!(
         gateway.apply(
             Input::Replayed {
+                run: gateway.run(),
                 profile: &spike(),
                 session: SESSION,
                 result: &listing
@@ -671,6 +691,7 @@ fn a_set_of_questions_follows_what_is_open_now() {
     );
     let effects = gateway.apply(
         Input::Replayed {
+            run: gateway.run(),
             profile: &spike(),
             session: SESSION,
             result: &listing,
@@ -680,12 +701,14 @@ fn a_set_of_questions_follows_what_is_open_now() {
     let pending = gateway.pending(&request).unwrap().clone();
     assert_eq!(effects, [Effect::Unanswered { pending, why: None }]);
 
-    // No longer listed: it is over, with no event needed to say so.
+    // No longer listed by a reading further on in the stream: it is over,
+    // with no event needed to say so.
     let effects = gateway.apply(
         Input::Replayed {
+            run: gateway.run(),
             profile: &spike(),
             session: SESSION,
-            result: &replay(&[], 4, false, json!([])),
+            result: &replay(&[], 5, false, json!([])),
         },
         7_000,
     );
@@ -699,6 +722,7 @@ fn a_session_that_left_the_live_list_is_over_with_its_requests() {
     feed(&mut gateway, &question("p1", 1, 1, None), 0);
     gateway.apply(
         Input::Frame {
+            run: gateway.run(),
             profile: &work,
             frame: &question("p1", 1, 1, None),
         },
@@ -707,6 +731,7 @@ fn a_session_that_left_the_live_list_is_over_with_its_requests() {
     // One list covers one profile: the other profile's session is not touched.
     let effects = gateway.apply(
         Input::Listed {
+            run: gateway.run(),
             profile: &spike(),
             result: &listed(&[]),
         },
@@ -729,6 +754,7 @@ fn the_same_ids_on_two_gateways_or_profiles_are_different_requests() {
         for profile in [Profile::Default, Profile::named("work")] {
             let effects = gateway.apply(
                 Input::Frame {
+                    run: gateway.run(),
                     profile: &profile,
                     frame: &question("p1", 1, 1, None),
                 },

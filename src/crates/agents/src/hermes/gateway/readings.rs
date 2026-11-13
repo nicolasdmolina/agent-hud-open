@@ -7,7 +7,13 @@
 //! stream no longer holds (it keeps 512 events and 4 MiB a session, for 64
 //! sessions and 64 MiB in all). Only a snapshot lists those, so a replay
 //! that is cut short asks for one.
+//!
+//! A reading is true of one place in the stream, and events newer than it
+//! may already have been seen. So it never moves the cursor back, it
+//! closes a card only if the card was last seen at or before its place,
+//! and it never shows a request already known to be over.
 use super::ask::Ask;
+use super::cards::Heard;
 use super::effect::{Closed, Effect, Status};
 use super::frame::{event, Cursor};
 use super::identity::{Profile, SessionRef};
@@ -18,6 +24,17 @@ use std::collections::BTreeSet;
 /// How long a sent answer to a set of questions may go unconfirmed before a
 /// reading that still lists the set means the answer was dropped.
 const UNCONFIRMED_MS: i64 = 5_000;
+
+/// Whether a reading at `place` covers something last seen at `seen`: it
+/// was there to be listed. Another stream's requests are always covered.
+fn covers(place: &Option<Cursor>, seen: &Option<Cursor>, at_the_same_place: bool) -> bool {
+    match (place, seen) {
+        (Some(place), Some(seen)) if place.epoch == seen.epoch => {
+            seen.seq < place.seq || (at_the_same_place && seen.seq == place.seq)
+        }
+        _ => true,
+    }
+}
 
 impl Gateway {
     /// `session.active_list`: which sessions live in this profile and what
@@ -39,7 +56,9 @@ impl Gateway {
             let cursor = session.cursor.clone();
             let at = self.session(profile, id);
             let busy = matches!(phase, Some(Status::Working | Status::Waiting));
-            if busy || !self.asked(&at, |_| true).is_empty() {
+            if self.strays(&at) {
+                Self::resume(&at, effects);
+            } else if busy || !self.asked(&at, |_| true).is_empty() {
                 effects.push(Effect::Read {
                     session: at,
                     cursor,
@@ -77,12 +96,16 @@ impl Gateway {
         let latest = result["last_sequence"]
             .as_u64()
             .or(result["latest_seq"].as_u64());
+        let place = epoch.zip(latest).map(|(epoch, seq)| Cursor {
+            epoch: epoch.to_owned(),
+            seq,
+        });
         let prompts = !self.asked(&at, |ask| ask.generation().is_some()).is_empty();
         let session = self.entry_mut(profile, id);
+        if epoch.is_some_and(|epoch| session.left.iter().any(|left| left == epoch)) {
+            return;
+        }
         let known = session.cursor.as_ref().map(|cursor| cursor.epoch.as_str());
-        let resume = Effect::Resume {
-            session: at.clone(),
-        };
         if result["snapshot_required"] == true {
             match epoch {
                 Some(epoch) if known != Some(epoch) => {
@@ -90,37 +113,41 @@ impl Gateway {
                         epoch: epoch.to_owned(),
                         seq: 0,
                     };
-                    session.cursor = Some(cursor.clone());
+                    if let Some(before) = session.cursor.replace(cursor.clone()) {
+                        session.left.push(before.epoch);
+                    }
                     // A card from the stream before cannot be settled by
                     // this one: only a snapshot says whether it still waits.
-                    effects.push(if prompts {
-                        resume
+                    if prompts {
+                        Self::resume(&at, effects);
                     } else {
-                        Effect::Read {
+                        effects.push(Effect::Read {
                             session: at.clone(),
                             cursor: Some(cursor),
-                        }
-                    });
+                        });
+                    }
                 }
                 // Cut short: the stream no longer holds the range asked
                 // for. A question or an approval can wait unseen only where
                 // the session says it waits or a card is showing.
-                _ if prompts || session.phase == Status::Waiting => effects.push(resume),
+                _ if prompts || session.phase == Status::Waiting => Self::resume(&at, effects),
                 // Otherwise the reading goes on from the latest event, and
                 // no subscription is taken for a session that only works.
                 _ => {
                     if let (Some(cursor), Some(latest)) = (&mut session.cursor, latest) {
-                        cursor.seq = latest;
+                        cursor.seq = cursor.seq.max(latest);
+                        session.skipped = Some(cursor.clone());
                     }
                 }
             }
         } else {
             for params in result["events"].as_array().into_iter().flatten() {
                 if let Some(event) = event(params) {
-                    self.event(profile, &event, now_ms, effects);
+                    self.event(profile, &event, Heard::Later, now_ms, effects);
                 }
             }
             let shows = !self.asked(&at, |_| true).is_empty();
+            let strays = self.strays(&at);
             let session = self.entry_mut(profile, id);
             if let (Some(cursor), Some(latest)) = (&mut session.cursor, latest) {
                 cursor.seq = cursor.seq.max(latest);
@@ -133,14 +160,17 @@ impl Gateway {
                 && session.snapshot_at != session.cursor;
             if unexplained {
                 session.snapshot_at = session.cursor.clone();
-                effects.push(resume);
+            }
+            if unexplained || strays {
+                Self::resume(&at, effects);
             }
         }
-        self.batches(&at, &result["open_requests"], now_ms, effects);
+        self.batches(&at, &result["open_requests"], place, now_ms, effects);
     }
 
-    /// `session.resume`: everything waiting in the session now. What it
-    /// lists is shown, and a card it does not list is over.
+    /// `session.resume`: everything that waited in the session at one place
+    /// in its stream. A card last seen by then that it does not list is
+    /// over; what it lists is shown, unless known to be over since.
     pub(super) fn resumed(
         &mut self,
         profile: &Profile,
@@ -152,15 +182,32 @@ impl Gateway {
             return;
         };
         let at = self.session(profile, id);
+        let place = crate::text(&result["replay_epoch"]).map(|epoch| Cursor {
+            epoch: epoch.to_owned(),
+            seq: result["last_sequence"].as_u64().unwrap_or(0),
+        });
         let session = self.entry_mut(profile, id);
-        session.subscription = crate::text(&result["subscription_id"]).map(str::to_owned);
-        if let Some(epoch) = crate::text(&result["replay_epoch"]) {
-            session.cursor = Some(Cursor {
-                epoch: epoch.to_owned(),
-                seq: result["last_sequence"].as_u64().unwrap_or(0),
-            });
+        if let Some(place) = &place {
+            // Taken in a stream the session has left, or before events that
+            // were never read: it arrives late and cannot be merged.
+            let unread = |skipped: &Cursor| skipped.epoch == place.epoch && place.seq < skipped.seq;
+            if session.left.contains(&place.epoch) || session.skipped.as_ref().is_some_and(unread) {
+                return;
+            }
+            match &mut session.cursor {
+                Some(cursor) if cursor.epoch == place.epoch => {
+                    cursor.seq = cursor.seq.max(place.seq)
+                }
+                cursor => {
+                    if let Some(before) = cursor.replace(place.clone()) {
+                        session.left.push(before.epoch);
+                    }
+                }
+            }
         }
+        session.subscription = crate::text(&result["subscription_id"]).map(str::to_owned);
         session.snapshot_at = session.cursor.clone();
+        session.active = session.active.max(result["execution_generation"].as_u64());
         if let Some(entries) = result["prompts"].as_array() {
             let prompts: Vec<(Ask, Option<i64>)> = entries.iter().filter_map(Ask::prompt).collect();
             let listed: BTreeSet<String> = prompts
@@ -168,22 +215,39 @@ impl Gateway {
                 .map(|(ask, _)| at.request_id(ask.key()))
                 .collect();
             for id in self.asked(&at, |ask| ask.generation().is_some()) {
-                if !listed.contains(&id) {
+                let seen = &self.open[&id].seen;
+                if !listed.contains(&id) && covers(&place, seen, true) {
                     self.close(&id, Closed::Gone, effects);
                 }
             }
             for (ask, wait_ms) in prompts {
-                let deadline = wait_ms.map(|wait| now_ms.saturating_add(wait));
-                self.show(at.clone(), ask, deadline, effects);
+                let seen = place.clone();
+                self.show(
+                    at.clone(),
+                    ask,
+                    seen,
+                    Heard::Later,
+                    wait_ms,
+                    now_ms,
+                    effects,
+                );
             }
         }
-        self.batches(&at, &result["open_requests"], now_ms, effects);
+        self.batches(&at, &result["open_requests"], place, now_ms, effects);
     }
 
-    /// `open_requests` is every set of questions open in the session now.
-    /// One no longer listed is over. One still listed long after its answer
-    /// was sent never got the answer, which Hermes drops without a word.
-    fn batches(&mut self, at: &SessionRef, open: &Value, now_ms: i64, effects: &mut Vec<Effect>) {
+    /// `open_requests` is every set of questions open in the session at the
+    /// reading's place. One last seen before that place and not listed is
+    /// over. One still listed long after its answer was sent never got the
+    /// answer, which Hermes drops without a word.
+    fn batches(
+        &mut self,
+        at: &SessionRef,
+        open: &Value,
+        place: Option<Cursor>,
+        now_ms: i64,
+        effects: &mut Vec<Effect>,
+    ) {
         let Some(entries) = open.as_array() else {
             return;
         };
@@ -196,26 +260,30 @@ impl Gateway {
             .collect();
         let listed: BTreeSet<String> = asks.iter().map(|ask| at.request_id(ask.key())).collect();
         for id in self.asked(at, |ask| ask.generation().is_none()) {
-            if !listed.contains(&id) {
+            // A request has no place of its own in the stream, so a
+            // reading at the very place it was seen may predate it.
+            if !listed.contains(&id) && covers(&place, &self.open[&id].seen, false) {
                 self.close(&id, Closed::Gone, effects);
             }
         }
         for ask in asks {
             let id = at.request_id(ask.key());
-            match self.open.get_mut(&id) {
-                Some(open)
-                    if open
-                        .sent_ms
-                        .is_some_and(|sent| now_ms - sent >= UNCONFIRMED_MS) =>
-                {
+            let dropped = self.open.get_mut(&id).is_some_and(|open| {
+                let late = open
+                    .sent_ms
+                    .is_some_and(|sent| now_ms - sent >= UNCONFIRMED_MS);
+                if late {
                     open.sent_ms = None;
-                    effects.push(Effect::Unanswered {
-                        pending: open.pending.clone(),
-                        why: None,
-                    });
                 }
-                Some(_) => {}
-                None => self.show(at.clone(), ask, None, effects),
+                late
+            });
+            let seen = place.clone();
+            self.show(at.clone(), ask, seen, Heard::Later, None, now_ms, effects);
+            if let (true, Some(open)) = (dropped, self.open.get(&id)) {
+                effects.push(Effect::Unanswered {
+                    pending: open.pending.clone(),
+                    why: None,
+                });
             }
         }
     }

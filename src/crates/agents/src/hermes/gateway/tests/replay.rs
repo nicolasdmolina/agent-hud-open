@@ -36,9 +36,13 @@ pub fn describe(effect: &Effect, now_ms: i64) -> String {
             other => format!("connection {other:?}"),
         },
         Effect::Open(pending) => {
-            let wait = pending.deadline_ms.map_or(" no deadline".into(), |at| {
-                format!(" wait {}s", (at - now_ms) / 1000)
-            });
+            let wait = match (pending.deadline_ms, pending.recheck_ms) {
+                (Some(at), _) => format!(" wait {}s", (at - now_ms) / 1000),
+                (None, Some(at)) => {
+                    format!(" deadline unknown, recheck in {}s", (at - now_ms) / 1000)
+                }
+                (None, None) => " no deadline".into(),
+            };
             match &pending.ask {
                 Ask::Question(q) => format!(
                     "open question {} gen {} {:?} [{}]{}{wait}",
@@ -75,6 +79,7 @@ pub fn describe(effect: &Effect, now_ms: i64) -> String {
                 ),
             }
         }
+        Effect::Changed(pending) => format!("changed {}", key(&pending.id())),
         Effect::Close {
             id, why: closed, ..
         } => format!("close {} {}", key(id), why(closed)),
@@ -129,7 +134,7 @@ fn same(ours: &Value, theirs: &Value) -> bool {
     }
 }
 
-struct Run {
+struct Replay {
     gateway: Gateway,
     trace: Vec<String>,
     now_ms: i64,
@@ -152,7 +157,7 @@ fn differs(ours: &Value, theirs: &Value) -> String {
         .join("; ")
 }
 
-impl Run {
+impl Replay {
     fn apply(&mut self, input: Input<'_>) {
         let listed = matches!(input, Input::Listed { .. });
         let effects = self.gateway.apply(input, self.now_ms);
@@ -337,7 +342,7 @@ fn check_call(gateway: &Gateway, sent: &Value, scope: Scope, profile: &Profile) 
 
 pub fn replay(name: &str) -> Vec<String> {
     let doc = fixture(name);
-    let mut run = Run {
+    let mut run = Replay {
         gateway: local(),
         trace: Vec::new(),
         now_ms: 0,
@@ -392,6 +397,7 @@ pub fn replay(name: &str) -> Vec<String> {
                     asked_in = Some(run.gateway.session(&profile, session));
                 }
                 run.apply(Input::Frame {
+                    run: run.gateway.run(),
                     profile: &profile,
                     frame: sent,
                 });
@@ -405,15 +411,18 @@ pub fn replay(name: &str) -> Vec<String> {
             let session = call["params"]["session_id"].as_str().unwrap_or("");
             match call["method"].as_str().unwrap() {
                 "session.active_list" if result.is_object() => run.apply(Input::Listed {
+                    run: run.gateway.run(),
                     profile: &profile,
                     result,
                 }),
                 "session.events.since" if result.is_object() => run.apply(Input::Replayed {
+                    run: run.gateway.run(),
                     profile: &profile,
                     session,
                     result,
                 }),
                 "session.resume" if result.is_object() => run.apply(Input::Resumed {
+                    run: run.gateway.run(),
                     profile: &profile,
                     result,
                 }),
@@ -428,6 +437,7 @@ pub fn replay(name: &str) -> Vec<String> {
                     if run.ours.contains(&sent["id"].as_u64().unwrap()) {
                         run.say(format!("reply {outcome}"));
                         run.apply(Input::Responded {
+                            run: run.gateway.run(),
                             request: &request,
                             reply: sent,
                         });

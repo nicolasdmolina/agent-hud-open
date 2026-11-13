@@ -134,7 +134,7 @@ pub const SCENARIOS: &[(&str, &[&str])] = &[
             "connection Failed(Closed(1000))",
             "-- hud-reconnected",
             "asked for events from 10: where the model's cursor is",
-            "open question 1f8b250936 gen 1 \"Which color should the widget be?\" [blue (Recommended)|green|red] wait 20s",
+            "open question 1f8b250936 gen 1 \"Which color should the widget be?\" [blue (Recommended)|green|red] deadline unknown, recheck in 20s",
             "list",
             "close 1f8b250936 Settled",
             "asked for events from 10: not where the model's cursor is",
@@ -268,7 +268,7 @@ pub const SCENARIOS: &[(&str, &[&str])] = &[
             "asked for events from the start: where the model's cursor is",
             "read local-bf904379 from 0",
             "asked for events from 0: where the model's cursor is",
-            "open question fa2d4e80fe gen 1 \"Which color should the widget be?\" [blue (Recommended)|green|red] wait 20s",
+            "open question fa2d4e80fe gen 1 \"Which color should the widget be?\" [blue (Recommended)|green|red] deadline unknown, recheck in 20s",
             "asked for events from 8: not where the model's cursor is",
             "sent clarify.respond answer \"green\": as the model encodes it",
             "reply refused PermissionDenied",
@@ -403,7 +403,7 @@ pub const SCENARIOS: &[(&str, &[&str])] = &[
     (
         "subscribe-side-effect-policy-refresh",
         &[
-            "open question 429e91360c gen 1 \"Which color should the widget be?\" [blue (Recommended)|green|red] wait 20s",
+            "open question 429e91360c gen 1 \"Which color should the widget be?\" [blue (Recommended)|green|red] deadline unknown, recheck in 20s",
             "sent clarify.respond answer \"green\": as the model encodes it",
             "reply resolved",
             "close 429e91360c Answered",
