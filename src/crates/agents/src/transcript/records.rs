@@ -25,6 +25,16 @@ pub struct Record {
     /// How long the call itself took, where the client records it
     /// (`metering::Event::duration_ms`).
     pub duration_ms: Option<u64>,
+    /// Set when the client adds to this record's counts in place, a running
+    /// total (Hermes's usage rows), counted by `Log::count_running_total`.
+    pub running: Option<Running>,
+}
+
+/// What a running total says about when it last grew.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Running {
+    /// The client's own stamp of the row's last growth, where it keeps one.
+    pub last_seen: Option<i64>,
 }
 
 pub struct Page {

@@ -93,6 +93,7 @@ pub fn read(db: &Connection, cursor: &Value) -> rusqlite::Result<Page> {
             parent: None,
             archived: Some(false),
             updated: None,
+            running: None,
             duration_ms: None,
         });
     }

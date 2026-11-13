@@ -1,7 +1,7 @@
 //! Hermes SQLite session reader (`state.db`).
 use crate::transcript::{sql_column, sql_columns, sql_count, sql_model, sql_text, sql_time};
 use crate::{
-    transcript::records::{Page, Record},
+    transcript::records::{Page, Record, Running},
     Usage,
 };
 use rusqlite::Connection;
@@ -31,6 +31,28 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
         "profile_name",
     ]
     .map(|key| sql_column(&s, "s", key, "NULL"));
+    // A running session's activity: Hermes stamps each usage row's
+    // `last_seen` as it adds to it (HermesSessions.swift:45-46).
+    let last_seen = if u.contains("session_id") && u.contains("last_seen") {
+        "(SELECT MAX(last_seen) FROM session_model_usage WHERE session_id=s.id)"
+    } else {
+        "NULL"
+    };
+    // What a session's tokens are now, to find one that grew without its
+    // activity passing the watermark: a write stamped earlier than another
+    // session's activity already read.
+    let print = format!(
+        "({})||'/'||{}",
+        tokens(&s, "s"),
+        if u.contains("session_id") {
+            format!(
+                "(SELECT COUNT(*)||'/'||TOTAL({}) FROM session_model_usage u WHERE u.session_id=s.id)",
+                tokens(&u, "u")
+            )
+        } else {
+            "''".into()
+        }
+    );
     let scan = cursor["scan"]
         .as_i64()
         .or_else(|| cursor.as_i64())
@@ -39,8 +61,10 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
     let ts_after = cursor["ts_after"].as_i64().unwrap_or(0);
     let mut max_rowid = cursor["max_rowid"].as_i64().unwrap_or(rowid_after);
     let mut max_ts = cursor["max_ts"].as_i64().unwrap_or(ts_after);
+    let prints = &cursor["prints"];
+    let mut next = cursor["next"].as_object().cloned().unwrap_or_default();
     let mut statement = db.prepare(&format!(
-        "SELECT s.rowid,s.id,s.started_at,{} FROM sessions s WHERE s.rowid>?1 ORDER BY s.rowid LIMIT 100",
+        "SELECT s.rowid,s.id,s.started_at,{},{last_seen},{print} FROM sessions s WHERE s.rowid>?1 ORDER BY s.rowid LIMIT 100",
         fields.join(",")
     ))?;
     let mut rows = statement.query([scan])?;
@@ -67,11 +91,15 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
         let updated = sql_time(row, 14, true)
             .into_iter()
             .chain(sql_time(row, 15, true))
+            .chain(sql_time(row, 17, true))
             .chain(Some(started))
             .max()
             .unwrap_or(started);
         max_ts = max_ts.max(updated);
-        if last <= rowid_after && updated <= ts_after {
+        let print = Value::from(sql_text(row, 18).unwrap_or_default());
+        let grew = prints[last.to_string()] != print;
+        next.insert(last.to_string(), print);
+        if last <= rowid_after && updated <= ts_after && !grew {
             continue;
         }
         let id = format!(
@@ -102,6 +130,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
                 "cache_read_tokens",
                 "cache_write_tokens",
                 "first_seen",
+                "last_seen",
             ]
             .map(|key| sql_column(&u, "u", key, "NULL"));
             let mut statement = db.prepare(&format!(
@@ -144,6 +173,10 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
                     archived: Some(false),
                     updated: None,
                     duration_ms: None,
+                    // Hermes adds to the row in place and stamps it.
+                    running: Some(Running {
+                        last_seen: sql_time(row, 10, true),
+                    }),
                 });
             }
         }
@@ -184,6 +217,11 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
                 archived: Some(false),
                 updated: None,
                 duration_ms: None,
+                // Hermes adds to the session's own counts in place; its
+                // activity is when they last grew.
+                running: Some(Running {
+                    last_seen: Some(updated),
+                }),
             });
         }
         if let Some(record) = records.last_mut() {
@@ -199,6 +237,8 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
                 "ts_after": ts_after,
                 "max_rowid": max_rowid,
                 "max_ts": max_ts,
+                "prints": prints,
+                "next": next,
             })
         }),
         watermark: (seen < 100).then(|| {
@@ -206,9 +246,22 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
                 "scan": 0,
                 "rowid_after": max_rowid,
                 "ts_after": max_ts,
+                "prints": next,
             })
         }),
     })
+}
+
+/// The sum of a table's four token counts, each where it has the column.
+fn tokens(columns: &std::collections::HashSet<String>, alias: &str) -> String {
+    [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+    ]
+    .map(|key| format!("COALESCE({},0)", sql_column(columns, alias, key, "0")))
+    .join("+")
 }
 
 /// A Hermes model with the route its billing provider and address name

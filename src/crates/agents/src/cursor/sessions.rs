@@ -92,6 +92,7 @@ pub(crate) fn read_at(db: &Connection, cursor: &Value, now_ms: i64) -> rusqlite:
             parent: parent.map(|p| format!("cursor:{p}")),
             archived: Some(archived),
             updated: None,
+            running: None,
             duration_ms: None,
         });
     }

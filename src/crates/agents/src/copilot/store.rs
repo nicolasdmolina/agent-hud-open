@@ -144,6 +144,7 @@ pub fn read(db: &Connection, cursor: &Value) -> rusqlite::Result<Page> {
             parent: None,
             archived: Some(false),
             updated: None,
+            running: None,
             duration_ms: match row.get_ref(9)? {
                 ValueRef::Integer(ms) if ms > 0 => Some(ms as u64),
                 _ => None,

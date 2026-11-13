@@ -209,6 +209,7 @@ fn record(id: &str, session: Option<&Session>, key: String, at: i64, usage: Usag
             .map(|p| format!("zcode:{p}")),
         archived: session.filter(|s| !s.unsure).map(|s| s.archived),
         updated: None,
+        running: None,
         duration_ms: None,
     }
 }
