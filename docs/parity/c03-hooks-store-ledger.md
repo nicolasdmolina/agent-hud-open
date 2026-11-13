@@ -29,12 +29,12 @@ For context, the Open files that set the rules these use were also read: `Provid
 | Status | Count |
 |---|---|
 | same | 43 |
-| deliberate | 4 |
+| deliberate | 5 |
 | better | 3 |
 | missing | 9 |
 | differs | 31 |
 | unclear | 8 |
-| **total rows** | **98** |
+| **total rows** | **99** |
 
 **Top 10 most user-visible problems:**
 
@@ -166,6 +166,7 @@ Abbreviations: **O** = `OPEN/Sources/AgentHUDCore/`, **N** = `NEXT/src/`.
 | 96 | O Store/UsageStore+Stats.swift:197-233 | List-price cost: each model on its client's platform region, DeepSeek peak at peak rates, by selected kinds | N crates/core/src/statistics/*; pricing/mod.rs:276-330 | unclear | Region selection per client needs the Statistics/pricing chunk; quota cycles use International only (#39). Region selection per client is in place since 2026-10-20 (c04 #84, #85); the peak and kind selection still need a side-by-side check. |
 | 97 | O Store/UsageStore.swift:261-266, 289-292 | Live status per vendor gates the status and last message | — (only legacy import in N: os/macos/legacy_preferences.rs) | unclear | Per-client live-status preference appears absent (see #24); confirm in the Settings/Sessions chunk. |
 | 98 | O Ledger/LedgerStorage.swift:77-78, 100-113; UsageLedger.swift:416-419 | Largest prompt seen per model as a context-window fallback | N apps/desktop/src/sessions/SessionDetailView.tsx:546-549 (`detail.contextWindow`) | fixed | The source of Next's `contextWindow` was not traced; needs the Sessions chunk. **Fixed 2026-10-21:** `usage_meter_model_context` keeps the largest prompt per model past the retention, and the session's context window falls back on it (a Claude model counts as 1M past its published window). |
+| 99 | (none) | No machines list: Open follows each client on this Mac only, so a snapshot names no machine | N crates/agents/src/channel.rs (`MachineStatus`, `MachineState`, `Machines`); core/src/requests/views.rs (`set_machines`, `machines_into`); core/src/requests.rs (`clear`); core/src/snapshot.rs; packages/protocol/src/snapshot.ts (`machines`, `machinesNote`); core/src/tests/machines.rs | deliberate | **Fork (Agent HUD fork, ticket 31):** a native channel can tell core, for its source, the machines it knows (id, label, one of six states: connected, connecting, not-trusted, cannot-reach, not-covered, same-machine; an optional note; optional times of last contact and of the last whole history check), and apart from the list a note that the list itself could not be read. Core keeps one per source, replaced whole; the same one told again changes nothing, and `clear()` drops it. The snapshot carries non-empty lists as `machines` and notes as `machinesNote`, by source id, and neither key while nothing was told, so every snapshot Open's sources produce is unchanged. Core decides nothing from a state, note or time. Nothing tells a list yet (ticket 32) and nothing shows one (ticket 38). **Why:** phase 2 follows Hermes gateways on other machines in the Hermes desktop app's connection list and shows each machine's state in Settings (FORK.md, "Machines list"); Open has no such list. |
 
 ## Tests
 

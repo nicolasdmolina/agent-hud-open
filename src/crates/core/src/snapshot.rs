@@ -267,9 +267,9 @@ impl crate::AgentHudCore {
             .usage_projection
             .as_ref()
             .expect("usage projection prepared");
-        Ok(
-            json!({"islandEvents":island_events,"soundAlerts":sound_alerts,"schemaVersion":1,"statisticsRevision":self.statistics.revision,"sessionsRevision":self.sessions_revision,"sessionScope":"recent","indexing":indexing,"generatedAt":Utc::now().to_rfc3339(),"mode":if self.demo{"demo"}else{"live"},"connection":{"status":"connected","platform":self.platform,"message":notice.unwrap_or_else(|| l10n::text("本机会话日志与客户端事件；回调连接状态另行显示", "Local transcripts and client events; hook connection status is reported separately."))},"totals":projection.totals.json(),"quotas":quotas,"accounts":accounts,"sessions":sessions,"timeline":projection.timeline,"providers":providers,"approvals":approvals,"requestDeliveries":deliveries,"settings":self.settings,"language":if crate::l10n::chinese(){"zh"}else{"en"},"capabilities":serde_json::from_str::<Value>(include_str!("../../../packages/protocol/capabilities.json")).expect("checked-in capability manifest"),"billing":billing,"relays":relays}),
-        )
+        let mut snapshot = json!({"islandEvents":island_events,"soundAlerts":sound_alerts,"schemaVersion":1,"statisticsRevision":self.statistics.revision,"sessionsRevision":self.sessions_revision,"sessionScope":"recent","indexing":indexing,"generatedAt":Utc::now().to_rfc3339(),"mode":if self.demo{"demo"}else{"live"},"connection":{"status":"connected","platform":self.platform,"message":notice.unwrap_or_else(|| l10n::text("本机会话日志与客户端事件；回调连接状态另行显示", "Local transcripts and client events; hook connection status is reported separately."))},"totals":projection.totals.json(),"quotas":quotas,"accounts":accounts,"sessions":sessions,"timeline":projection.timeline,"providers":providers,"approvals":approvals,"requestDeliveries":deliveries,"settings":self.settings,"language":if crate::l10n::chinese(){"zh"}else{"en"},"capabilities":serde_json::from_str::<Value>(include_str!("../../../packages/protocol/capabilities.json")).expect("checked-in capability manifest"),"billing":billing,"relays":relays});
+        self.requests.machines_into(&mut snapshot);
+        Ok(snapshot)
     }
 
     /// The time rates, forecasts and cost windows are worked out at: when what

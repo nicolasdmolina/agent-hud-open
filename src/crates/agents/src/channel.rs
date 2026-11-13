@@ -51,6 +51,58 @@ impl LiveState {
     }
 }
 
+/// Where a source stands with one machine it can follow, as its native
+/// channel says. A closed set: core and the UI carry the state and decide
+/// nothing from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MachineState {
+    Connected,
+    Connecting,
+    /// The machine has not been trusted yet (its host key, say).
+    NotTrusted,
+    CannotReach,
+    NotCovered,
+    /// Another of the source's entries already leads to this machine.
+    SameMachine,
+}
+
+impl MachineState {
+    /// The word a machine's `state` uses in the snapshot.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Connected => "connected",
+            Self::Connecting => "connecting",
+            Self::NotTrusted => "not-trusted",
+            Self::CannotReach => "cannot-reach",
+            Self::NotCovered => "not-covered",
+            Self::SameMachine => "same-machine",
+        }
+    }
+}
+
+/// One machine a source's native channel knows, as it last said: the
+/// channel's id and label for it, its state, the channel's own words on it,
+/// when it was last heard from and when its whole history was last checked.
+/// A time the channel does not know is `None`, never zero.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MachineStatus {
+    pub id: String,
+    pub label: String,
+    pub state: MachineState,
+    pub note: Option<String>,
+    pub contact_ms: Option<i64>,
+    pub history_checked_ms: Option<i64>,
+}
+
+/// Everything a source's native channel says of its machines, whole: the
+/// list, and apart from it, the channel's words when the list itself could
+/// not be read (a note on the source, not a machine or a state of one).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Machines {
+    pub list: Vec<MachineStatus>,
+    pub list_note: Option<String>,
+}
+
 pub struct Channel {
     /// What it is, in a few words.
     pub name: &'static str,
