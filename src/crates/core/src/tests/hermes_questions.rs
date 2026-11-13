@@ -18,7 +18,7 @@ fn recorded(name: &str) -> Value {
 
 /// The first question (or set of questions) the recording `name` asks, as
 /// the gateway model holds it, in the throwaway profile it was recorded in.
-fn asked(name: &str) -> Pending {
+pub(super) fn asked(name: &str) -> Pending {
     let gateway = Gateway::new(GatewayId::new("local"));
     let profile = Profile::named("hud-spike");
     let doc = recorded(name);
@@ -47,7 +47,7 @@ fn asked(name: &str) -> Pending {
 
 /// A Core whose Hermes home has the profile `hud-spike` with the sessions
 /// `ids`, read once, with sound on.
-fn hermes_core(temp: &Path, ids: &[&str]) -> AgentHudCore {
+pub(super) fn hermes_core(temp: &Path, ids: &[&str]) -> AgentHudCore {
     let home = temp.join(".hermes");
     let folder = home.join("profiles/hud-spike");
     fs::create_dir_all(&folder).unwrap(); // plain directory
@@ -79,7 +79,7 @@ fn hermes_core(temp: &Path, ids: &[&str]) -> AgentHudCore {
 
 /// What the connection does with `Effect::Open`: the card, and the session
 /// marked as waiting.
-fn open(core: &AgentHudCore, pending: &Pending) -> requests::Ticket {
+pub(super) fn open(core: &AgentHudCore, pending: &Pending) -> requests::Ticket {
     let now = Utc::now().timestamp_millis();
     let ticket = core
         .requests()
@@ -107,7 +107,7 @@ fn answered(core: &mut AgentHudCore, pending: &Pending, decision: Value) -> Opti
     }
 }
 
-fn needs_you(snapshot: &Value) -> Vec<Value> {
+pub(super) fn needs_you(snapshot: &Value) -> Vec<Value> {
     snapshot["soundAlerts"]["items"]
         .as_array()
         .unwrap()
@@ -117,7 +117,7 @@ fn needs_you(snapshot: &Value) -> Vec<Value> {
         .collect()
 }
 
-fn alert_ids(snapshot: &Value) -> Vec<Value> {
+pub(super) fn alert_ids(snapshot: &Value) -> Vec<Value> {
     snapshot["soundAlerts"]["items"]
         .as_array()
         .unwrap()

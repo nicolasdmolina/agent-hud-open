@@ -4,6 +4,7 @@
 use super::*;
 
 mod balances;
+mod card_only_rows;
 mod meters;
 mod providers;
 mod quotas;

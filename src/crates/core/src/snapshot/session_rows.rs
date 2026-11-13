@@ -87,6 +87,8 @@ impl crate::AgentHudCore {
                     .is_some_and(|timestamp| timestamp >= presented_at - 86_400_000)
             }));
         }
+        let carded = self.card_only_rows(&sessions, now);
+        sessions.extend(carded);
         presentation::sort_sessions(&mut sessions);
         sessions
     }
