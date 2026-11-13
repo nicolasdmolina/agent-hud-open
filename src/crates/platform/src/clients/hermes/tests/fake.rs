@@ -103,6 +103,10 @@ pub struct Hold {
 
 #[derive(Default)]
 pub struct World {
+    /// Once `identify` is next asked, and before it is answered, the link
+    /// at the first path is made to lead to the second: a home that
+    /// changes while its gateway is asked (the first review of ticket 25).
+    pub switch_after_identify: Option<(PathBuf, PathBuf)>,
     /// The socket that next subscribes stops reading after its resume is
     /// answered, until released: a peer that takes nothing more in.
     pub stall_after_resume: Option<Arc<Hold>>,
@@ -335,7 +339,16 @@ fn serve_control(listener: UnixListener, world: Arc<Mutex<World>>, running: Arc<
             }
             _ => Some(said["control_socket"]["unknown_verb"].clone()),
         };
+        let switched = if asked["verb"] == "identify" {
+            world.switch_after_identify.take()
+        } else {
+            None
+        };
         drop(world);
+        if let Some((alias, replacement)) = switched {
+            std::fs::remove_file(&alias).unwrap();
+            std::os::unix::fs::symlink(replacement, alias).unwrap();
+        }
         if let Some(answer) = answer {
             let _ = (&stream).write_all(format!("{answer}\n").as_bytes());
         }

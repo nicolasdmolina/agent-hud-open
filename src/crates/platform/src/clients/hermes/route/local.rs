@@ -10,6 +10,7 @@ use agent_hud_agents::hermes::{
     AGENT,
 };
 use std::{
+    borrow::Cow,
     net::{TcpStream, ToSocketAddrs},
     path::PathBuf,
     time::Duration,
@@ -59,11 +60,23 @@ impl Route for Local {
     /// The one home this machine's gateway is asked in: the root home.
     fn homes(&self) -> Result<Vec<Home>, Silent> {
         let root = std::fs::canonicalize(&self.root).map_err(|_| Silent::Absent)?;
-        Ok(vec![Home::at(root)])
+        Ok(vec![Home::at(self.root.clone(), root)])
     }
 
     fn exchange(&self, home: &Home, line: &[u8], timeout: Duration) -> Result<Vec<u8>, Silent> {
         host::exchange(home.path(), line, timeout)
+    }
+
+    /// The home's links are resolved again; a home that no longer leads
+    /// anywhere goes by the name it was given.
+    fn named(&self, home: &Home) -> Cow<'_, str> {
+        let now = std::fs::canonicalize(home.given()).unwrap_or_else(|_| home.given().to_owned());
+        Cow::Owned(now.to_string_lossy().into_owned())
+    }
+
+    /// Nothing stands between this machine and its own gateway.
+    fn prepare(&self, _instance: &Instance) -> Result<(), Failure> {
+        Ok(())
     }
 
     /// No proxy: the address is this machine's, dialled as it is. An

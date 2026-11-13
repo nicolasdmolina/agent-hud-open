@@ -12,6 +12,7 @@ use agent_hud_agents::hermes::gateway::{
 };
 use serde_json::{json, Value};
 use std::{
+    borrow::Cow,
     net::{IpAddr, TcpListener, TcpStream, UdpSocket},
     path::Path,
     sync::{
@@ -39,6 +40,8 @@ pub struct Asked {
     pub homes: usize,
     /// The verb of each exchange with a control socket.
     pub verbs: Vec<String>,
+    /// The origin of each instance the route was told to prepare for.
+    pub prepared: Vec<String>,
     /// The origin of each instance a stream was asked to.
     pub dials: Vec<String>,
 }
@@ -71,6 +74,15 @@ impl Route for Way {
         let verb = said["verb"].as_str().unwrap_or("").to_owned();
         self.asked().verbs.push(verb);
         self.local.exchange(home, line, timeout)
+    }
+
+    fn named(&self, home: &Home) -> Cow<'_, str> {
+        self.local.named(home)
+    }
+
+    fn prepare(&self, instance: &Instance) -> Result<(), Failure> {
+        self.asked().prepared.push(instance.origin.clone());
+        self.local.prepare(instance)
     }
 
     fn dial(&self, instance: &Instance) -> Result<TcpStream, Failure> {
@@ -119,10 +131,18 @@ fn everything_the_connection_asks_of_a_gateway_goes_through_its_route() {
     let ((tickets, dials), _) = seen();
     assert!(tickets >= 2 && dials >= 2, "{tickets} {dials}");
     let origin = gateway.world().identify.as_ref().unwrap()["result"]["api_origin"].clone();
-    let (verbs, dialled, homes) = {
+    let (verbs, dialled, homes, prepared) = {
         let asked = lab.route.asked();
-        (asked.verbs.clone(), asked.dials.clone(), asked.homes)
+        let prepared = asked.prepared.clone();
+        (
+            asked.verbs.clone(),
+            asked.dials.clone(),
+            asked.homes,
+            prepared,
+        )
     };
+    // The route was told of the instance before each ticket was asked for.
+    assert_eq!(prepared, dialled);
     assert_eq!(gateway.world().turned_away, 0);
     assert_eq!(verbs[0], "identify");
     assert!(dialled.iter().all(|dialled| json!(dialled) == origin));
@@ -163,12 +183,22 @@ fn the_local_route_names_its_home_with_links_resolved_and_none_where_there_is_no
     let lab = lab();
     let link = lab.data.join("link");
     std::os::unix::fs::symlink(&lab.home, &link).unwrap();
-    let homes = Local::at(&link).homes().unwrap();
+    let route = Local::at(&link);
+    let homes = route.homes().unwrap();
     assert_eq!(homes.len(), 1);
-    assert_eq!(homes[0].name(), lab.home.to_string_lossy());
-    assert_eq!(homes, Local::at(&lab.home).homes().unwrap());
+    assert_eq!(route.named(&homes[0]), lab.home.to_string_lossy());
     let missing = Local::at(lab.data.join("missing")).homes();
     assert_eq!(missing, Err(Silent::Absent));
+    // The name is where the home leads now, not where it led when the
+    // homes were asked for.
+    let other = lab.data.join("other");
+    crate::os::private_directory(&other).unwrap();
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&other, &link).unwrap();
+    assert_eq!(route.named(&homes[0]), other.to_string_lossy());
+    // A home that leads nowhere any more goes by the name it was given.
+    std::fs::remove_file(&link).unwrap();
+    assert_eq!(route.named(&homes[0]), link.to_string_lossy());
 }
 
 /// An address of this machine that is not loopback, where it has one.

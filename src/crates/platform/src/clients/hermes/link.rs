@@ -105,10 +105,12 @@ fn identified(shared: &Shared) -> Result<Instance, Next> {
             return Err(Next::Later);
         }
     };
-    // The home is compared as the gateway wrote it, links resolved.
+    // The home is compared as the gateway wrote it, links resolved, and
+    // resolved after the answer came: a home that leads elsewhere by then
+    // is not the one this gateway serves.
     shared.apply(Input::Identified {
         answer: &answer,
-        home: &home.name(),
+        home: &shared.route.named(&home),
     });
     let model = shared.model();
     match model.gateway.connection() {
@@ -125,11 +127,14 @@ pub(super) enum Shut {
     Failed(Failure),
 }
 
-/// A new socket on `instance`, for every profile it serves: a ticket that
-/// is asked for, used once and gone. Nothing is told to the model: a
+/// A new socket on `instance`, for every profile it serves: the route is
+/// told of the instance, then a ticket is asked for, used once and gone. Nothing is told to the model: a
 /// socket for one answer or one snapshot failing says nothing of the
 /// connection the polls run on.
 pub(super) fn opened(shared: &Shared, instance: &Instance) -> Result<Socket, Shut> {
+    // What the route needs for this instance is in place before the
+    // ticket is asked for, since a ticket does not last.
+    shared.route.prepare(instance).map_err(Shut::Failed)?;
     let (grant, _) = asked(shared, &ticket_line(instance, Scope::Host))
         .map_err(|why| Shut::Failed(silent(why)))?;
     let ticket = granted(&grant, instance).map_err(Shut::Denied)?;
