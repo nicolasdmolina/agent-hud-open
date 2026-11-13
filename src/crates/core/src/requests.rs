@@ -10,6 +10,8 @@ use std::{
 
 mod answer;
 mod deliveries;
+#[cfg(test)]
+mod tests;
 mod views;
 
 type Wake = Arc<dyn Fn() + Send + Sync>;

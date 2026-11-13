@@ -3,6 +3,7 @@
 //! Hermes offers.
 use super::ask::{Approval, Ask, Choice, Locked, Pending};
 use crate::hermes::AGENT;
+use crate::l10n;
 use serde_json::{json, Value};
 
 impl Pending {
@@ -91,14 +92,21 @@ fn questions(items: Vec<Value>) -> Value {
 
 /// An approval's card. Allowing once and denying are its two plain
 /// buttons; the lasting choices Hermes offers are its `suggestions`, one
-/// `{type: "scope", scope}` each, and a decision `always` names the one
-/// chosen (none named is `always` itself).
+/// `{type: "scope", scope, label}` each, which the card draws as a button
+/// of its own, and a decision `always` names the one chosen (none named is
+/// `always` itself).
 fn permission(approval: &Approval) -> Value {
     let lasting: Vec<Value> = approval
         .choices
         .iter()
-        .filter(|choice| matches!(choice, Choice::Session | Choice::Always))
-        .map(|choice| json!({"type": "scope", "scope": choice.word()}))
+        .filter_map(|choice| {
+            let label = match choice {
+                Choice::Session => l10n::text("本会话内允许", "Allow this session"),
+                Choice::Always => l10n::text("总是允许", "Always allow"),
+                Choice::Once | Choice::Deny => return None,
+            };
+            Some(json!({"type": "scope", "scope": choice.word(), "label": label}))
+        })
         .collect();
     let always = approval.choices.contains(&Choice::Always);
     let title = if approval.description.is_empty() {

@@ -353,8 +353,21 @@ fn a_card_offers_only_what_hermes_offers() {
     assert_eq!(approval["alwaysAllowRule"], "delete in root path");
     assert_eq!(
         approval["suggestions"],
-        json!([{"type": "scope", "scope": "session"}, {"type": "scope", "scope": "always"}])
+        json!([{"type": "scope", "scope": "session", "label": "Allow this session"},
+            {"type": "scope", "scope": "always", "label": "Always allow"}])
     );
+    // The card's suggestion goes back whole, its words with it.
+    for (suggestion, choice) in approval["suggestions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(["session", "always"])
+    {
+        let decision = json!({"kind": "always", "suggestion": suggestion});
+        let pending = asked("approval-answered-once", "approval.request");
+        let frame = sent(&pending, &decision, Scope::Profile).unwrap().unwrap();
+        assert_eq!(frame["params"]["choice"], choice);
+    }
 
     // Limited by Hermes: no lasting choice on the card at all.
     let limited = asked("approval-limited-choice", "approval.request").view(0);
