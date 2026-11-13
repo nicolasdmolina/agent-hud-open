@@ -52,7 +52,7 @@ fn a_native_card_waits_and_sounds_at_the_next_snapshot_before_its_log_is_read() 
         .unwrap();
     db.execute(
         "INSERT INTO sessions VALUES (?1, 'tui', 'loopback', ?2, 10, 3, 'Pick a colour', 'hud-spike')",
-        rusqlite::params![question.session.id, Utc::now().timestamp() - 1],
+        rusqlite::params![question.session.id(), Utc::now().timestamp() - 1],
     )
     .unwrap();
     drop(db);
