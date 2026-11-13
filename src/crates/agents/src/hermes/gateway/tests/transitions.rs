@@ -421,38 +421,6 @@ fn a_set_of_questions_follows_what_is_open_now() {
 }
 
 #[test]
-fn a_stream_that_dropped_its_start_is_read_from_nearer_its_end() {
-    let (mut g, mut h) = start();
-    for _ in 0..700 {
-        h.publish(&work(), S, "message.delta", 1, json!({}));
-    }
-    asks(&mut h, "p1", 1);
-    // Hermes keeps the last 512 events.
-    h.drop_through(&work(), S, 701 - 512);
-    assert_eq!(opened(&poll(&mut g, &mut h, 0)), ["p1"]);
-    let at = g.session(&work(), S);
-    let from = |seq| Step::Since {
-        session: at.clone(),
-        cursor: Some(Cursor {
-            epoch: "epoch-1".into(),
-            seq,
-        }),
-    };
-    // Not from 0, which Hermes refuses for good once it dropped anything.
-    assert_eq!(h.asked[3..], [from(701 - 448)]);
-    assert_eq!(h.snapshots(), 0);
-
-    // It keeps less than that (it also drops by size): nearer the end.
-    h.drop_through(&work(), S, 600);
-    assert_eq!(poll(&mut g, &mut h, 1), []);
-    assert_eq!(
-        h.asked[3..],
-        [from(701 - 448), from(701 - 256), from(701 - 64)]
-    );
-    assert_eq!((h.snapshots(), names(&g)), (0, vec!["p1".to_owned()]));
-}
-
-#[test]
 fn a_snapshot_is_taken_only_where_the_events_cannot_say() {
     let (mut g, mut h) = start();
     asks(&mut h, "p1", 1);

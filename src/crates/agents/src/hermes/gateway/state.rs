@@ -4,11 +4,12 @@
 //! The cards follow polls and nothing else. Each poll asks Hermes what
 //! waits now (`poll.rs`), and `reconcile.rs` opens, changes and closes
 //! cards until they match what it said. Between polls the model keeps the
-//! cards, the gateway's instance and a count of polls. It keeps no place
-//! in any stream and no memory of what was over, so there is no order in
-//! which two readings can be merged wrongly: a poll is whole, the next one
-//! starts after it, and one that is no longer the newest when it comes
-//! back is dropped.
+//! cards, the gateway's instance, a count of polls, and which waiting
+//! sessions it has taken a snapshot of. It keeps no place in any stream
+//! and no memory of what was over, so there is no order in which two
+//! readings can be merged wrongly: a poll is whole, the next one starts
+//! after it, and one that is no longer the newest when it comes back is
+//! dropped.
 use super::ask::{Ask, Pending};
 use super::connection::{identify, Connection, Denied, Failure, Identified, Unsupported};
 use super::effect::{Closed, Effect, Input, Status};
@@ -16,7 +17,7 @@ use super::frame::{answered, Answered, Refusal};
 use super::identity::{GatewayId, Profile, SessionRef};
 use super::poll::{Poll, Shown};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// How long to wait between polls while any session starts, works or
 /// waits, or a card shows.
@@ -49,6 +50,13 @@ pub struct Gateway {
     /// What the last poll listed each live session as doing. It is only
     /// reported (`statuses`, `poll_ms`); no poll reads it.
     pub(super) listed: BTreeMap<SessionRef, Status>,
+    /// The sessions a snapshot was taken of since they were last seen not
+    /// to wait. Hermes drops a stream's old events, and a request asked
+    /// before the oldest one kept shows in no read. A snapshot finds it,
+    /// and subscribes to do so, so one is taken once for each stretch of
+    /// waiting and not at every poll. This is the one thing a poll leaves
+    /// for the next, beside the cards.
+    pub(super) snapshotted: BTreeSet<SessionRef>,
 }
 
 impl Gateway {
@@ -60,6 +68,7 @@ impl Gateway {
             polls: 0,
             cards: BTreeMap::new(),
             listed: BTreeMap::new(),
+            snapshotted: BTreeSet::new(),
         }
     }
     pub fn id(&self) -> &GatewayId {
@@ -123,7 +132,14 @@ impl Gateway {
             }
         }
         let served = instance.served.iter().map(|served| served.profile.clone());
-        Some(Poll::new(self.id.clone(), self.polls, served, shown))
+        let snapshotted = self.snapshotted.clone();
+        Some(Poll::new(
+            self.id.clone(),
+            self.polls,
+            served,
+            shown,
+            snapshotted,
+        ))
     }
 
     /// Takes what happened at `now_ms` and returns what to do, in order.
@@ -194,6 +210,7 @@ impl Gateway {
     fn reset(&mut self, why: Closed, effects: &mut Vec<Effect>) {
         self.polls += 1;
         self.listed.clear();
+        self.snapshotted.clear();
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {
             self.close(&key, why.clone(), effects);
         }

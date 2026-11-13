@@ -6,7 +6,7 @@
 //! read that failed), the cards are left as they are and the next poll
 //! asks again.
 use super::ask::{Ask, Pending};
-use super::effect::{Closed, Effect};
+use super::effect::{Closed, Effect, Status};
 use super::poll::{Poll, Read};
 use super::state::{Card, Gateway, Key};
 use super::Connection;
@@ -31,8 +31,15 @@ impl Gateway {
         let unlisted = |listed: Option<&Option<bool>>| matches!(listed, Some(None | Some(false)));
         self.listed
             .retain(|at, _| unlisted(poll.profiles.get(&at.profile)));
+        self.snapshotted
+            .retain(|at| unlisted(poll.profiles.get(&at.profile)));
         for (at, look) in &poll.sessions {
             self.listed.insert(at.clone(), look.status);
+            // A stretch of waiting lasts while every poll lists it waiting.
+            let again = poll.snapshotted.contains(at) || look.snapshot;
+            if look.status == Status::Waiting && again {
+                self.snapshotted.insert(at.clone());
+            }
         }
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {
             if let Some(why) = self.over(&poll, &key, now_ms, effects) {

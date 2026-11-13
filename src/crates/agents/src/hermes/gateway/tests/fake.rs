@@ -104,8 +104,28 @@ impl Hermes {
             .events
             .retain(|event| event["seq"].as_u64() > Some(seq));
     }
-    /// Hermes's replay cache dropped the session: its stream starts again
-    /// under a new epoch, and what waited still waits.
+    /// Applies Hermes's own limits to what a stream keeps: the last 512
+    /// events and 4 MiB of them (`tui_gateway/event_replay.py`).
+    pub fn keep_what_hermes_keeps(&mut self, profile: &Profile, session: &str) {
+        let stream = self.stream(profile, session);
+        let (mut bytes, mut kept) = (0, 0);
+        for event in stream.events.iter().rev() {
+            bytes += serde_json::to_vec(event).unwrap().len();
+            if kept == 512 || bytes > 4 * 1024 * 1024 {
+                break;
+            }
+            kept += 1;
+        }
+        let dropped = stream.events.len() - kept;
+        if dropped > 0 {
+            let through = stream.events[dropped - 1]["seq"].as_u64().unwrap();
+            self.drop_through(profile, session, through);
+        }
+    }
+    /// The session's stream is replaced by a new one, under a new epoch
+    /// that counts from 1 again, and what waited still waits. Hermes does
+    /// this only when it has lost the stream's counters; dropping a ring
+    /// from its cache keeps the epoch and the count (`drop_through`).
     pub fn new_epoch(&mut self, profile: &Profile, session: &str, epoch: &str) {
         let stream = self.stream(profile, session);
         stream.epoch = epoch.to_owned();
@@ -150,6 +170,14 @@ impl Hermes {
             .streams
             .get(&(session.profile.clone(), session.id.clone()))?;
         (!stream.epoch.is_empty()).then_some(stream)
+    }
+    /// Where the last poll read the session's events from, in order.
+    pub fn read_from(&self) -> Vec<u64> {
+        let from = |step: &Step| match step {
+            Step::Since { cursor, .. } => cursor.as_ref().map(|cursor| cursor.seq),
+            _ => None,
+        };
+        self.asked.iter().filter_map(from).collect()
     }
     /// How many snapshots the last poll took.
     pub fn snapshots(&self) -> usize {

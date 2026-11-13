@@ -7,13 +7,14 @@
 //! A poll lists the sessions of every served profile, then reads each
 //! session that works, waits or shows a card (`read.rs`).
 use super::command::{active_list, events_since, resume, Command};
-use super::effect::{Closed, Status};
+use super::effect::Status;
 use super::fold::{batches, prompts, Reading};
 use super::frame::Cursor;
 use super::identity::{GatewayId, Profile, SessionRef};
+use super::read::Search;
 use super::ticket::Scope;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// One question to the gateway.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +56,8 @@ pub(super) struct Shown {
 pub(super) struct Look {
     pub(super) status: Status,
     pub(super) read: Read,
+    /// A snapshot of it was taken in this poll.
+    pub(super) snapshot: bool,
 }
 
 #[derive(Debug)]
@@ -64,9 +67,7 @@ pub(super) enum Read {
     /// `step` is still to be answered.
     Wanted {
         step: Step,
-        reads: u8,
-        /// What the events already read showed to be over.
-        over: BTreeMap<String, Closed>,
+        search: Search,
     },
     Done(Reading),
     /// It could not be read this time: what it waits on is not known.
@@ -83,6 +84,9 @@ pub struct Poll {
     pub(super) profiles: BTreeMap<Profile, Option<bool>>,
     pub(super) sessions: BTreeMap<SessionRef, Look>,
     pub(super) shown: BTreeMap<SessionRef, Shown>,
+    /// The sessions a snapshot was already taken of in the stretch of
+    /// waiting they are in.
+    pub(super) snapshotted: BTreeSet<SessionRef>,
 }
 
 impl Poll {
@@ -91,6 +95,7 @@ impl Poll {
         number: u64,
         served: impl Iterator<Item = Profile>,
         shown: BTreeMap<SessionRef, Shown>,
+        snapshotted: BTreeSet<SessionRef>,
     ) -> Self {
         Self {
             gateway,
@@ -98,6 +103,7 @@ impl Poll {
             profiles: served.map(|profile| (profile, None)).collect(),
             sessions: BTreeMap::new(),
             shown,
+            snapshotted,
         }
     }
 
@@ -121,29 +127,30 @@ impl Poll {
         match step {
             Step::List(profile) => self.listed(profile, result),
             Step::Since { session, cursor } => {
-                if let Some((reads, _)) = self.wanted(session, step) {
-                    self.read(session, cursor.as_ref(), reads, result);
+                if let Some(search) = self.wanted(session, step) {
+                    self.read(session, cursor.as_ref(), search, result);
                 }
             }
             Step::Snapshot(session) => {
-                let Some((_, over)) = self.wanted(session, step) else {
+                let Some(search) = self.wanted(session, step) else {
                     return;
                 };
                 let named = result["session_id"]
                     .as_str()
                     .is_none_or(|id| id == session.id);
-                let read = match prompts(&result["prompts"]).filter(|_| named) {
-                    Some(mut asks) => {
-                        asks.extend(batches(&result["open_requests"]));
-                        Read::Done(Reading {
-                            asks,
-                            over,
-                            unshown: false,
-                        })
-                    }
-                    None => Read::Failed,
+                let Some(mut asks) = prompts(&result["prompts"]).filter(|_| named) else {
+                    return self.set(session, Read::Failed);
                 };
-                self.set(session, read);
+                asks.extend(batches(&result["open_requests"]));
+                let reading = Reading {
+                    asks,
+                    over: search.over,
+                    unshown: false,
+                };
+                if let Some(look) = self.sessions.get_mut(session) {
+                    look.snapshot = true;
+                    look.read = Read::Done(reading);
+                }
             }
         }
     }
@@ -191,34 +198,30 @@ impl Poll {
                 .unwrap_or(Status::Working);
             let busy = matches!(status, Status::Working | Status::Waiting);
             let read = if busy || self.shown.contains_key(&session) {
-                Read::Wanted {
-                    step: Step::Since {
-                        session: session.clone(),
-                        cursor: None,
-                    },
-                    reads: 0,
-                    over: BTreeMap::new(),
-                }
+                let (session, cursor) = (session.clone(), None);
+                let step = Step::Since { session, cursor };
+                let search = Search::default();
+                Read::Wanted { step, search }
             } else {
                 Read::Skipped
             };
-            self.sessions.insert(session, Look { status, read });
+            let snapshot = false;
+            let look = Look {
+                status,
+                read,
+                snapshot,
+            };
+            self.sessions.insert(session, look);
         }
     }
 
-    /// How often the session was read and what that showed to be over, if
-    /// `step` is the one it waits on.
-    pub(super) fn wanted(
-        &mut self,
-        at: &SessionRef,
-        step: &Step,
-    ) -> Option<(u8, BTreeMap<String, Closed>)> {
+    /// The session's search so far, if `step` is the one it waits on.
+    pub(super) fn wanted(&mut self, at: &SessionRef, step: &Step) -> Option<Search> {
         match &mut self.sessions.get_mut(at)?.read {
             Read::Wanted {
                 step: asked,
-                reads,
-                over,
-            } if asked == step => Some((*reads, std::mem::take(over))),
+                search,
+            } if asked == step => Some(std::mem::take(search)),
             _ => None,
         }
     }
