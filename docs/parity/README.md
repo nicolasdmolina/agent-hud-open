@@ -29,6 +29,7 @@ Deliberate differences:
 - Demo mode only through `--demo`.
 - The LAN token-usage and session service, which Open does not have. (Agent HUD Fork: hidden and never started, see FORK.md, ticket 08.)
 - The Windows and Linux adapters.
+- Agent HUD Fork, ticket 31: core carries each source's list of machines, and a note when that list could not be read, to the snapshot as `machines` and `machinesNote`, keys Open's snapshot does not have. Both are left out while no channel tells a list, so nothing changes for Open's sources. See c03 #99 and FORK.md, "Machines list".
 - Decided 2026-10-20:
   - during the preview, client hooks default off and install only with a delegated fixed executable, so a preview build never rewrites existing client hooks;
   - the Settings window opens at launch with a Dock icon (since 2026-10-21 the HUD shows from the first run, as in Open; hiding it stays an extra choice);
@@ -48,7 +49,7 @@ Open is the floor, not the ceiling. Next must not do worse than Open; where it c
 | [c02b](c02b-antigravity-cursor.md) | Antigravity, Cursor | 51 | 21 | 1 | 2 | 5 | 6 | 16 | 0 |
 | [c02c](c02c-buddy-copilot-qwen-zcode-hermes-openclaw.md) | CodeBuddy/WorkBuddy, Copilot, Qwen, ZCode, Hermes, OpenClaw | 70 | 29 | 0 | 2 | 10 | 4 | 22 | 3 |
 | [c02d](c02d-openagents-additional.md) | Kimi, OpenCode/Go, GLM, Pi, additional sources | 57 | 16 | 2 | 0 | 5 | 5 | 28 | 1 |
-| [c03](c03-hooks-store-ledger.md) | Hooks, permissions, collector, store, ledger | 104 | 44 | 6 | 6 | 4 | 8 | 28 | 8 |
+| [c03](c03-hooks-store-ledger.md) | Hooks, permissions, collector, store, ledger | 105 | 44 | 7 | 6 | 4 | 8 | 28 | 8 |
 | [c04](c04-models-logic.md) | Models, quota math, session phases, formatting, demo | 122 | 49 | 3 | 7 | 18 | 12 | 26 | 7 |
 | [c05](c05-panel-mcp.md) | Panel layout, HUD style, MCP tools | 96 | 23 | 10 | 1 | 15 | 2 | 44 | 1 |
 | [c06](c06-notch-surface.md) | Island, hover panel, Simple mode, HUD windows | 119 | 40 | 5 | 1 | 18 | 11 | 41 | 3 |
@@ -56,7 +57,7 @@ Open is the floor, not the ceiling. Next must not do worse than Open; where it c
 | [c08](c08-bots.md) | Bots and Clawd | 58 | 35 | 1 | 2 | 1 | 1 | 15 | 3 |
 | [c09](c09-app-settings.md) | App lifecycle, Settings, menu bar | 90 | 25 | 6 | 6 | 6 | 9 | 33 | 5 |
 | [c10](c10-statistics-debug.md) | Statistics, sessions window, debug, recording | 101 | 14 | 1 | 9 | 13 | 8 | 54 | 2 |
-| **Total** | | **1,217** | **407** | **48** | **52** | **176** | **87** | **401** | **46** |
+| **Total** | | **1,218** | **407** | **49** | **52** | **176** | **87** | **401** | **46** |
 
 `pnpm run parity:ledger` recounts this table from the rows; `pnpm run check` fails when it is stale.
 

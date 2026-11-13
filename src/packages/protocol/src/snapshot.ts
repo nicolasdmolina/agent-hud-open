@@ -83,6 +83,25 @@ export interface PlatformCapabilities {
   legacyMacHistory: boolean;
   scripts: "build-time-embedded";
 }
+/**
+ * One machine a source's native channel knows, as it last said. Core carries
+ * the state and the note and decides nothing from them. A time the channel
+ * does not know is left out.
+ */
+export interface MachineStatus {
+  id: string;
+  label: string;
+  state:
+    | "connected"
+    | "connecting"
+    | "not-trusted"
+    | "cannot-reach"
+    | "not-covered"
+    | "same-machine";
+  note?: string;
+  lastContactAt?: string;
+  historyCheckedAt?: string;
+}
 export interface Snapshot {
   /** The interface language Core resolved from the Language setting and the
    * system's preferred language; Core writes its own text in it. */
@@ -141,6 +160,12 @@ export interface Snapshot {
   billing: BillingAccount[];
   /** From Core: the relays the clients are configured with, for consent in Settings. */
   relays?: RelaySource[];
+  /** Each source's machines, by source id, where its native channel told a
+   * non-empty list. */
+  machines?: Record<string, MachineStatus[]>;
+  /** By source id: the channel's note that its list of machines could not
+   * be read. Apart from the list, which then stays as it was told. */
+  machinesNote?: Record<string, string>;
 }
 export type NativeMethod =
   | "snapshot"
