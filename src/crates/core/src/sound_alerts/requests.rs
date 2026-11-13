@@ -39,8 +39,12 @@ fn row<'a>(id: &str, kind: &'a Value, call: Option<String>) -> Row<'a> {
 
 pub(super) fn requests(session: &Value, source: &str, id: &str, heard: &Heard) -> Vec<Request> {
     let shown = session["liveFacts"]["requests"].as_array();
+    // What cards hid counts only while the row as finally presented still
+    // waits on something: settling a session whose process has gone clears
+    // its requests, and with them what was heard before.
     let raw = heard
         .sightings
+        .filter(|_| shown.is_some_and(|rows| !rows.is_empty()))
         .and_then(|all| all.get(&format!("{source}:{id}")));
     let prefix = format!("log:{source}:{id}:");
     let mut sightings: Vec<Row> = raw
