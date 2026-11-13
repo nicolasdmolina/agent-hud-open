@@ -11,6 +11,7 @@ import { QuestionLockNote } from "./QuestionLockNote";
 import {
   canGoOn,
   isAnswered as answered,
+  offersSkip,
   writtenAnswers,
   type Draft,
 } from "./question-answers";
@@ -230,23 +231,25 @@ export function PermissionQuestionCard({
           gap: 6,
         }}
       >
-        <CardButton
-          disabled={disabled}
-          onClick={() => {
-            setEditingCustomKey(null);
-            changeAnswer(key, { selected: [], own: false });
-            if (safePage + 1 < questions.length) {
-              setPage(safePage + 1);
-            } else {
-              submitAllAnswers(key);
-            }
-          }}
-          edge={ink(0.18)}
-          color={secondary}
-        >
-          <ArrowRight size={9} strokeWidth={2.6} />
-          {t("Skip", "跳过")}
-        </CardButton>
+        {offersSkip(request, q) && (
+          <CardButton
+            disabled={disabled}
+            onClick={() => {
+              setEditingCustomKey(null);
+              changeAnswer(key, { selected: [], own: false });
+              if (safePage + 1 < questions.length) {
+                setPage(safePage + 1);
+              } else {
+                submitAllAnswers(key);
+              }
+            }}
+            edge={ink(0.18)}
+            color={secondary}
+          >
+            <ArrowRight size={9} strokeWidth={2.6} />
+            {t("Skip", "跳过")}
+          </CardButton>
+        )}
         <span style={{ flex: 1, minWidth: 8 }} />
         {safePage > 0 && (
           <CardButton

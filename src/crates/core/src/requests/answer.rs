@@ -112,6 +112,18 @@ fn validate_native_answers(view: &Value, decision: &Value) -> Result<(), String>
     let questions = view["questions"]
         .as_array()
         .ok_or("This request has no questions")?;
+    // A card whose client takes no skip (`canSkip: false`) needs an answer
+    // to every question: the card offers no Skip, and a decision that
+    // skips would take the card away with the client still waiting.
+    if view["canSkip"] == false
+        && questions.iter().any(|question| {
+            !question["answerKey"]
+                .as_str()
+                .is_some_and(|key| answers.contains_key(key))
+        })
+    {
+        return Err("Every question needs an answer".into());
+    }
     for (key, answer) in answers {
         let question = questions
             .iter()

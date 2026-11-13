@@ -352,7 +352,7 @@ fn approval_scopes_and_batch_multiselect_encode_exactly() {
         b.reply(&d, Scope::Host).unwrap(),
         Some(Reply::Result(
             json!({"jsonrpc": "2.0", "id": "srq-synthetic",
-            "result": {"answers": {"q1": "[\"a (Recommended)\",\"b\"]"}}})
+            "result": {"answers": {"q0": null, "q1": "[\"a (Recommended)\",\"b\"]"}}})
         ))
     );
 }

@@ -1,4 +1,8 @@
-import type { ApprovalQuestion, RequestAnswer } from "@agent-hud/protocol";
+import type {
+  Approval,
+  ApprovalQuestion,
+  RequestAnswer,
+} from "@agent-hud/protocol";
 
 /** A question's draft: the offered answers picked, the words typed, and
  * whether those words are the answer (`own`). Skipping or picking a single
@@ -45,4 +49,11 @@ export function isAnswered(draft: Draft): boolean {
  * viewer already answered or skipped it and leaving it alone keeps that. */
 export function canGoOn(question: ApprovalQuestion, draft: Draft): boolean {
   return isAnswered(draft) || Boolean(question.lock);
+}
+
+/** Whether the card offers Skip on the question: not where the client takes
+ * no skip, nor where another viewer settled it (going on without an answer
+ * keeps theirs). */
+export function offersSkip(request: Approval, question: ApprovalQuestion) {
+  return request.canSkip !== false && !question.lock;
 }

@@ -52,6 +52,9 @@ export interface Approval {
   questions?: ApprovalQuestion[];
   plan?: string | null;
   answersQuestion?: boolean;
+  /** From the client's adapter: false where the client takes no skip, so
+   * every question needs an answer and the card offers no Skip. */
+  canSkip?: boolean;
   /** From Core: why a question can be answered only in the client's own
    * window, such as a Claude desktop box whose session Agent HUD cannot
    * reach; null when it can be answered here. */

@@ -23,12 +23,22 @@ impl Pending {
             "answersPlan": false,
         });
         let shown = match &self.ask {
-            Ask::Question(question) => questions(vec![question_item(
-                &question.prompt.id,
-                &question.text,
-                &question.choices,
-                question.multi_select,
-            )]),
+            Ask::Question(question) => {
+                let mut card = questions(vec![question_item(
+                    &question.prompt.id,
+                    &question.text,
+                    &question.choices,
+                    question.multi_select,
+                )]);
+                // No answer a viewer sends skips one question everywhere:
+                // Hermes's own skip value is internal, and the empty answer
+                // its contract calls a skip is, where the gateway runs the
+                // turn itself, a timeout that also drops the questions still
+                // to come in the call (`run_turn_runner_clarify_delivery.py`,
+                // `run_turn_runner.py`). So the card offers no Skip.
+                card["canSkip"] = json!(false);
+                card
+            }
             Ask::Batch(batch) => questions(
                 batch
                     .questions

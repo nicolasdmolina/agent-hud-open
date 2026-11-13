@@ -201,21 +201,27 @@ fn a_decision_on_the_card_becomes_the_exact_frame_hermes_gets() {
         Some(call(&typed, "cd068655b1", "Synthetic Widget"))
     );
 
-    // Skip: the card sends no answer, and Hermes gets the empty answer it
-    // reads as skipped. A card answered once is never shown again, so the
-    // same question is asked under a prompt id of its own.
-    let mut skipped = picked.clone();
-    if let Ask::Question(question) = &mut skipped.ask {
+    // A lone question has no Skip: Core refuses a decision with no answer
+    // and the card stays. Sent as the empty answer, it would end Hermes's
+    // call as timed out, with any question still to come in it.
+    let mut lone = picked.clone();
+    if let Ask::Question(question) = &mut lone.ask {
         question.prompt.id = "1a8bbfc16d".into();
     }
+    let _ticket = open(&core, &lone);
     assert_eq!(
-        answered(
-            &mut core,
-            &skipped,
-            json!({"kind": "answer", "answers": {}})
+        core.request(
+            "answer_request",
+            json!({"id": lone.id(), "decision": {"kind": "answer", "answers": {}}}),
         ),
-        Some(call(&skipped, "1a8bbfc16d", ""))
+        Err("Every question needs an answer".into())
     );
+    let snapshot = core.request("snapshot", json!({})).unwrap();
+    assert!(snapshot["approvals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|card| card["id"] == lone.id().as_str() && card["canSkip"] == false));
 
     // A set of questions, one of them already answered by another viewer:
     // the card shows that answer, and only the question answered here is
@@ -241,5 +247,36 @@ fn a_decision_on_the_card_becomes_the_exact_frame_hermes_gets() {
         Some(json!({"jsonrpc": "2.0", "id": batch.request, "result": {
             "answers": {"q1": r#"["small (Recommended)","large"]"#},
         }}))
+    );
+
+    // Skip on every question settles the set: each question skipped here
+    // goes as `null`, and one locked by another viewer keeps its answer. A
+    // set answered once is never shown again, so each case is a set of its
+    // own.
+    let again = |pending: &Pending, request: &str| {
+        let mut pending = pending.clone();
+        if let Ask::Batch(read) = &mut pending.ask {
+            read.request = request.into();
+        }
+        pending
+    };
+    let skip_all = json!({"kind": "answer", "answers": {}});
+    let all = again(&set, "srq-all-skipped");
+    assert_eq!(
+        answered(&mut core, &all, skip_all.clone()),
+        Some(
+            json!({"jsonrpc": "2.0", "id": "srq-all-skipped", "result": {
+                "answers": {"q0": null, "q1": null},
+            }})
+        )
+    );
+    let half = again(&locked, "srq-locked-and-skipped");
+    assert_eq!(
+        answered(&mut core, &half, skip_all),
+        Some(
+            json!({"jsonrpc": "2.0", "id": "srq-locked-and-skipped", "result": {
+                "answers": {"q1": null},
+            }})
+        )
     );
 }

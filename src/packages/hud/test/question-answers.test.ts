@@ -4,6 +4,7 @@ import type { ApprovalQuestion } from "@agent-hud/protocol";
 import {
   canGoOn,
   isAnswered,
+  offersSkip,
   writtenAnswers,
 } from "../src/permissions/question-answers.ts";
 
@@ -60,7 +61,7 @@ test("a question left alone or skipped is not written", () => {
     ),
     { q0: { selected: ["green"] } },
   );
-  // Nothing at all: an empty answer, which skips a lone question.
+  // Nothing at all: no answers, which a set of questions takes as each one skipped.
   assert.deepEqual(writtenAnswers([sizes], {}, "q1"), {});
 });
 
@@ -74,4 +75,13 @@ test("a question another viewer settled may be passed without an answer", () => 
     canGoOn(question("q2", [], { state: "skipped" }), { selected: [] }),
     true,
   );
+});
+
+test("Skip is offered only where the client takes one and nobody settled the question", () => {
+  const card = (canSkip?: boolean) =>
+    ({ id: "r", canSkip, questions: [colour, sizes] }) as never;
+  assert.equal(offersSkip(card(), sizes), true);
+  assert.equal(offersSkip(card(true), sizes), true);
+  assert.equal(offersSkip(card(false), sizes), false);
+  assert.equal(offersSkip(card(), colour), false);
 });
