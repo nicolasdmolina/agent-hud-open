@@ -42,7 +42,16 @@ pub(super) const FIXED: &[&str] = &[
 /// case `ssh` ever tried: with no master, a session would otherwise open a
 /// connection of its own.
 pub(super) const NOWHERE: &str = "link.invalid";
-const NO_DIAL: &str = "ProxyCommand=/usr/bin/false";
+/// And nothing to sign in with or to check a host against: before it
+/// finds its proxy dead, `ssh` would read the user's default key files.
+pub(super) const NO_DIAL: &[&str] = &[
+    "ProxyCommand=/usr/bin/false",
+    "IdentityFile=none",
+    "IdentityAgent=none",
+    "PubkeyAuthentication=no",
+    "UserKnownHostsFile=/dev/null",
+    "GlobalKnownHostsFile=/dev/null",
+];
 
 /// What a client asks of the master.
 #[derive(Clone, Copy)]
@@ -109,8 +118,7 @@ pub(super) fn client(control: &str, ask: Ask) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec!["-F".into(), "none".into()];
     option(&mut args, "ControlMaster=no");
     option(&mut args, format!("ControlPath={control}"));
-    option(&mut args, NO_DIAL);
-    for fixed in FIXED {
+    for fixed in NO_DIAL.iter().chain(FIXED) {
         option(&mut args, *fixed);
     }
     // `ssh` drops the very forward a request names when told to clear

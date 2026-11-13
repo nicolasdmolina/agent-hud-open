@@ -84,8 +84,7 @@ fn a_client_never_dials_and_reads_no_configuration_file() {
         let args = strings(args::client("\"/x/s\"", ask));
         assert_eq!(&args[..2], ["-F", "none"]);
         assert!(sets(&args, "ControlMaster=no"));
-        assert!(sets(&args, "ProxyCommand=/usr/bin/false"));
-        for fixed in args::FIXED {
+        for fixed in args::NO_DIAL.iter().chain(args::FIXED) {
             assert!(sets(&args, fixed), "{fixed} is missing from {args:?}");
         }
         let at = args.iter().position(|arg| arg == "--").unwrap();

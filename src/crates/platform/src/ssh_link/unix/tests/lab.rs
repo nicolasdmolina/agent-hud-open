@@ -163,12 +163,13 @@ impl Lab {
         )
     }
 
-    /// The client configuration: two names for the lab's `sshd`, with the
-    /// lab's own key and `known_hosts` and no agent. A test changes a line
-    /// by replacing it in this text.
+    /// The client configuration: two names for the lab's `sshd`, and for
+    /// every host, whatever its name, the lab's own key and `known_hosts`
+    /// and no agent. A test changes a line by replacing it in this text,
+    /// and adds a host by appending a `Host` block.
     pub(crate) fn config_text(&self) -> String {
         format!(
-            "Host lab other\n  HostName 127.0.0.1\n  Port {}\n  UserKnownHostsFile \"{}\"\n  \
+            "Host lab other\n  HostName 127.0.0.1\n  Port {}\nHost *\n  UserKnownHostsFile \"{}\"\n  \
              GlobalKnownHostsFile /dev/null\n  IdentityFile \"{}\"\n  IdentitiesOnly yes\n  \
              IdentityAgent none\n",
             self.port,

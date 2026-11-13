@@ -293,11 +293,67 @@ fn a_client_with_no_master_does_not_dial() {
         .unwrap();
     assert_eq!(session.status.code(), Some(255));
     assert_eq!(session.stdout, b"");
+    // Nor does it read a key or a host list on the way. `-G` prints the
+    // settings `ssh` would use and opens none of those files.
+    let settings = Command::new(PROGRAM)
+        .arg("-G")
+        .args(args::client(&nobody, Ask::Session("echo reached")))
+        .output()
+        .unwrap();
+    let settings = String::from_utf8_lossy(&settings.stdout).to_lowercase();
+    let named = |key: &str| -> Vec<&str> {
+        settings
+            .lines()
+            .filter_map(|line| line.strip_prefix(key)?.strip_prefix(' '))
+            .collect()
+    };
+    assert_eq!(named("identityfile"), ["none"]);
+    assert_eq!(named("identityagent"), ["none"]);
+    assert_eq!(named("userknownhostsfile"), ["/dev/null"]);
+    assert_eq!(named("globalknownhostsfile"), ["/dev/null"]);
+    assert_eq!(named("proxycommand"), ["/usr/bin/false"]);
+    assert_eq!(named("hostname"), ["link.invalid"]);
     let check = Command::new(PROGRAM)
         .args(args::client(&nobody, Ask::Check))
         .stdin(Stdio::null())
         .output()
         .unwrap();
     assert_eq!(check.status.code(), Some(255));
+    assert_eq!(entries(folder.path()), Vec::<String>::new());
+}
+
+/// The lab names its own key, host list and agent for every host name, so
+/// no test's `ssh` reads the user's. `-G` prints the settings a master
+/// would use and opens none of those files.
+#[test]
+fn a_lab_master_is_pointed_at_the_labs_own_files_whatever_the_host() {
+    let Some(lab) = Lab::start() else { return };
+    let folder = lab.folder();
+    let own = lab.at("").display().to_string().to_lowercase();
+    for host in ["lab", "other", "silent", "anything.example"] {
+        let target = Target::new(host, None, None, None).unwrap();
+        let settings = Command::new(PROGRAM)
+            .arg("-G")
+            .args(args::master(
+                &lab.settings(),
+                &target,
+                &folder.control("abcd0123"),
+            ))
+            .output()
+            .unwrap();
+        let settings = String::from_utf8_lossy(&settings.stdout).to_lowercase();
+        let named = |key: &str| -> Vec<&str> {
+            settings
+                .lines()
+                .filter_map(|line| line.strip_prefix(key)?.strip_prefix(' '))
+                .collect()
+        };
+        assert_eq!(named("identityfile").len(), 1, "{host}: {settings}");
+        assert!(named("identityfile")[0].starts_with(&own), "{host}");
+        assert!(named("userknownhostsfile")[0].starts_with(&own), "{host}");
+        assert_eq!(named("globalknownhostsfile"), ["/dev/null"], "{host}");
+        assert_eq!(named("identityagent"), ["none"], "{host}");
+        assert_eq!(named("identitiesonly"), ["yes"], "{host}");
+    }
     assert_eq!(entries(folder.path()), Vec::<String>::new());
 }

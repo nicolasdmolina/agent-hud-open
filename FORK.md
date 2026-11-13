@@ -170,7 +170,7 @@ What a caller must know:
 - **`End::Ended(255)`** is a far program's own status only while the link is alive; `run` checks, and returns `Lost` otherwise.
 - **A forward request is refused unless it leads to `127.0.0.1`** with a port. The local end is a free port on `127.0.0.1` that the link picks.
 - **A command line is at most 4096 bytes and holds no `<<`.** A long program goes in `stdin`, with a script such as `exec python3 - "$@"`.
-- **Clients never dial.** A command or a forward is a second `ssh` that speaks to the master's socket. It reads no configuration file, is given a host name no network resolves and a proxy that fails. So with the master gone, nothing reconnects by itself.
+- **Clients never dial.** A command or a forward is a second `ssh` that speaks to the master's socket. It reads no configuration file, and is given a host name no network resolves, a proxy that fails, no key, no agent and an empty host list. So with the master gone, nothing reconnects by itself, and a client never opens the user's keys or `known_hosts` (without those last settings `ssh` reads the default key files before it finds the proxy dead).
 - **A forward request must not carry `ClearAllForwardings`:** `ssh` then drops the very forward asked for and reports success (measured). The master carries it; forward and cancel requests do not, and read no configuration file instead.
 - **`alive()` empties the master's log once it passes 256 KB.** Call it now and then on a link that stays up.
 - **Not verified here:** Linux (the same code, never run), an `ssh` older than 8.7 (it does not know `ForkAfterAuthentication`), a far login shell other than zsh, a host reached through the user's own `ProxyCommand`, and the user's real `~/.ssh/config`, which no test reads.
