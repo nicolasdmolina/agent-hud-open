@@ -229,6 +229,7 @@ pub(crate) fn read(
             parent: parent.clone(),
             archived: Some(archived),
             updated: None,
+            running: None,
             duration_ms: turn.duration_ms,
         });
     }
@@ -252,6 +253,7 @@ pub(crate) fn read(
                 parent,
                 archived: Some(archived),
                 updated: None,
+                running: None,
                 duration_ms: None,
             });
         }

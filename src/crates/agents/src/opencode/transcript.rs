@@ -174,6 +174,7 @@ pub fn read(db: &Connection, cursor: &Value, store: &super::Store) -> rusqlite::
             parent: sql_text(row, 7).map(|id| format!("{source}:{id}")),
             archived: Some(!matches!(row.get_ref(6)?, rusqlite::types::ValueRef::Null)),
             updated: v["time"]["completed"].as_i64(),
+            running: None,
             duration_ms: reply_time(&v["finish"], &v["time"]),
         });
     }

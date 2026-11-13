@@ -109,6 +109,9 @@ impl AgentHudCore {
         let generation = checkpoint.source_state["generation"].clone();
 
         let mut bot_running = false;
+        // When this page was read: the time a running total's growth is
+        // dated at when the client's own stamp says nothing newer.
+        let read_at = chrono::Utc::now().timestamp_millis();
         for record in page.records {
             let Some(key) =
                 self.resolve_session_path(stamp.source, &record.id, path, &mut superseded)
@@ -212,14 +215,25 @@ impl AgentHudCore {
                     }
                 }
             }
-            log.count_timed_source(
-                record.key,
-                &record.model,
-                record.at,
-                record.usage,
-                false,
-                record.duration_ms,
-            );
+            match record.running {
+                Some(running) => log.count_running_total(
+                    record.key,
+                    &record.model,
+                    record.at,
+                    running,
+                    read_at,
+                    record.usage,
+                    record.duration_ms,
+                ),
+                None => log.count_timed_source(
+                    record.key,
+                    &record.model,
+                    record.at,
+                    record.usage,
+                    false,
+                    record.duration_ms,
+                ),
+            }
             mappings.push((
                 stamp.source.to_owned(),
                 record.id,

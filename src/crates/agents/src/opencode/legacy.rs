@@ -90,6 +90,7 @@ pub fn read(path: &Path) -> rusqlite::Result<Page> {
         parent: None,
         archived: Some(false),
         updated: v.time["completed"].as_i64(),
+        running: None,
         duration_ms: super::transcript::reply_time(&v.finish, &v.time),
     };
     Ok(Page {

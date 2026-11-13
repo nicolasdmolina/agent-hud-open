@@ -66,7 +66,8 @@ pub(crate) fn reader_version(path: &Path, source: &str) -> u16 {
         2
     } else if source == "hermes" {
         // 2: calls carry the route their billing provider names.
-        // 3: sessions carry their profile as their client.
+        // 3: sessions carry their profile as their client, and usage rows
+        // count as running totals (ticket 10).
         3
     } else if source == "antigravity" {
         // 2: trajectory_metadata_blob cwd, parent_id, role, duration_ms, archived.
@@ -121,5 +122,7 @@ impl AgentHudCore {
 
 #[cfg(test)]
 mod droid_tests;
+#[cfg(test)]
+mod hermes_tests;
 #[cfg(test)]
 mod tests;

@@ -192,6 +192,7 @@ pub fn read(path: &Path, _cursor: &Value) -> rusqlite::Result<Page> {
                 .map(|parent| format!("droid:{parent}")),
             archived: Some(!settings["archivedAt"].is_null()),
             updated: Some(updated),
+            running: None,
             duration_ms: None,
         }],
         cursor: None,

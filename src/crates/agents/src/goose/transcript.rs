@@ -216,6 +216,7 @@ fn record(
         parent: field(2).map(|parent| format!("goose:{parent}")),
         archived: Some(field(3).is_some()),
         updated: sql_time(row, from + SESSION_FIELDS.len(), true),
+        running: None,
         duration_ms: None,
         id,
     }

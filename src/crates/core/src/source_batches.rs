@@ -205,6 +205,7 @@ pub(super) fn read(
             parent: None,
             archived: Some(false),
             updated: None,
+            running: None,
             duration_ms: r.duration_ms.and_then(|ms| u64::try_from(ms).ok()),
         });
     }

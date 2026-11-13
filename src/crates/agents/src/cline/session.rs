@@ -111,6 +111,7 @@ pub(super) fn session(path: &Path) -> Option<Vec<Record>> {
                 parent: parent.clone(),
                 archived: Some(false),
                 updated: None,
+                running: None,
                 duration_ms: previous
                     .filter(|(_, user)| *user)
                     .map(|(start, _)| at - start)
