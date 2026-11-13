@@ -728,3 +728,30 @@ fn a_subagent_finishing_inside_its_parents_turn_makes_no_sound() {
     // Nor later, once the subagent's row has left the list.
     assert!(look(&mut tracker, &island, &[parent], &on(), T + 2).is_empty());
 }
+
+/// Verifier round 5: a subagent its log names no parent for (Codex review).
+#[test]
+fn verifier_codex_review_subagent_without_parent_must_be_silent() {
+    let now = Utc::now().timestamp_millis();
+    let mut island = crate::island_events::Tracker::new();
+    let mut sound = Tracker::new();
+    sound.update(&json!({}), &[], &Heard::default(), &on(), now);
+    let mut log = agent_hud_agents::Log::new("rollout-review.jsonl".into(), "codex");
+    log.parse(&json!({"timestamp":iso(now+1),"type":"session_meta","payload":{"id":"review-child","source":{"subagent":"review"},"cwd":"/work"}}));
+    log.parse(&json!({"timestamp":iso(now+2),"type":"event_msg","payload":{"type":"task_started","turn_id":"review-turn"}}));
+    log.parse(&json!({"timestamp":iso(now+3),"type":"event_msg","payload":{"type":"task_complete","turn_id":"review-turn","last_agent_message":"Review complete"}}));
+    assert!(log.live.is_subagent);
+    assert!(!log.live.is_internal);
+    let mut row = crate::sessions::log_session(&log, now + 4, None);
+    row["liveFacts"] = log.live.facts(&log.id, "codex", now + 4, None).unwrap();
+    assert!(row["parentId"].is_null());
+    assert_eq!(row["liveFacts"]["outcome"], "completed");
+    let sessions = [row];
+    let events = island.update(&sessions, &[], &[], &[], now + 4);
+    assert_eq!(events["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        sound.update(&events, &sessions, &Heard::default(), &on(), now + 4)["revision"],
+        0,
+        "recognized Codex review subagent ending is a step, not top-level finished"
+    );
+}

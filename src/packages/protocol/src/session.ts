@@ -92,6 +92,9 @@ export interface AttentionFact {
   at: string;
 }
 export interface SessionLiveFacts {
+  /** Present (true) only for a session its client started under another,
+   * such as a subagent, or a review with no parent named. */
+  subagent?: true;
   turnId: string | null;
   turnStartedAt: string | null;
   outcome: "completed" | "interrupted" | "failed" | "limited" | null;

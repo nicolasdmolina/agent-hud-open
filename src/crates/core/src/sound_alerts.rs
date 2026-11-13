@@ -72,12 +72,15 @@ impl Tracker {
         now: i64,
     ) -> Value {
         let mut alerts = Vec::new();
-        // A subagent's turn ending is a step of its parent's turn: only a
+        // A subagent's turn ending is a step of another's turn: only a
         // top-level session's turn end is `finished`. The island's
-        // completions come from these same rows, which name a child's parent.
+        // completions come from these same rows, which name a child's parent
+        // or, where the log names none, say it is one (`liveFacts.subagent`).
         let children: HashSet<(&str, &str)> = sessions
             .iter()
-            .filter(|session| !session["parentId"].is_null())
+            .filter(|session| {
+                !session["parentId"].is_null() || session["liveFacts"]["subagent"] == true
+            })
             .filter_map(|session| Some((session["source"].as_str()?, session["id"].as_str()?)))
             .collect();
         for event in island["items"].as_array().into_iter().flatten() {
