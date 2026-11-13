@@ -8,9 +8,9 @@ use std::{
 };
 
 /// How long a native channel's reading of its sessions is believed after it
-/// came back. Hermes's gateway is read every second while anything runs
-/// and every ten seconds when all is idle; thirty seconds is three idle
-/// polls, room for a slow one. A channel that stops reading without a word
+/// came back. The channel that tells states today reads its client every
+/// second while anything runs and every ten seconds when all is idle;
+/// thirty seconds is three idle readings, room for a slow one. A channel that stops reading without a word
 /// (a call that hangs on a socket that still looks open) gives its sessions
 /// back to their hooks and logs by then.
 pub const LIVE_STATES_MS: i64 = 30_000;
@@ -127,9 +127,11 @@ impl Requests {
     /// What `source`'s native channel says each live session is doing,
     /// whole, as of `states.read_ms`: a session it leaves out, or an empty
     /// list, goes back to what its hooks and its log say, and so does every
-    /// session once the reading is `LIVE_STATES_MS` old. The same sessions
-    /// read again only renew the reading, and only a change wakes the HUD,
-    /// so a channel may call this after everything it does.
+    /// session once the reading is `LIVE_STATES_MS` old. A channel may call
+    /// this after everything it does: the very same reading told again
+    /// changes nothing. Any newer reading wakes the HUD, even of the same
+    /// sessions, since it decides again against hooks that reported since
+    /// the last one (a channel reads at most about once a second).
     pub fn set_native_states(&self, source: &str, states: &agent_hud_agents::LiveStates) {
         let sessions: HashMap<_, _> = states
             .sessions
@@ -140,31 +142,28 @@ impl Requests {
         let read_ms = states.read_ms;
         let changed = {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-            let same = match state.native_states.get_mut(source) {
-                None => sessions.is_empty(),
-                // A reading that had lapsed comes back to life: a change.
+            let renewed = match state.native_states.get_mut(source) {
+                None if sessions.is_empty() => false,
+                // The same sessions, read again and not lapsed meanwhile.
                 Some(old) if old.sessions == sessions && old.fresh(read_ms) => {
-                    // A newer reading decides again against hooks that
-                    // reported since the last one, so the views are made
-                    // again; nothing new is shown, so the HUD is not woken.
-                    if read_ms > old.read_ms {
-                        old.read_ms = read_ms;
-                        state.revision = state.revision.wrapping_add(1);
+                    let newer = read_ms > old.read_ms;
+                    old.read_ms = old.read_ms.max(read_ms);
+                    newer
+                }
+                _ => {
+                    if sessions.is_empty() {
+                        state.native_states.remove(source);
+                    } else {
+                        let next = NativeStates { read_ms, sessions };
+                        state.native_states.insert(source.into(), next);
                     }
                     true
                 }
-                Some(_) => false,
             };
-            if !same {
-                if sessions.is_empty() {
-                    state.native_states.remove(source);
-                } else {
-                    let next = NativeStates { read_ms, sessions };
-                    state.native_states.insert(source.into(), next);
-                }
+            if renewed {
                 state.revision = state.revision.wrapping_add(1);
             }
-            !same
+            renewed
         };
         if changed {
             self.wake();

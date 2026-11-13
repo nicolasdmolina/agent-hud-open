@@ -242,18 +242,28 @@ fn verifier_stale_live_state_must_not_keep_an_ancient_session_visible() {
     );
 }
 
+/// Verifier, round 2: timed by Core's pinned snapshot clock, not by how
+/// long the test thread takes.
 #[test]
 fn a_reading_is_believed_for_thirty_seconds_and_no_longer() {
+    let at = now();
+    let pin = |ms: i64| crate::snapshot::PINNED_CLOCK.set(Some(ms));
+    pin(at);
     let root = tempfile::tempdir().unwrap();
     let mut core = hermes(root.path(), 3 * 24 * 60 * MINUTE);
-    // Read 25 s ago and not since: still believed.
-    read(&core, &[(ID, LiveState::Running)], 25_000);
-    assert_eq!(state(&mut core), "running");
-    // Read 31 s ago (a channel that has just started, telling an old
-    // reading): not believed, whether or not anything expired it yet.
-    live(&core, &[]);
-    read(&core, &[(ID, LiveState::Running)], 31_000);
-    assert_eq!(row(&mut core), None);
+    let sessions = vec![(ID.to_owned(), LiveState::Running)];
+    core.requests().set_native_states(
+        "hermes",
+        &LiveStates {
+            sessions,
+            read_ms: at,
+        },
+    );
+    pin(at + crate::requests::LIVE_STATES_MS - 1);
+    assert_eq!(state(&mut core), "running", "a moment before it lapses");
+    pin(at + crate::requests::LIVE_STATES_MS);
+    assert_eq!(row(&mut core), None, "lapsed: only the reading listed it");
+    crate::snapshot::PINNED_CLOCK.set(None);
 }
 
 #[test]
@@ -284,4 +294,49 @@ fn a_turn_end_the_hooks_push_after_the_reading_wins_until_the_next_one() {
     assert_eq!(state(&mut core), "running");
     live(&core, &[(ID, LiveState::Idle)]);
     assert_eq!(state(&mut core), "idle");
+}
+
+/// Verifier, round 2: a newer reading of the very same sessions can take a
+/// session back from a hook that reported since the last one, so it must
+/// wake the HUD, not wait for something else to.
+#[test]
+fn verifier2_regaining_control_over_a_hook_must_wake_the_display() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let root = tempfile::tempdir().unwrap();
+    let mut core = hermes(root.path(), 10 * MINUTE);
+    let wakes = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = wakes.clone();
+    core.requests().set_waker(std::sync::Arc::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+    }));
+    let woken = || wakes.load(Ordering::SeqCst);
+
+    // A turn end the hooks push after a reading, then the next reading,
+    // which still lists the session running.
+    read(&core, &[(ID, LiveState::Running)], 3_000);
+    hook(&mut core, "on_session_end", 2_000);
+    assert_eq!(state(&mut core), "idle");
+    let before = woken();
+    live(&core, &[(ID, LiveState::Running)]);
+    assert!(woken() > before, "the reading took the session back");
+    assert_eq!(state(&mut core), "running");
+
+    // A turn start the hooks push after an idle reading, then the next
+    // reading, which still lists the session idle.
+    live(&core, &[]);
+    read(&core, &[(ID, LiveState::Idle)], 3_000);
+    hook(&mut core, "pre_llm_call", 2_000);
+    assert_eq!(state(&mut core), "running");
+    let before = woken();
+    read(&core, &[(ID, LiveState::Idle)], 1_000);
+    assert!(woken() > before, "the reading took the session back");
+    assert_eq!(state(&mut core), "idle");
+
+    // The very same reading told again wakes nothing.
+    let sessions = vec![(ID.to_owned(), LiveState::Idle)];
+    let read_ms = core.requests().native_states()["hermes"].read_ms;
+    let before = woken();
+    core.requests()
+        .set_native_states("hermes", &LiveStates { sessions, read_ms });
+    assert_eq!(woken(), before);
 }
