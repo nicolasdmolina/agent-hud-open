@@ -5,6 +5,7 @@
 //! `needs-you`; the log's row then takes over without a second sound.
 use super::hermes_questions::{alert_ids, asked, hermes_core, needs_you, open};
 use super::*;
+use agent_hud_agents::SOLE_READER;
 
 fn rows(snapshot: &Value, id: &str) -> Vec<Value> {
     snapshot["sessions"]
@@ -70,7 +71,8 @@ fn a_native_card_waits_and_sounds_at_the_next_snapshot_before_its_log_is_read() 
     let shown = core.request("request_snapshot", json!({})).unwrap();
     assert_eq!(rows(&shown, &other).len(), 1);
     core.requests().settle_native(&question.id());
-    core.requests().set_native_waiting("hermes", &[], 0);
+    core.requests()
+        .set_native_waiting("hermes", SOLE_READER, &[], 0);
     let after = core.request("request_snapshot", json!({})).unwrap();
     assert!(rows(&after, &other).is_empty());
 }
