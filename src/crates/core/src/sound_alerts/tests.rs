@@ -700,3 +700,31 @@ fn a_named_card_hides_every_sighting_of_its_kind_as_upstream() {
         [card]
     );
 }
+
+#[test]
+fn a_subagent_finishing_inside_its_parents_turn_makes_no_sound() {
+    let mut tracker = started();
+    // The parent's turn and its subagent's, which carries the parent's turn
+    // id, both end; the island tells both.
+    let island = json!({"revision":2,"items":[
+        {"id":"event:1:a","kind":"completion","source":"claude","sessionId":"agent-a745","turnId":"turn-1"},
+        {"id":"event:2:p","kind":"completion","source":"claude","sessionId":"parent","turnId":"turn-1"}
+    ]});
+    let mut child = running("agent-a745");
+    child["parentId"] = json!("parent");
+    let mut parent = running("parent");
+    parent["parentId"] = Value::Null;
+    let alerts = look(
+        &mut tracker,
+        &island,
+        &[child.clone(), parent.clone()],
+        &on(),
+        T + 1,
+    );
+    assert_eq!(
+        alerts,
+        [("finished".into(), "parent".into(), "Hero".into())]
+    );
+    // Nor later, once the subagent's row has left the list.
+    assert!(look(&mut tracker, &island, &[parent], &on(), T + 2).is_empty());
+}
