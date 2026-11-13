@@ -31,7 +31,10 @@ mod tests {
     fn a_card_hides_every_sighting_of_its_kind_as_upstream() {
         let card = json!({"id":"hook:1","sessionId":"s1","kind":"question"});
         let plan = json!({"id":"log:claude:s1:p","sessionId":"s1","kind":"plan"});
-        let rows = merge(vec![log("a"), log("b"), plan.clone()], &[card.clone()]);
+        let rows = merge(
+            vec![log("a"), log("b"), plan.clone()],
+            std::slice::from_ref(&card),
+        );
         assert_eq!(rows, [plan, card]);
     }
 }

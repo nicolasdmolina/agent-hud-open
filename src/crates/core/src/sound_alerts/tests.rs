@@ -695,5 +695,8 @@ fn a_named_card_hides_every_sighting_of_its_kind_as_upstream() {
     use crate::presentation::requests::merge;
     let log = |call: &str| json!({"id":format!("log:claude:s1:{call}"),"sessionId":"s1","kind":"question"});
     let card = json!({"id":"hook:1","sessionId":"s1","kind":"question"});
-    assert_eq!(merge(vec![log("a"), log("b")], &[card.clone()]), [card]);
+    assert_eq!(
+        merge(vec![log("a"), log("b")], std::slice::from_ref(&card)),
+        [card]
+    );
 }
