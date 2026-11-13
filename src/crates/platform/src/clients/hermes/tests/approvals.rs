@@ -55,6 +55,31 @@ fn each_button_on_the_card_is_the_answer_hermes_gets() {
     }
 }
 
+/// Upstream lets a denial carry the user's words (`message`) to hook
+/// clients. Hermes's `approval.respond` takes only a choice, so a denial
+/// with words still reaches it as exactly one bare `deny` (FORK.md, ticket 17).
+#[test]
+fn a_denial_with_words_reaches_hermes_as_a_bare_deny() {
+    let mut lab = lab();
+    let gateway = Fake::start(&lab.home, "instance-1");
+    lab.follow();
+    lab.hears(&gateway, RECORDING, "approval.request");
+    let card = lab.card();
+    let id = card["id"].as_str().unwrap();
+    let decision = json!({"kind": "deny", "message": "Use the staging folder instead."});
+    lab.requests
+        .answer(id, &decision, crate::hooks::now_ms())
+        .unwrap();
+    until("the answer reaches the gateway", || {
+        sent(&gateway).is_some()
+    });
+    let calls = gateway.world().calls("approval.respond");
+    assert_eq!(calls.len(), 1);
+    let params = &calls[0].1["params"];
+    assert_eq!(params["choice"], json!("deny"));
+    assert!(!params.to_string().contains("staging"), "{params}");
+}
+
 #[test]
 fn a_limited_card_takes_no_lasting_choice() {
     let mut lab = lab();
