@@ -74,3 +74,43 @@ fn a_native_card_waits_and_sounds_at_the_next_snapshot_before_its_log_is_read() 
     let after = core.request("request_snapshot", json!({})).unwrap();
     assert!(rows(&after, &other).is_empty());
 }
+
+/// With the client's hooks on, its hooks name the session first: the row
+/// only hooks made takes the card at the card's own pass, as a log row does,
+/// and no second row is made for it.
+#[test]
+fn a_row_only_hooks_made_waits_on_its_card_at_the_next_snapshot() {
+    let temp = tempfile::tempdir().unwrap();
+    let question = asked("question-answered-here");
+    let session = question.session.hud_id();
+    let mut core = hermes_core(temp.path(), &[]);
+    let now = Utc::now().timestamp_millis();
+    core.ingest_hook_events(vec![agent_hud_agents::HookEvent {
+        source: "hermes".into(),
+        session_id: session.clone(),
+        kind: "session-observation".into(),
+        at_ms: now,
+        data: json!({"state": "running", "turnId": "t1", "startedAtMs": now - 100, "outcome": null}),
+    }]);
+    let before = core.request("snapshot", json!({})).unwrap();
+    let row = rows(&before, &session);
+    assert_eq!(row.len(), 1);
+    assert_eq!(
+        row[0]["evidence"], "completion-hook",
+        "a row only hooks made"
+    );
+    assert_eq!(row[0]["state"], "running");
+
+    let _ticket = open(&core, &question);
+    let snapshot = core
+        .request("request_snapshot", json!({"changesOnly": true}))
+        .unwrap();
+    let row = rows(&snapshot, &session);
+    assert_eq!(row.len(), 1, "the hooks' row, not a second one");
+    assert_eq!(row[0]["state"], "waiting");
+    assert_eq!(
+        row[0]["liveFacts"]["requests"][0]["id"],
+        question.id().as_str()
+    );
+    assert_eq!(needs_you(&snapshot), [json!(session)]);
+}

@@ -138,12 +138,17 @@ impl Presentation<'_> {
                 session["navigationTarget"] = target.clone();
             }
         }
+        if !self.cards(session) {
+            self.native.overlay(session);
+        }
+    }
+    /// Makes `session` wait on its cards, if any; rows only hooks made too.
+    pub(super) fn cards(&self, session: &mut Value) -> bool {
         let source = session["source"].as_str().unwrap_or("");
         let id = session["id"].as_str().unwrap_or("");
         let key = format!("{source}:{id}");
         let Some(pending) = self.pending(source, id) else {
-            self.native.overlay(session);
-            return;
+            return false;
         };
         let at = pending
             .iter()
@@ -172,6 +177,7 @@ impl Presentation<'_> {
                 session["liveFacts"]["observedAt"] = session["updatedAt"].clone();
             }
         }
+        true
     }
     /// A Claude Code background job's own hooks name the command line and no
     /// destination, which says nothing of where its session is. Until the

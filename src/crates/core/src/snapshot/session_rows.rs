@@ -67,17 +67,18 @@ impl crate::AgentHudCore {
             let extras = self
                 .hook_events
                 .extra_sessions(now, 1, &self.known_sessions());
-            sessions.extend(
-                extras
-                    .into_iter()
-                    .filter(|value| {
-                        self.enabled
-                            .get(value["source"].as_str().unwrap_or(""))
-                            .copied()
-                            .unwrap_or(true)
-                    })
-                    .map(|row| self.protect_claude_project_extra(row)),
-            );
+            let mut extras: Vec<Value> = extras
+                .into_iter()
+                .filter(|value| {
+                    self.enabled
+                        .get(value["source"].as_str().unwrap_or(""))
+                        .copied()
+                        .unwrap_or(true)
+                })
+                .map(|row| self.protect_claude_project_extra(row))
+                .collect();
+            self.carded_hook_rows(&mut extras, now);
+            sessions.extend(extras);
         }
         if self.enabled.get("claude").copied().unwrap_or(true) {
             sessions.extend(self.claude_project_rows().into_iter().filter(|row| {

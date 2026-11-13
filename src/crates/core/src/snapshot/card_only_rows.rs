@@ -1,12 +1,25 @@
-//! Sessions only a waiting native card knows yet. A native channel can ask
-//! before its client's log names the session (a Hermes question in a session
-//! just started), and the log is read on a later pass. The card's row waits,
-//! and sounds, as soon as the card is registered; once the log names the
+//! Cards for sessions no log row holds yet. A client's hooks or its native
+//! channel can name a session before the HUD reads its log (a Hermes
+//! question in a session just started), and only log rows took their cards.
+//! A row only hooks made takes its cards as a log row does, and a native card
+//! whose session has no row at all gets one; either way the session waits,
+//! and sounds, at the pass the card's wake asks for. Once the log names the
 //! session, its own row takes over under the same id.
 use super::*;
 use crate::naming::session_title::{self, TitleEvidence};
 
 impl crate::AgentHudCore {
+    /// Lays the waiting cards over the rows only hooks made.
+    pub(super) fn carded_hook_rows(&self, rows: &mut [Value], now: i64) {
+        if rows.is_empty() || self.requests.session_attention().is_empty() {
+            return;
+        }
+        let presentation = self.presentation(now);
+        for row in rows {
+            presentation.cards(row);
+        }
+    }
+
     /// A waiting row for each native card whose session `sessions` lacks.
     pub(super) fn card_only_rows(&self, sessions: &[Value], now: i64) -> Vec<Value> {
         let carded = self.requests.native_sessions();
@@ -26,7 +39,6 @@ impl crate::AgentHudCore {
                 let title = session_title::display(&source, &id, &TitleEvidence::default(), None, None);
                 let at = crate::iso(at_ms);
                 let mut row = json!({"id":id,"source":source,"title":title,"model":"Unknown","cwd":null,"updatedAt":at,"lastMessageAt":at,"state":"idle","tokens":0,"cost":null,"contextPercent":null,"logPath":null,"parentId":null,"usageStatus":"unavailable","evidence":"native-card"});
-                // Waiting, with the card among its requests.
                 presentation.overlay(&mut row, Some(at_ms), None, &Default::default());
                 row
             })
