@@ -933,4 +933,16 @@ fn hermes_sessions_name_their_profile_in_the_list_and_on_their_page() {
         .request("session_detail", json!({"id":"hermes:reports:s1"}))
         .unwrap();
     assert_eq!(detail["session"]["client"], "Hermes Agent · reports");
+    let found = backend
+        .request(
+            "sessions",
+            json!({"scope":"all","search":"agent · reports"}),
+        )
+        .unwrap()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(found, [json!("hermes:reports:s1")]);
 }
