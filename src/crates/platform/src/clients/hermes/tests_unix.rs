@@ -14,6 +14,8 @@ use std::{
 };
 
 // Unix only, as the control socket is; the files sit in `tests/`.
+#[path = "tests/approvals.rs"]
+mod approvals;
 #[path = "tests/cancelled.rs"]
 mod cancelled;
 #[path = "tests/cards.rs"]
