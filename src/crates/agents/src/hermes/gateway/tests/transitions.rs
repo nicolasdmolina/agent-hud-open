@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 const S: &str = "local-aaaa";
 
 fn work() -> Profile {
-    Profile::named("verify")
+    Profile::named("verify").unwrap()
 }
 
 fn start() -> (Gateway, Hermes) {
@@ -91,7 +91,7 @@ fn what_already_waits_is_found_without_subscribing() {
     assert_eq!(opened(&effects), ["p1"]);
     // One list for each served profile, then the session's stream read
     // twice: where it is, and what it holds from its start. No snapshot.
-    let at = g.session(&work(), S);
+    let at = g.session(&work(), S).unwrap();
     let start = Cursor {
         epoch: "epoch-1".into(),
         seq: 0,
@@ -284,7 +284,7 @@ fn a_restart_closes_every_card_and_a_dropped_socket_closes_none() {
     );
     h.stream(&work(), S).open = vec![set("srq-1")];
     poll(&mut g, &mut h, 0);
-    let request = g.session(&work(), S).request_id("p1");
+    let request = g.session(&work(), S).unwrap().request_id("p1");
     g.apply(Input::Sent { request: &request }, 0);
 
     // The socket drops: both still wait in Hermes. The answer on its way
@@ -378,7 +378,7 @@ fn a_set_of_questions_follows_what_is_open_now() {
     let effects = poll(&mut g, &mut h, 0);
     assert_eq!(opened(&effects), ["srq-1"]);
     assert_eq!(h.snapshots(), 0);
-    let at = g.session(&work(), S);
+    let at = g.session(&work(), S).unwrap();
     assert_eq!(g.status(&at), Some(Status::Waiting));
     let pending = g.waiting().next().unwrap().clone();
     assert_eq!(pending.wait_ms, None);
@@ -438,7 +438,10 @@ fn a_snapshot_is_taken_only_where_the_events_cannot_say() {
     // The request's event is gone from the stream while it still waits.
     h.drop_through(&work(), S, 10);
     let effects = poll(&mut g, &mut h, 0);
-    assert_eq!(h.asked.last(), Some(&Step::Snapshot(g.session(&work(), S))));
+    assert_eq!(
+        h.asked.last(),
+        Some(&Step::Snapshot(g.session(&work(), S).unwrap()))
+    );
     assert_eq!(opened(&effects), ["p1"]);
     // While that lasts the events never account for the card. It stays,
     // and no second snapshot is taken so soon after the first.
@@ -486,7 +489,10 @@ fn a_request_that_cannot_be_shown_gets_no_card_and_no_snapshot() {
         assert_eq!(poll(&mut g, &mut h, now), []);
         assert_eq!(h.snapshots(), 0);
     }
-    assert_eq!(g.status(&g.session(&work(), S)), Some(Status::Waiting));
+    assert_eq!(
+        g.status(&g.session(&work(), S).unwrap()),
+        Some(Status::Waiting)
+    );
     // One that can be shown, asked beside them, still shows.
     asks(&mut h, "p1", 1);
     assert_eq!(opened(&poll(&mut g, &mut h, 3_000)), ["p1"]);
@@ -498,7 +504,7 @@ fn a_poll_that_could_not_tell_leaves_the_cards_alone() {
     let (mut g, mut h) = start();
     asks(&mut h, "p1", 1);
     poll(&mut g, &mut h, 0);
-    let at = g.session(&work(), S);
+    let at = g.session(&work(), S).unwrap();
     // The profile's list fails; then the session's read fails.
     for failing in [
         Step::List(work()),
@@ -549,7 +555,7 @@ fn a_session_that_left_the_live_list_is_over_with_its_requests() {
     assert_eq!(session.hud_id(), "hermes:verify:local-aaaa");
     assert_eq!(
         g.statuses(),
-        [(g.session(&work(), "local-bbbb"), Status::Working)]
+        [(g.session(&work(), "local-bbbb").unwrap(), Status::Working)]
     );
 
     // A turn that is over takes its card even where no event says it ended:

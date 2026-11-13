@@ -70,16 +70,19 @@ pub static HOOKS: Hooks = Hooks {
 /// The session a payload names, as Agent HUD's Hermes reader names it from
 /// `state.db`: a profile's sessions carry the profile in front
 /// (`<profile>:<id>`). Approval events carry no session id; in the CLI their
-/// session key is the session's id. A hook runs on this machine.
+/// session key is the session's id. A hook runs on this machine. None for
+/// a payload whose profile or session Hermes would not write: a hook is
+/// handed whatever its caller sends, and names no session of another
+/// machine.
 fn session(payload: &Value) -> Option<String> {
     let id = text(&payload["session_id"])
         .or_else(|| text(&payload["extra"]["session_key"]))
         .filter(|id| *id != "default")?;
     let profile = match profile(payload) {
-        Some(profile) => Profile::Named(profile.to_owned()),
+        Some(profile) => Profile::folder(profile)?,
         None => Profile::Default,
     };
-    let whole = hud_session_id(&Machine::This, &profile, id);
+    let whole = hud_session_id(&Machine::This, &profile, id)?;
     // Whoever reads this writes the agent in front (`prefixed_sessions`).
     let named = whole.strip_prefix(AGENT.id)?.strip_prefix(':')?;
     Some(named.to_owned())

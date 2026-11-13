@@ -38,8 +38,8 @@ pub enum NoKey {
     UpperCase,
     /// A character that is no hex digit.
     NotHex,
-    /// The root home is not a whole path from the root, so it was not made
-    /// canonical on the far side.
+    /// The root home is not written as a canonical path is (`canonical`),
+    /// so it was not made canonical on the far side.
     Home,
 }
 
@@ -62,11 +62,26 @@ impl NoKey {
 const INSTALL_ID_LENGTH: usize = 32;
 const KEY_LENGTH: usize = 16;
 
+/// Whether `home` is written the one way a canonical path is: from the
+/// root, at least one folder, each named once, with nothing left to
+/// resolve. So no ending slash, no doubled slash, no `.` or `..`, and no
+/// NUL, which no path holds. Whoever hands a home over makes it canonical
+/// where the home is, links included; nothing here reads a disk, so two
+/// ways of writing one folder are never taken for one, and never both
+/// accepted.
+pub(super) fn canonical(home: &str) -> bool {
+    let named = |folder: &str| !matches!(folder, "" | "." | "..");
+    let folders = home.strip_prefix('/').map(|inside| inside.split('/'));
+    !home.contains('\0') && folders.is_some_and(|mut folders| folders.all(named))
+}
+
 /// The key of the far machine whose Hermes reports `install_id` and whose
 /// root home is `root_home`. The id is read over a socket Agent HUD
 /// authenticated, and the home is made canonical on the far side: this
 /// only checks their shape. An id that is not exactly 32 lowercase hex
-/// characters makes no key, and nothing stands in for it.
+/// characters makes no key, and nothing stands in for it. Neither does a
+/// home that is not written as a canonical path is: it is refused, not
+/// tidied, so one folder never gets two keys.
 ///
 /// The key is the first 16 hex characters of the SHA-256 of the id, a line
 /// feed and the home. One install copied to two homes is two machines.
@@ -84,7 +99,7 @@ pub fn machine_key(install_id: Option<&str>, root_home: &str) -> Result<MachineK
     if id.chars().any(|c| c.is_ascii_uppercase()) {
         return Err(NoKey::UpperCase);
     }
-    if !root_home.starts_with('/') {
+    if !canonical(root_home) {
         return Err(NoKey::Home);
     }
     let mut hash = Sha256::new();

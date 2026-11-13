@@ -212,10 +212,9 @@ fn verifier_hint_on_short_socket_must_request_poll() {
     let Connection::Ready(instance) = model.connection().clone() else {
         panic!("not ready")
     };
-    let session = model.session(
-        &agent_hud_agents::hermes::gateway::Profile::Named("hud-spike".into()),
-        &session_id,
-    );
+    let session = model
+        .session(&Profile::named("hud-spike").unwrap(), &session_id)
+        .unwrap();
     let shared = Shared {
         home: lab.home.clone(),
         requests: lab.requests.clone(),

@@ -65,16 +65,22 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
         .filter(|s| *s == "profiles")
         .and_then(|_| folder.file_name())
         .map(|s| s.to_string_lossy().into_owned());
-    // A `state.db` under a Hermes home is this machine's.
-    let (machine, of) = (
-        Machine::This,
-        profile.clone().map_or(Profile::Default, Profile::Named),
-    );
+    // A `state.db` under a Hermes home is this machine's. One in a folder
+    // that is no profile's is not read.
+    let machine = Machine::This;
+    let of = match &profile {
+        Some(folder) => Profile::folder(folder).ok_or(rusqlite::Error::InvalidQuery)?,
+        None => Profile::Default,
+    };
     while let Some(row) = rows.next()? {
         seen += 1;
         last = row.get(0)?;
         max_rowid = max_rowid.max(last);
         let Some(raw) = sql_text(row, 1) else {
+            continue;
+        };
+        // A row whose id can be no session's is left out, like one without.
+        let Some(id) = hud_session_id(&machine, &of, &raw) else {
             continue;
         };
         let Some(started) = sql_time(row, 2, true) else {
@@ -92,7 +98,6 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
         if last <= rowid_after && updated <= ts_after && !grew {
             continue;
         }
-        let id = hud_session_id(&machine, &of, &raw);
         let title = sql_text(row, 3);
         let cwd = sql_text(row, 4);
         let title_fallback = sql_text(row, 5).map(|source| format!("Hermes · {source}"));

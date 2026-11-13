@@ -2,7 +2,11 @@
 //! gateway's profiles, which session. A gateway serves several profiles, a
 //! machine can run several gateways and Agent HUD follows several machines,
 //! so every pending item carries all of them.
-use super::machine::Machine;
+//!
+//! Nothing here can be built from a name or an id Hermes would not write:
+//! a profile's name, a session's id and the ids made of them are checked
+//! where they are made, so no id of this machine can be a far machine's.
+use super::machine::{canonical, Machine};
 use crate::hermes::AGENT;
 use std::fmt;
 use std::path::Path;
@@ -42,17 +46,44 @@ impl fmt::Display for GatewayId {
     }
 }
 
-/// The profile a gateway is named by, from the homes of the profiles it
-/// serves, each a canonical path: the default profile if it serves it, else
-/// the one whose home sorts first. The order the gateway lists them in and
-/// the home that was asked do not matter. None for a gateway serving none.
-pub fn anchor<'a>(served_homes: impl IntoIterator<Item = &'a str>) -> Option<Profile> {
-    let mut homes: Vec<&str> = served_homes.into_iter().collect();
-    homes.sort_unstable();
-    let mut profiles = homes.into_iter().map(Profile::of_home);
-    let first = profiles.next()?;
-    let default = first == Profile::Default || profiles.any(|served| served == Profile::Default);
-    Some(if default { Profile::Default } else { first })
+/// The profile a gateway is named by, from the Hermes root home of its
+/// machine and the homes of the profiles it serves, all canonical paths:
+/// the default profile if it serves the root, else the named profile whose
+/// home sorts first. The root says which home is the default profile's; a
+/// home's own path cannot, since a root may itself lie in a folder called
+/// `profiles`. The order the gateway lists them in and the home that was
+/// asked do not matter. A served home that is no profile of this root names
+/// nothing and is left out; None for a gateway serving no profile of it.
+pub fn anchor<'a>(
+    root_home: &str,
+    served_homes: impl IntoIterator<Item = &'a str>,
+) -> Option<Profile> {
+    let served = served_homes.into_iter();
+    // The default profile sorts before every named one, and named homes
+    // under one root sort as their names do.
+    served
+        .filter_map(|home| Profile::in_root(root_home, home))
+        .min()
+}
+
+/// A named profile's name, as Hermes allows one
+/// (`hermes_constants.PROFILE_ID_RE`): 1 to 64 of `a-z`, `0-9`, `_` and
+/// `-`, the first a letter or a digit. So it holds no slash and no colon,
+/// and is never `default`, which is the default profile.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProfileName(String);
+
+impl ProfileName {
+    fn new(name: &str) -> Option<Self> {
+        let plain = |letter: u8| letter.is_ascii_lowercase() || letter.is_ascii_digit();
+        let mut letters = name.bytes();
+        let first = letters.next().is_some_and(plain);
+        let rest = letters.all(|letter| plain(letter) || matches!(letter, b'_' | b'-'));
+        (first && rest && name.len() <= 64 && name != "default").then(|| Self(name.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// A Hermes profile: the default one, whose home is the Hermes root, or a
@@ -60,20 +91,41 @@ pub fn anchor<'a>(served_homes: impl IntoIterator<Item = &'a str>) -> Option<Pro
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Profile {
     Default,
-    Named(String),
+    Named(ProfileName),
 }
 
 impl Profile {
-    /// The profile Hermes calls `name`; no name and `default` are the default.
-    pub fn named(name: &str) -> Self {
-        match name.trim() {
-            "" | "default" => Self::Default,
-            name => Self::Named(name.to_owned()),
+    /// The profile Hermes calls `name`; no name and `default` are the
+    /// default. None for a name Hermes allows no profile, which is never
+    /// tidied into one: two names are two profiles or none.
+    pub fn named(name: &str) -> Option<Self> {
+        match name {
+            "" | "default" => Some(Self::Default),
+            name => Self::folder(name),
         }
     }
-    /// The profile whose home is `home`, as the gateway lists it in
-    /// `served_profiles` and the hooks name it in `HERMES_HOME`.
-    pub fn of_home(home: &str) -> Self {
+    /// The named profile kept in the folder `profiles/<folder>`. None for
+    /// a folder that is no profile's, `default` among them.
+    pub fn folder(folder: &str) -> Option<Self> {
+        ProfileName::new(folder).map(Self::Named)
+    }
+    /// The profile whose home is `home` in the Hermes root `root_home`,
+    /// both canonical paths: the default one at the root itself, a named
+    /// one at `<root>/profiles/<name>`. None for any other home.
+    pub fn in_root(root_home: &str, home: &str) -> Option<Self> {
+        if !canonical(root_home) {
+            return None;
+        }
+        if home == root_home {
+            return Some(Self::Default);
+        }
+        Self::folder(home.strip_prefix(root_home)?.strip_prefix("/profiles/")?)
+    }
+    /// The profile whose home is `home`, by its path alone, as the gateway
+    /// lists it in `served_profiles`: a guess where the root is not known,
+    /// which takes a root lying in a folder called `profiles` for a named
+    /// profile (`in_root` does not). None for a folder that is no profile's.
+    pub fn of_home(home: &str) -> Option<Self> {
         let home = Path::new(home);
         let inside_profiles = home
             .parent()
@@ -81,16 +133,24 @@ impl Profile {
             .is_some_and(|folder| folder == "profiles");
         match home.file_name().and_then(|name| name.to_str()) {
             Some(name) if inside_profiles => Self::named(name),
-            _ => Self::Default,
+            _ => Some(Self::Default),
         }
     }
     /// The name Hermes routes a call by (`profile: "<name>"`).
     pub fn name(&self) -> &str {
         match self {
             Self::Default => "default",
-            Self::Named(name) => name,
+            Self::Named(name) => name.as_str(),
         }
     }
+}
+
+/// Whether `id` can be a session's id: not empty, and no slash in it
+/// before its first colon. That is where a far session's id has its key
+/// (`hud_session_id`), so an id of this machine never has one there.
+fn names_a_session(id: &str) -> bool {
+    let first = id.split(':').next().unwrap_or_default();
+    !id.is_empty() && !first.contains('/')
 }
 
 /// A session as Agent HUD names it everywhere: the one place its id is
@@ -98,15 +158,24 @@ impl Profile {
 /// reader alike. On this machine it is `hermes:<id>` in the default profile
 /// and `hermes:<profile>:<id>` in a named one. On a far machine it is
 /// `hermes:<key>/<profile>:<id>`, the profile always written, `default`
-/// too. No profile's name holds a slash, so a far id is never a local one.
+/// too. None for an id that can be no session's (`names_a_session`).
+///
+/// What follows `hermes:` up to the next colon holds a slash in a far id,
+/// after its key, and never in one of this machine: a profile's name holds
+/// none, and an id that would put one there is refused. So a far id is
+/// never a local one, whatever Hermes or a hook hands over.
 ///
 /// The gateway is no part of it: a profile can move from one gateway to
 /// another and its sessions stay the same sessions.
-pub fn hud_session_id(machine: &Machine, profile: &Profile, id: &str) -> String {
+pub fn hud_session_id(machine: &Machine, profile: &Profile, id: &str) -> Option<String> {
+    names_a_session(id).then(|| written(machine, profile, id))
+}
+
+fn written(machine: &Machine, profile: &Profile, id: &str) -> String {
     let agent = AGENT.id;
     match (machine, profile) {
         (Machine::This, Profile::Default) => format!("{agent}:{id}"),
-        (Machine::This, Profile::Named(profile)) => format!("{agent}:{profile}:{id}"),
+        (Machine::This, Profile::Named(profile)) => format!("{agent}:{}:{id}", profile.as_str()),
         (Machine::Far(key), profile) => {
             format!("{agent}:{}/{}:{id}", key.as_str(), profile.name())
         }
@@ -118,15 +187,30 @@ pub fn hud_session_id(machine: &Machine, profile: &Profile, id: &str) -> String 
 pub struct SessionRef {
     pub gateway: GatewayId,
     pub profile: Profile,
-    /// The gateway's `session_id`, which is `sessions.id` in the profile's
-    /// `state.db` and `session_id` in its hook payloads.
-    pub id: String,
+    /// Checked when the session is named (`new`), so every id made of it
+    /// can be written.
+    id: String,
 }
 
 impl SessionRef {
+    /// The session the gateway calls `id` in `profile`. None for an id
+    /// that can be no session's.
+    pub fn new(gateway: GatewayId, profile: Profile, id: &str) -> Option<Self> {
+        let id = names_a_session(id).then(|| id.to_owned())?;
+        Some(Self {
+            gateway,
+            profile,
+            id,
+        })
+    }
+    /// The gateway's `session_id`, which is `sessions.id` in the profile's
+    /// `state.db` and `session_id` in its hook payloads.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
     /// The session as Agent HUD names it everywhere else (`hud_session_id`).
     pub fn hud_id(&self) -> String {
-        hud_session_id(self.gateway.machine(), &self.profile, &self.id)
+        written(self.gateway.machine(), &self.profile, &self.id)
     }
     /// The id of one request waiting in this session, by the gateway's own
     /// id for it (a prompt id, or a server request id). The same request

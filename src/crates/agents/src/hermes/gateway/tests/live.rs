@@ -7,7 +7,7 @@ use crate::LiveState::{self, Idle, Running, Waiting};
 use serde_json::json;
 
 fn verify() -> Profile {
-    Profile::named("verify")
+    Profile::named("verify").unwrap()
 }
 
 fn start() -> (Gateway, Hermes) {
@@ -167,7 +167,8 @@ fn what_is_told_follows_the_list_whatever_the_snapshots_do() {
     let waiting = [("hermes:verify:local-long".to_owned(), Waiting)];
 
     // The snapshot fails: no card, but the list says it waits.
-    h.failing.push(Step::Snapshot(g.session(&verify(), s)));
+    h.failing
+        .push(Step::Snapshot(g.session(&verify(), s).unwrap()));
     poll(&mut g, &mut h, 0);
     assert_eq!(g.waiting().count(), 0);
     assert_eq!(told(&g), waiting);

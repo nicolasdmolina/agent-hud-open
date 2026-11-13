@@ -14,7 +14,7 @@ const KEY: &str = "aaeda597d860920c";
 const OTHER_KEY: &str = "1ce13f1418f5a7b9";
 
 fn work() -> Profile {
-    Profile::named("work")
+    Profile::named("work").unwrap()
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn gateways_on_one_route_must_report_one_install() {
 fn machine_profile_and_id_make_the_hud_session_id() {
     let (mini, studio) = (far(INSTALL), far(OTHER_INSTALL));
     // A profile of this machine named as a far machine's key is.
-    let keyed = Profile::named(KEY);
+    let keyed = Profile::named(KEY).unwrap();
     let table = [
         (Machine::This, Profile::Default, format!("hermes:{S}")),
         (Machine::This, work(), format!("hermes:work:{S}")),
@@ -121,14 +121,11 @@ fn machine_profile_and_id_make_the_hud_session_id() {
     ];
     let mut ids = std::collections::BTreeSet::new();
     for (machine, profile, expected) in &table {
-        assert_eq!(hud_session_id(machine, profile, S), *expected);
+        assert_eq!(hud_session_id(machine, profile, S).as_ref(), Some(expected));
         // A session of any gateway on the machine is that session.
         for anchor in [Profile::Default, work()] {
-            let session = SessionRef {
-                gateway: GatewayId::new(machine.clone(), anchor),
-                profile: profile.clone(),
-                id: S.to_owned(),
-            };
+            let gateway = GatewayId::new(machine.clone(), anchor);
+            let session = SessionRef::new(gateway, profile.clone(), S).unwrap();
             assert_eq!(session.hud_id(), *expected);
         }
         ids.insert(expected.clone());
@@ -138,9 +135,10 @@ fn machine_profile_and_id_make_the_hud_session_id() {
     assert_eq!(ids.len(), table.len());
     // The reader and the hooks write this machine's forms: `transcript_tests`
     // and `hooks::tests` hold their values, unchanged.
+    let default = Profile::named("default").unwrap();
     assert_eq!(
-        hud_session_id(&mini, &Profile::named("default"), S),
-        table[3].2
+        hud_session_id(&mini, &default, S).as_ref(),
+        Some(&table[3].2)
     );
 }
 
@@ -159,26 +157,41 @@ fn the_anchor_is_the_default_profile_or_the_first_home() {
         "/Users/USER/.hermes/profiles/alpha",
         "/Users/USER/.hermes/profiles/reports",
     );
+    let named = |name: &str| Profile::named(name);
     // The default profile, wherever the gateway lists it.
     for listed in [
         [root, alpha, reports],
         [alpha, root, reports],
         [reports, alpha, root],
     ] {
-        assert_eq!(anchor(listed), Some(Profile::Default), "{listed:?}");
+        assert_eq!(anchor(root, listed), Some(Profile::Default), "{listed:?}");
     }
     // Without it, the first by home, in whatever order they come.
     for listed in [[alpha, reports], [reports, alpha]] {
-        assert_eq!(anchor(listed), Some(Profile::named("alpha")), "{listed:?}");
+        assert_eq!(anchor(root, listed), named("alpha"), "{listed:?}");
     }
-    // By the home, not by the name: `b` lives in the home that sorts first.
-    let (a, b) = ("/srv/z/profiles/a", "/srv/y/profiles/b");
-    assert_eq!(anchor([a, b]), Some(Profile::named("b")));
-    assert_eq!(anchor([b, a]), Some(Profile::named("b")));
     // One gateway for each profile, as the Mini runs them.
-    assert_eq!(anchor([reports]), Some(Profile::named("reports")));
-    assert_eq!(anchor([root]), Some(Profile::Default));
-    assert_eq!(anchor([]), None);
+    assert_eq!(anchor(root, [reports]), named("reports"));
+    assert_eq!(anchor(root, [root]), Some(Profile::Default));
+    assert_eq!(anchor(root, []), None);
+    // A home that is no profile of this root names nothing, and does not
+    // stand in the way of one that is.
+    let elsewhere = [
+        "/Users/USER/other/profiles/aaa",
+        "/Users/USER/.hermes/profiles",
+        "/Users/USER/.hermes/profiles/alpha/",
+        "/Users/USER/.hermes/profiles/alpha/profiles/aaa",
+        "/Users/USER/.hermes/profiles/Alpha",
+        "/Users/USER/.hermes/profiles/default",
+        "/Users/USER/.hermes/",
+    ];
+    assert_eq!(anchor(root, elsewhere), None);
+    let mixed = elsewhere.into_iter().chain([reports]);
+    assert_eq!(anchor(root, mixed), named("reports"));
+    // A root that is not written as a canonical path is has no profiles.
+    for root in ["", "/", "/Users/USER/.hermes/", "Users/USER/.hermes"] {
+        assert_eq!(anchor(root, [root]), None, "{root:?}");
+    }
 }
 
 #[test]
@@ -191,8 +204,8 @@ fn a_restart_keeps_the_anchor_the_gateway_id_and_its_request_ids() {
     let mut gateway: Option<Gateway> = None;
     for (instance, served) in runs {
         let answer = ready(instance, &served);
-        let id = GatewayId::new(far(INSTALL), anchor(homes(&answer)).unwrap());
-        assert_eq!(id.anchor(), &Profile::named("ops"), "{instance}");
+        let id = GatewayId::new(far(INSTALL), anchor("/synthetic", homes(&answer)).unwrap());
+        assert_eq!(id.anchor(), &Profile::named("ops").unwrap(), "{instance}");
         assert_eq!(id.to_string(), format!("{KEY}/ops"));
         // The follower keeps its model across the restart; the id it would
         // be given again is the one it has.
@@ -209,7 +222,13 @@ fn a_restart_keeps_the_anchor_the_gateway_id_and_its_request_ids() {
         let mut hermes = Hermes::default();
         let asked = json!({"kind": "clarify", "prompt_id": "p1", "execution_generation": 1,
             "question": "Synthetic question", "choices": ["a", "b"], "multi_select": false});
-        hermes.publish(&Profile::named("verify"), S, "clarify.request", 1, asked);
+        hermes.publish(
+            &Profile::named("verify").unwrap(),
+            S,
+            "clarify.request",
+            1,
+            asked,
+        );
         poll(model, &mut hermes, 0);
         requests.push(model.waiting().next().expect("a card").id());
     }
@@ -222,11 +241,7 @@ fn a_gateway_is_written_by_its_machine_and_its_anchor() {
     let mini = far(INSTALL);
     let written = |machine: &Machine, anchor: Profile| {
         let id = GatewayId::new(machine.clone(), anchor);
-        let session = SessionRef {
-            gateway: id.clone(),
-            profile: work(),
-            id: S.to_owned(),
-        };
+        let session = SessionRef::new(id.clone(), work(), S).unwrap();
         (id.to_string(), session.request_id("p1"))
     };
     let table = [
@@ -253,7 +268,13 @@ fn asking(id: GatewayId) -> (Gateway, Hermes) {
     let mut hermes = Hermes::default();
     let asked = json!({"kind": "clarify", "prompt_id": "same", "execution_generation": 1,
         "question": "Synthetic question", "choices": ["a", "b"], "multi_select": false});
-    hermes.publish(&Profile::named("verify"), S, "clarify.request", 1, asked);
+    hermes.publish(
+        &Profile::named("verify").unwrap(),
+        S,
+        "clarify.request",
+        1,
+        asked,
+    );
     (gateway, hermes)
 }
 
@@ -265,8 +286,11 @@ fn never_mix(one: GatewayId, other: GatewayId, one_machine: bool) {
         let effects = poll(gateway, hermes, 0);
         assert!(matches!(&effects[..], [Effect::Open(_)]), "{effects:?}");
     }
-    let verify = Profile::named("verify");
-    let (at_a, at_b) = (a.session(&verify, S), b.session(&verify, S));
+    let verify = Profile::named("verify").unwrap();
+    let (at_a, at_b) = (
+        a.session(&verify, S).unwrap(),
+        b.session(&verify, S).unwrap(),
+    );
     let (id_a, id_b) = (at_a.request_id("same"), at_b.request_id("same"));
     // Request ids.
     assert_ne!(id_a, id_b);
@@ -327,7 +351,11 @@ fn never_mix(one: GatewayId, other: GatewayId, one_machine: bool) {
 fn two_gateways_on_one_far_machine_never_mix() {
     let mini = far(INSTALL);
     let one = GatewayId::new(mini.clone(), Profile::Default);
-    never_mix(one, GatewayId::new(mini, Profile::named("reports")), true);
+    never_mix(
+        one,
+        GatewayId::new(mini, Profile::named("reports").unwrap()),
+        true,
+    );
 }
 
 #[test]

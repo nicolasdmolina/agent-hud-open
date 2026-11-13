@@ -34,7 +34,7 @@ pub use connection::{
 pub use decision::{Answer, NotOffered, Reply};
 pub use effect::{Closed, Effect, Input, Status};
 pub use frame::{answered, event, frame, hints, refusal, Answered, Cursor, Event, Frame, Refusal};
-pub use identity::{anchor, hud_session_id, GatewayId, Profile, SessionRef};
+pub use identity::{anchor, hud_session_id, GatewayId, Profile, ProfileName, SessionRef};
 pub use machine::{identities_agree, machine_key, Machine, MachineKey, NoKey};
 pub use poll::{Poll, Step};
 pub use state::{Gateway, BUSY_POLL_MS, IDLE_POLL_MS, SNAPSHOT_EVERY_MS};

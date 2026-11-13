@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 const S: &str = "synthetic-session";
 
 fn profile() -> Profile {
-    Profile::named("verify")
+    Profile::named("verify").unwrap()
 }
 
 /// A model that is ready, and a Hermes with nothing in it.
@@ -88,7 +88,7 @@ fn late(gateway: &mut Gateway, poll: Poll) -> Vec<Effect> {
 }
 
 fn at(gateway: &Gateway) -> SessionRef {
-    gateway.session(&profile(), S)
+    gateway.session(&profile(), S).unwrap()
 }
 
 // ---- Round 1 ----

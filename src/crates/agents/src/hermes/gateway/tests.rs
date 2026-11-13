@@ -6,6 +6,7 @@ use super::*;
 use serde_json::Value;
 use std::path::PathBuf;
 
+mod boundaries;
 mod buttons;
 mod completeness;
 mod cost;
@@ -51,7 +52,7 @@ fn far(install_id: &str) -> Machine {
 
 /// The throwaway profile every scenario was recorded in.
 fn spike() -> Profile {
-    Profile::named("hud-spike")
+    Profile::named("hud-spike").unwrap()
 }
 
 /// The fixtures with no frames to replay, each read by its own test.
