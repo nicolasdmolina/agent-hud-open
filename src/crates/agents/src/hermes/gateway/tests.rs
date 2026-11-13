@@ -12,6 +12,7 @@ mod cost;
 mod decisions;
 mod fake;
 mod handshake;
+mod live;
 mod regressions;
 mod replay;
 mod scenarios;

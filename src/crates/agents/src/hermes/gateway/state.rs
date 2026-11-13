@@ -17,7 +17,7 @@ use super::frame::{answered, Answered, Refusal};
 use super::identity::{GatewayId, Profile, SessionRef};
 use super::poll::{Poll, Shown};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// How long to wait between polls while any session starts, works or
 /// waits, or a card shows.
@@ -66,6 +66,9 @@ pub struct Gateway {
     pub(super) snapshotted: BTreeMap<SessionRef, i64>,
     /// The latest time `apply` was given.
     pub(super) now_ms: i64,
+    /// The profiles the newest poll listed since the gateway was last
+    /// ready: what `listed` says of them is current (`live.rs`).
+    pub(super) fresh: BTreeSet<Profile>,
 }
 
 impl Gateway {
@@ -79,6 +82,7 @@ impl Gateway {
             listed: BTreeMap::new(),
             snapshotted: BTreeMap::new(),
             now_ms: 0,
+            fresh: BTreeSet::new(),
         }
     }
     pub fn id(&self) -> &GatewayId {
@@ -177,6 +181,9 @@ impl Gateway {
     }
 
     fn connect(&mut self, next: Connection, effects: &mut Vec<Effect>) {
+        if !matches!(next, Connection::Ready(_)) {
+            self.fresh.clear();
+        }
         if self.connection != next {
             self.connection = next.clone();
             effects.push(Effect::Connection(next));

@@ -10,7 +10,7 @@ pub(super) struct Presentation<'a> {
     claude_processes: &'a agent_hud_agents::claude::processes::ClaudeProcesses,
     discovery: &'a [ProviderDiscovery],
     pending: HashMap<String, HashMap<String, Vec<Value>>>,
-    native_waiting: HashMap<String, HashSet<String>>,
+    native: live::Native,
     /// Each carded session's transcript requests before cards hide them.
     pub(super) heard: std::cell::RefCell<requests::Heard>,
     now: i64,
@@ -25,7 +25,7 @@ impl AgentHudCore {
             claude_processes: &self.claude_desktop.processes,
             discovery: &self.discovery,
             pending: self.requests.session_attention(),
-            native_waiting: self.requests.native_waiting_sessions(),
+            native: live::Native::of(&self.requests),
             heard: Default::default(),
             now,
         }
@@ -36,11 +36,6 @@ impl Presentation<'_> {
         self.pending
             .get(source)
             .and_then(|sessions| sessions.get(id))
-    }
-    fn native_waiting(&self, source: &str, id: &str) -> bool {
-        self.native_waiting
-            .get(source)
-            .is_some_and(|sessions| sessions.contains(id))
     }
     /// `client` is the client the session's log last named (Claude Code's
     /// `entrypoint`), which decides between a hook origin and a newer log;
@@ -147,9 +142,7 @@ impl Presentation<'_> {
         let id = session["id"].as_str().unwrap_or("");
         let key = format!("{source}:{id}");
         let Some(pending) = self.pending(source, id) else {
-            if self.native_waiting(source, id) {
-                session["state"] = json!("waiting");
-            }
+            self.native.overlay(session);
             return;
         };
         let at = pending
@@ -235,9 +228,11 @@ impl Presentation<'_> {
     }
     /// The state the log and the hooks give, before a process says otherwise.
     fn evidence_state(&self, log: &LogHead, child: Option<i64>) -> &'static str {
-        if self.pending(&log.source, &log.id).is_some() || self.native_waiting(&log.source, &log.id)
-        {
+        if self.pending(&log.source, &log.id).is_some() {
             return "waiting";
+        }
+        if let Some(state) = self.native.state(&log.source, &log.id) {
+            return state.word();
         }
         if self.hooks.has_evidence(&log.source, &log.id) {
             return match self.session(log, child)["state"].as_str() {
@@ -276,7 +271,7 @@ impl Presentation<'_> {
     }
     pub(super) fn recent(&self, log: &LogHead, days: i64, child: Option<i64>) -> bool {
         self.pending(&log.source, &log.id).is_some()
-            || self.native_waiting(&log.source, &log.id)
+            || self.native.busy(&log.source, &log.id)
             || log.listed_recent(self.now, days, child)
             || self
                 .activity_at(log, child)
@@ -293,6 +288,7 @@ pub(super) fn sort_sessions(sessions: &mut [Value]) {
     });
 }
 
+mod live;
 pub(crate) mod requests;
 #[cfg(test)]
 mod tests;

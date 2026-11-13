@@ -123,6 +123,8 @@ impl AgentHudCore {
 #[cfg(test)]
 mod droid_tests;
 #[cfg(test)]
+mod hermes_live_tests;
+#[cfg(test)]
 mod hermes_tests;
 #[cfg(test)]
 mod tests;

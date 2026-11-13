@@ -5,6 +5,7 @@ use super::connection::{Connection, Denied, Failure};
 use super::frame::Refusal;
 use super::identity::SessionRef;
 use super::poll::Poll;
+use crate::LiveState;
 use serde_json::Value;
 
 /// What a session is doing, as `session.active_list` says it. A session
@@ -18,6 +19,16 @@ pub enum Status {
 }
 
 impl Status {
+    /// What the HUD shows for it. `starting` is a turn Hermes took in whose
+    /// agent has not begun (`gateway/session_active_list.py`, `_status`):
+    /// work under way.
+    pub fn live(self) -> LiveState {
+        match self {
+            Self::Starting | Self::Working => LiveState::Running,
+            Self::Waiting => LiveState::Waiting,
+            Self::Idle => LiveState::Idle,
+        }
+    }
     pub fn parse(word: &str) -> Option<Self> {
         Some(match word {
             "starting" => Self::Starting,

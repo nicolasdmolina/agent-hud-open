@@ -14,6 +14,28 @@ pub enum Carries {
     Quota,
 }
 
+/// What a native channel says a live session is doing, where it can say:
+/// a turn under way, a turn that waits on the person, or no turn. Core lets
+/// it stand over what the hooks and the log say for the sessions it names
+/// (`agent_hud_core::requests::Requests::set_native_states`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LiveState {
+    Running,
+    Waiting,
+    Idle,
+}
+
+impl LiveState {
+    /// The word a session row's `state` uses.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Waiting => "waiting",
+            Self::Idle => "idle",
+        }
+    }
+}
+
 pub struct Channel {
     /// What it is, in a few words.
     pub name: &'static str,

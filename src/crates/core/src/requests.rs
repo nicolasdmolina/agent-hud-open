@@ -33,7 +33,10 @@ struct State {
     reviewers: HashMap<(String, String, String), Reviewer>,
     deliveries: VecDeque<Value>,
     native_waiting: HashMap<String, HashSet<String>>,
+    /// What a native channel says each live session it names is doing.
+    native_states: HashMap<String, NativeStates>,
 }
+pub type NativeStates = HashMap<String, agent_hud_agents::LiveState>;
 struct Reviewer {
     value: Option<String>,
     at: i64,
@@ -73,6 +76,7 @@ impl Default for Requests {
                 reviewers: HashMap::new(),
                 deliveries: VecDeque::new(),
                 native_waiting: HashMap::new(),
+                native_states: HashMap::new(),
             }),
             wake: Mutex::new(None),
         }))
@@ -228,11 +232,14 @@ impl Requests {
     pub fn clear(&self) {
         let (pending, changed) = {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-            let changed = !state.pending.is_empty() || !state.native_waiting.is_empty();
+            let changed = !state.pending.is_empty()
+                || !state.native_waiting.is_empty()
+                || !state.native_states.is_empty();
             if changed {
                 state.revision = state.revision.wrapping_add(1);
             }
             state.native_waiting.clear();
+            state.native_states.clear();
             state.dismissed.clear();
             (std::mem::take(&mut state.pending), changed)
         };

@@ -97,6 +97,48 @@ impl Requests {
             self.wake();
         }
     }
+    /// What `source`'s native channel says each live session is doing,
+    /// whole: a session it leaves out, or an empty list, goes back to what
+    /// its hooks and its log say. Only a change wakes the HUD, so a channel
+    /// may call this after everything it does.
+    pub fn set_native_states(
+        &self,
+        source: &str,
+        sessions: &[(String, agent_hud_agents::LiveState)],
+        _now_ms: i64,
+    ) {
+        let next: super::NativeStates = sessions
+            .iter()
+            .filter(|(id, _)| !id.is_empty())
+            .cloned()
+            .collect();
+        let changed = {
+            let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let old = state.native_states.get(source);
+            if old.map_or(next.is_empty(), |old| *old == next) {
+                false
+            } else {
+                if next.is_empty() {
+                    state.native_states.remove(source);
+                } else {
+                    state.native_states.insert(source.into(), next);
+                }
+                state.revision = state.revision.wrapping_add(1);
+                true
+            }
+        };
+        if changed {
+            self.wake();
+        }
+    }
+    pub fn native_states(&self) -> HashMap<String, super::NativeStates> {
+        self.0
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .native_states
+            .clone()
+    }
     pub fn native_waiting_sessions(&self) -> HashMap<String, HashSet<String>> {
         self.0
             .state
