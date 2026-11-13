@@ -1,58 +1,61 @@
-//! How a card's life ends, and how the model finds what waits. The frames
-//! here are written by hand in the recorded shapes, to reach the orders and
-//! losses the recordings did not happen to hit.
+//! What the cards do as Hermes changes, poll by poll: every way a card
+//! opens, changes and closes, and what a poll asks of the gateway to know.
 use super::super::*;
-use super::{fixture, local, spike};
+use super::fake::{identified, names, poll, ready, Hermes};
+use super::fixture;
 use serde_json::{json, Value};
 
-const SESSION: &str = "local-aaaa";
-const EPOCH: &str = "epoch-1";
+const S: &str = "local-aaaa";
 
-fn event(kind: &str, generation: u64, seq: u64, payload: Value) -> Value {
-    json!({"jsonrpc": "2.0", "method": "event", "params": {
-        "type": kind, "session_id": SESSION, "execution_generation": generation,
-        "payload": payload, "replay_epoch": EPOCH, "seq": seq,
-    }})
+fn work() -> Profile {
+    Profile::named("verify")
 }
 
-fn question(prompt: &str, generation: u64, seq: u64, timeout: Option<u64>) -> Value {
-    let mut payload = json!({"kind": "clarify", "prompt_id": prompt,
-        "execution_generation": generation, "question": "Which one?",
-        "choices": ["a", "b"], "multi_select": false});
-    if let Some(timeout) = timeout {
-        payload["timeout_s"] = json!(timeout);
+fn start() -> (Gateway, Hermes) {
+    let mut gateway = Gateway::new(GatewayId::new("local"));
+    identified(&mut gateway, "one");
+    (gateway, Hermes::default())
+}
+
+fn question(prompt: &str, turn: u64, timeout: Option<u64>) -> Value {
+    let mut payload = json!({"kind": "clarify", "prompt_id": prompt, "execution_generation": turn,
+        "question": "Which one?", "choices": ["a (Recommended)", "b"], "multi_select": false});
+    if let Some(seconds) = timeout {
+        payload["timeout_s"] = json!(seconds);
     }
-    event("clarify.request", generation, seq, payload)
+    payload
 }
 
-fn batch(request: &str) -> Value {
-    json!({"jsonrpc": "2.0", "id": request, "method": "clarify", "params": {
-        "session_id": SESSION,
-        "questions": [{"qid": "q0", "question": "Which one?", "choices": ["a", "b"], "multi_select": false}],
-    }})
+fn asks(hermes: &mut Hermes, prompt: &str, turn: u64) {
+    hermes.publish(
+        &work(),
+        S,
+        "clarify.request",
+        turn,
+        question(prompt, turn, None),
+    );
 }
 
-fn complete(generation: u64, seq: u64, status: &str) -> Value {
-    event(
+fn settles(hermes: &mut Hermes, prompt: &str, turn: u64) {
+    let body = json!({"prompt_id": prompt, "execution_generation": turn});
+    hermes.publish(&work(), S, "clarify.settled", turn, body);
+}
+
+fn ends(hermes: &mut Hermes, turn: u64, status: &str) {
+    hermes.publish(
+        &work(),
+        S,
         "message.complete",
-        generation,
-        seq,
-        json!({"status": status}),
-    )
+        turn,
+        json!({ "status": status }),
+    );
 }
 
-fn feed(gateway: &mut Gateway, frame: &Value, now_ms: i64) -> Vec<Effect> {
-    gateway.apply(
-        Input::Frame {
-            run: gateway.run(),
-            profile: &spike(),
-            frame,
-        },
-        now_ms,
-    )
+fn set(request: &str) -> Value {
+    json!({"id": request, "method": "clarify", "params": {"session_id": S, "questions": [
+        {"qid": "q0", "question": "First?", "choices": ["a", "b"], "multi_select": false}]}})
 }
 
-/// The cards closed by `effects`, with why.
 fn closed(effects: &[Effect]) -> Vec<(&str, &Closed)> {
     effects
         .iter()
@@ -63,100 +66,154 @@ fn closed(effects: &[Effect]) -> Vec<(&str, &Closed)> {
         .collect()
 }
 
-fn opened(effects: &[Effect]) -> Vec<String> {
+fn opened(effects: &[Effect]) -> Vec<&str> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::Open(pending) => Some(pending.ask.key().to_owned()),
+            Effect::Open(pending) => Some(pending.ask.key()),
             _ => None,
         })
         .collect()
 }
 
-fn waiting(gateway: &Gateway) -> Vec<String> {
-    gateway
-        .waiting()
-        .map(|pending| pending.ask.key().to_owned())
-        .collect()
+#[test]
+fn what_already_waits_is_found_without_subscribing() {
+    let (mut g, mut h) = start();
+    h.publish(&work(), S, "message.start", 1, json!({}));
+    h.publish(
+        &work(),
+        S,
+        "clarify.request",
+        1,
+        question("p1", 1, Some(20)),
+    );
+    let effects = poll(&mut g, &mut h, 0);
+    assert_eq!(opened(&effects), ["p1"]);
+    // One list for each served profile, then the session's stream read
+    // twice: where it is, and what it holds from its start. No snapshot.
+    let at = g.session(&work(), S);
+    let start = Cursor {
+        epoch: "epoch-1".into(),
+        seq: 0,
+    };
+    assert_eq!(
+        h.asked,
+        [
+            Step::List(Profile::Default),
+            Step::List(work()),
+            Step::Since {
+                session: at.clone(),
+                cursor: None
+            },
+            Step::Since {
+                session: at.clone(),
+                cursor: Some(start.clone())
+            },
+        ]
+    );
+    // The exact calls, on a socket for the whole host and on a profile's own.
+    assert_eq!(
+        h.asked[1].command(Scope::Host).frame(3),
+        json!({"jsonrpc": "2.0", "id": 3, "method": "session.active_list", "params": {"profile": "verify"}})
+    );
+    assert_eq!(
+        h.asked[3].command(Scope::Profile).frame(4),
+        json!({"jsonrpc": "2.0", "id": 4, "method": "session.events.since", "params": {
+            "session_id": S, "last_sequence": 0, "replay_epoch": "epoch-1"}})
+    );
+    assert_eq!(
+        Step::Snapshot(at).command(Scope::Host).frame(5),
+        json!({"jsonrpc": "2.0", "id": 5, "method": "session.resume", "params": {
+            "session_id": S, "profile": "verify"}})
+    );
+    // A session that neither works nor waits and shows no card is not read.
+    settles(&mut h, "p1", 1);
+    ends(&mut h, 1, "complete");
+    assert_eq!(closed(&poll(&mut g, &mut h, 1)), [("p1", &Closed::Settled)]);
+    poll(&mut g, &mut h, 2);
+    assert_eq!(h.asked, [Step::List(Profile::Default), Step::List(work())]);
 }
 
-fn id(gateway: &Gateway, asked: &str) -> String {
-    gateway.session(&spike(), SESSION).request_id(asked)
+#[test]
+fn a_request_asked_and_settled_within_one_reading_is_never_shown() {
+    let (mut g, mut h) = start();
+    h.publish(&work(), S, "message.start", 1, json!({}));
+    asks(&mut h, "p1", 1);
+    settles(&mut h, "p1", 1);
+    assert_eq!(poll(&mut g, &mut h, 0), []);
+    // Asked again under the same id after it settled, it waits again.
+    asks(&mut h, "p1", 1);
+    assert_eq!(opened(&poll(&mut g, &mut h, 1)), ["p1"]);
 }
 
 #[test]
 fn a_turn_that_ended_takes_only_its_own_cards() {
-    let mut gateway = local();
-    feed(&mut gateway, &question("old", 1, 1, Some(20)), 0);
-    feed(&mut gateway, &question("new", 2, 2, Some(20)), 0);
-    // The completion of turn 1, read after turn 2 asked: the newer card stays.
-    let effects = feed(&mut gateway, &complete(1, 3, "complete"), 0);
-    assert_eq!(closed(&effects), [("old", &Closed::TurnEnded)]);
-    assert_eq!(waiting(&gateway), ["new"]);
-    let effects = feed(&mut gateway, &complete(2, 4, "interrupted"), 0);
-    assert_eq!(closed(&effects), [("new", &Closed::Interrupted)]);
-    // A completion that names no turn takes nothing.
-    feed(&mut gateway, &question("third", 3, 5, None), 0);
-    let mut unnamed = complete(3, 6, "complete");
-    unnamed["params"]
-        .as_object_mut()
-        .unwrap()
-        .remove("execution_generation");
-    assert_eq!(feed(&mut gateway, &unnamed, 0), []);
-    assert_eq!(waiting(&gateway), ["third"]);
-}
-
-#[test]
-fn a_set_of_questions_ends_when_hermes_withdraws_it_whatever_the_reason() {
-    for (reason, why) in [
-        ("resolved", Closed::Settled),
-        ("timeout", Closed::TimedOut),
-        ("interrupted", Closed::Interrupted),
-        ("shutdown", Closed::Withdrawn("shutdown".into())),
-        ("session_closed", Closed::Withdrawn("session_closed".into())),
-        (
-            "a reason not written yet",
-            Closed::Withdrawn("a reason not written yet".into()),
-        ),
-    ] {
-        let mut gateway = local();
-        assert_eq!(opened(&feed(&mut gateway, &batch("srq-1"), 0)), ["srq-1"]);
-        // It names no turn, so a turn ending does not take it.
-        assert_eq!(feed(&mut gateway, &complete(1, 1, "complete"), 0), []);
-        let cancel = json!({"id": "srq-1", "method": "clarify", "reason": reason});
-        let effects = feed(&mut gateway, &event("request.cancel", 1, 2, cancel), 0);
-        assert_eq!(closed(&effects), [("srq-1", &why)], "{reason}");
-    }
-}
-
-#[test]
-fn a_card_runs_out_only_where_hermes_said_how_long_it_waits() {
-    let mut gateway = local();
-    feed(&mut gateway, &question("timed", 1, 1, Some(20)), 1_000);
-    feed(&mut gateway, &question("untimed", 1, 2, None), 1_000);
-    feed(&mut gateway, &batch("srq-1"), 1_000);
-    let deadlines: Vec<Option<i64>> = gateway.waiting().map(|p| p.deadline_ms).collect();
-    // In the order of their ids: the set, the timed question, the untimed one.
-    assert_eq!(deadlines, [None, Some(21_000), None]);
-    assert_eq!(gateway.next_deadline(), Some(21_000));
-    assert_eq!(gateway.apply(Input::Tick, 20_999), []);
+    let (mut g, mut h) = start();
+    asks(&mut h, "old", 1);
+    asks(&mut h, "new", 2);
+    poll(&mut g, &mut h, 0);
+    assert_eq!(names(&g), ["new", "old"]);
+    // Turn 1 ends without a word about its question; turn 2 still waits.
+    ends(&mut h, 1, "interrupted");
+    h.stream(&work(), S).prompts.remove(0);
     assert_eq!(
-        closed(&gateway.apply(Input::Tick, 21_000)),
-        [("timed", &Closed::TimedOut)]
+        closed(&poll(&mut g, &mut h, 1)),
+        [("old", &Closed::Interrupted)]
     );
-    // No deadline known: no timer ever closes it.
-    assert_eq!(gateway.apply(Input::Tick, i64::MAX), []);
-    assert_eq!(gateway.next_deadline(), None);
-    assert_eq!(waiting(&gateway), ["srq-1", "untimed"]);
-    // Hermes settling the timed one afterwards changes nothing.
-    let settled = json!({"prompt_id": "timed", "execution_generation": 1});
+    assert_eq!(names(&g), ["new"]);
+    // A request of a turn that is over is not shown, wherever its request
+    // event stands among the events read.
+    asks(&mut h, "stray", 1);
+    h.stream(&work(), S).prompts.pop();
+    assert_eq!(poll(&mut g, &mut h, 2), []);
+    ends(&mut h, 2, "complete");
+    h.stream(&work(), S).prompts.clear();
     assert_eq!(
-        feed(
-            &mut gateway,
-            &event("clarify.settled", 1, 3, settled),
-            30_000
-        ),
-        []
+        closed(&poll(&mut g, &mut h, 3)),
+        [("new", &Closed::TurnEnded)]
+    );
+
+    // A turn that started takes the requests of the turns before it, even
+    // where nothing was said of their end: Hermes runs one turn at a time.
+    let (mut g, mut h) = start();
+    asks(&mut h, "old", 1);
+    poll(&mut g, &mut h, 0);
+    h.publish(&work(), S, "message.start", 2, json!({}));
+    asks(&mut h, "new", 2);
+    let effects = poll(&mut g, &mut h, 1);
+    assert_eq!(closed(&effects), [("old", &Closed::TurnEnded)]);
+    assert_eq!(names(&g), ["new"]);
+}
+
+#[test]
+fn nothing_closes_a_card_but_hermes() {
+    let (mut g, mut h) = start();
+    h.publish(
+        &work(),
+        S,
+        "clarify.request",
+        1,
+        question("p1", 1, Some(20)),
+    );
+    let approval = json!({"kind": "approval", "prompt_id": "a1", "execution_generation": 1,
+        "command": "rm -r x", "description": "delete x", "choices": ["once", "deny"], "timeout_s": 20});
+    h.publish(&work(), S, "approval.request", 1, approval);
+    poll(&mut g, &mut h, 0);
+    assert_eq!(names(&g), ["a1", "p1"]);
+    // Long past the 20 s both said: Hermes still lists them, so they show.
+    // An approval's wait ends in Hermes without a word until its turn ends.
+    assert_eq!(poll(&mut g, &mut h, 86_400_000), []);
+    assert_eq!(names(&g), ["a1", "p1"]);
+    assert_eq!(g.poll_ms(), BUSY_POLL_MS);
+    // The turn ends: the approval goes with it, settled only now.
+    settles(&mut h, "p1", 1);
+    let late = json!({"prompt_id": "a1", "execution_generation": 1});
+    h.publish(&work(), S, "approval.settled", 1, late);
+    ends(&mut h, 1, "complete");
+    let effects = poll(&mut g, &mut h, 86_400_001);
+    assert_eq!(
+        closed(&effects),
+        [("a1", &Closed::Settled), ("p1", &Closed::Settled)]
     );
 }
 
@@ -178,13 +235,16 @@ fn an_answer_that_came_too_late_closes_its_card() {
         (&refused["notes"]["answer_unsubscribed"], None),
         (&invalid["notes"]["unknown_choice"], None),
     ] {
-        let mut gateway = local();
-        feed(&mut gateway, &question("p1", 1, 1, Some(20)), 0);
-        let request = id(&gateway, "p1");
-        gateway.apply(Input::Sent { request: &request }, 10);
-        let effects = gateway.apply(
+        let (mut g, mut h) = start();
+        asks(&mut h, "p1", 1);
+        poll(&mut g, &mut h, 0);
+        let request = g.waiting().next().unwrap().id();
+        // A poll under way when the reply comes still says the request waits.
+        let mut under_way = g.poll().unwrap();
+        super::fake::ask(&mut under_way, &mut h);
+        assert_eq!(g.apply(Input::Sent { request: &request }, 10), []);
+        let effects = g.apply(
             Input::Responded {
-                run: gateway.run(),
                 request: &request,
                 reply,
             },
@@ -193,12 +253,16 @@ fn an_answer_that_came_too_late_closes_its_card() {
         match why {
             Some(why) => {
                 assert_eq!(closed(&effects), [("p1", &why)], "{reply}");
-                assert_eq!(waiting(&gateway), [] as [&str; 0]);
+                // Poll at once; the poll from before the reply is dropped,
+                // so the card it would show again stays closed.
+                assert_eq!(effects.last(), Some(&Effect::Poll));
+                assert_eq!(g.apply(Input::Polled(under_way), 30), []);
+                assert!(names(&g).is_empty());
             }
             // Refused for another reason: the request still waits, so its
             // card comes back with the gateway's reason.
             None => {
-                let pending = gateway.pending(&request).unwrap().clone();
+                let pending = g.pending(&request).unwrap().clone();
                 let why = refusal(reply);
                 assert!(why.is_some());
                 assert_eq!(effects, [Effect::Unanswered { pending, why }]);
@@ -208,35 +272,25 @@ fn an_answer_that_came_too_late_closes_its_card() {
     assert!(Refusal::PermissionDenied.retryable() && !Refusal::InvalidParams.retryable());
 }
 
-fn identify_answer(instance: &str, port: u16) -> Value {
-    json!({"runtime_protocol": 1, "state": "ready", "instance_id": instance, "authority_epoch": 2,
-        "api_origin": format!("http://127.0.0.1:{port}"), "capabilities": [SESSION_AUTHORITY],
-        "served_profiles": [{"profile_id": "/h", "home": "/h"}]})
-}
-
 #[test]
 fn a_restart_closes_every_card_and_a_dropped_socket_closes_none() {
-    let mut gateway = local();
-    let ready = |gateway: &mut Gateway, instance: &str, port: u16| {
-        let answer = identify_answer(instance, port);
-        gateway.apply(
-            Input::Identified {
-                answer: &answer,
-                home: "/h",
-            },
-            0,
-        )
-    };
-    ready(&mut gateway, "one", 5000);
-    feed(&mut gateway, &question("p1", 1, 1, Some(20)), 0);
-    feed(&mut gateway, &batch("srq-1"), 0);
-    let request = id(&gateway, "p1");
-    gateway.apply(Input::Sent { request: &request }, 0);
+    let (mut g, mut h) = start();
+    h.publish(
+        &work(),
+        S,
+        "clarify.request",
+        1,
+        question("p1", 1, Some(20)),
+    );
+    h.stream(&work(), S).open = vec![set("srq-1")];
+    poll(&mut g, &mut h, 0);
+    let request = g.session(&work(), S).request_id("p1");
+    g.apply(Input::Sent { request: &request }, 0);
 
-    // The socket drops: both still wait in Hermes, with the deadline they
-    // had. The answer on its way may be lost, so its card is shown again.
-    let effects = gateway.apply(Input::Lost(Failure::Closed(1006)), 5);
-    let pending = gateway.pending(&request).unwrap().clone();
+    // The socket drops: both still wait in Hermes. The answer on its way
+    // may be lost, so its card is shown again.
+    let effects = g.apply(Input::Lost(Failure::Closed(1006)), 5);
+    let pending = g.pending(&request).unwrap().clone();
     assert_eq!(
         effects,
         [
@@ -244,17 +298,16 @@ fn a_restart_closes_every_card_and_a_dropped_socket_closes_none() {
             Effect::Connection(Connection::Failed(Failure::Closed(1006))),
         ]
     );
-    assert_eq!(waiting(&gateway), ["p1", "srq-1"]);
-    assert_eq!(gateway.next_deadline(), Some(20_000));
+    assert_eq!(names(&g), ["p1", "srq-1"]);
 
     // The same instance again: nothing was lost.
-    let effects = ready(&mut gateway, "one", 5000);
-    assert!(closed(&effects).is_empty());
-    assert_eq!(waiting(&gateway).len(), 2);
+    assert!(closed(&identified(&mut g, "one")).is_empty());
+    assert_eq!(poll(&mut g, &mut h, 6), []);
+    assert_eq!(names(&g).len(), 2);
 
     // Another instance is a restart, even on the same port.
-    gateway.apply(Input::Lost(Failure::Closed(1012)), 6);
-    let effects = ready(&mut gateway, "two", 5000);
+    g.apply(Input::Lost(Failure::Closed(1012)), 7);
+    let effects = identified(&mut g, "two");
     assert_eq!(
         closed(&effects),
         [
@@ -262,20 +315,32 @@ fn a_restart_closes_every_card_and_a_dropped_socket_closes_none() {
             ("srq-1", &Closed::GatewayRestarted)
         ]
     );
-    assert!(matches!(gateway.connection(), Connection::Ready(instance) if instance.id == "two"));
-    assert_eq!(gateway.statuses(), []);
+    assert!(matches!(g.connection(), Connection::Ready(instance) if instance.id == "two"));
+    assert_eq!(g.statuses(), []);
+
+    // A gateway that turns out to lack the connection closes them as well.
+    let (mut g, mut h) = start();
+    asks(&mut h, "p1", 1);
+    poll(&mut g, &mut h, 0);
+    let effects = g.apply(
+        Input::Denied(Denied::Unsupported(Unsupported::TicketVerb)),
+        1,
+    );
+    assert_eq!(closed(&effects), [("p1", &Closed::Unsupported)]);
+    assert!(g.poll().is_none());
 }
 
 #[test]
 fn a_gateway_waiting_to_restart_can_still_be_answered() {
-    let mut answer = identify_answer("one", 5000);
+    let mut answer = ready("one", &["default"]);
     answer["state"] = json!("draining");
-    assert_eq!(identify(&answer, "/h"), Identified::Wait("draining".into()));
+    let home = "/synthetic";
+    assert_eq!(identify(&answer, home), Identified::Wait("draining".into()));
     answer["drain_reason"] = json!("restart_wait");
-    assert!(matches!(identify(&answer, "/h"), Identified::Ready(instance) if instance.draining));
+    assert!(matches!(identify(&answer, home), Identified::Ready(instance) if instance.draining));
     answer["state"] = json!("stopped");
     assert_eq!(
-        identify(&answer, "/h"),
+        identify(&answer, home),
         Identified::Failed(Failure::Invalid("invalid_runtime_state"))
     );
     // Only this machine's own gateway is ever dialled.
@@ -286,464 +351,241 @@ fn a_gateway_waiting_to_restart_can_still_be_answered() {
         "ftp://127.0.0.1:5000",
         "http://127.0.0.1:5000/path",
     ] {
-        let mut answer = identify_answer("one", 5000);
+        let mut answer = ready("one", &["default"]);
         answer["api_origin"] = json!(origin);
         assert_eq!(
-            identify(&answer, "/h"),
+            identify(&answer, home),
             Identified::Failed(Failure::Invalid("invalid_api_origin")),
             "{origin}"
         );
     }
 }
 
-fn listed(rows: &[(&str, &str)]) -> Value {
-    let sessions: Vec<Value> = rows
-        .iter()
-        .map(|(id, status)| json!({"id": id, "status": status}))
-        .collect();
-    json!({"sessions": sessions})
-}
+#[test]
+fn a_set_of_questions_follows_what_is_open_now() {
+    let (mut g, mut h) = start();
+    // A session waiting on a set of questions says it works, not waits.
+    h.stream(&work(), S).running = true;
+    h.stream(&work(), S).open = vec![set("srq-1")];
+    let effects = poll(&mut g, &mut h, 0);
+    assert_eq!(opened(&effects), ["srq-1"]);
+    assert_eq!(h.snapshots(), 0);
+    let at = g.session(&work(), S);
+    assert_eq!(g.status(&at), Some(Status::Waiting));
+    let pending = g.waiting().next().unwrap().clone();
+    assert_eq!(pending.wait_ms, None);
 
-fn replay(events: &[Value], latest: u64, snapshot: bool, open_requests: Value) -> Value {
-    let events: Vec<&Value> = events.iter().map(|event| &event["params"]).collect();
-    json!({"events": events, "latest_seq": latest, "last_sequence": latest, "epoch": EPOCH,
-        "replay_epoch": EPOCH, "truncated": snapshot, "snapshot_required": snapshot,
-        "count": events.len(), "open_requests": open_requests})
+    // Nothing replies to its answer: sending it asks for a poll at once.
+    assert_eq!(
+        g.apply(
+            Input::Sent {
+                request: &pending.id()
+            },
+            1_000
+        ),
+        [Effect::Poll]
+    );
+    assert_eq!(poll(&mut g, &mut h, 1_100), []);
+    // Still listed 5 s on, the answer was dropped: the card is shown
+    // again, once, and nothing closed.
+    let unanswered = Effect::Unanswered {
+        pending: pending.clone(),
+        why: None,
+    };
+    assert_eq!(poll(&mut g, &mut h, 6_000), [unanswered]);
+    assert_eq!(poll(&mut g, &mut h, 7_000), []);
+
+    // Hermes withdraws it, whatever its word for why: it is over when
+    // `open_requests` no longer lists it.
+    for (reason, why) in [
+        ("resolved", Closed::Settled),
+        ("timeout", Closed::TimedOut),
+        ("interrupted", Closed::Interrupted),
+        ("session_closed", Closed::Withdrawn("session_closed".into())),
+    ] {
+        let (mut g, mut h) = start();
+        h.stream(&work(), S).running = true;
+        h.stream(&work(), S).open = vec![set("srq-1")];
+        poll(&mut g, &mut h, 0);
+        h.stream(&work(), S).open.clear();
+        let cancel = json!({"id": "srq-1", "method": "clarify", "reason": reason});
+        h.publish(&work(), S, "request.cancel", 1, cancel);
+        assert_eq!(closed(&poll(&mut g, &mut h, 1)), [("srq-1", &why)]);
+    }
+    // A password or a secret Hermes asks its viewers for is never shown.
+    let (mut g, mut h) = start();
+    h.stream(&work(), S).running = true;
+    h.stream(&work(), S).open =
+        vec![json!({"id": "srq-2", "method": "sudo", "params": {"session_id": S}})];
+    assert_eq!(poll(&mut g, &mut h, 0), []);
 }
 
 #[test]
-fn what_already_waits_is_found_from_the_start_of_the_stream() {
-    let mut gateway = local();
-    let at = gateway.session(&spike(), SESSION);
-    let read = |cursor: Option<(&str, u64)>| Effect::Read {
+fn a_stream_that_dropped_its_start_is_read_from_nearer_its_end() {
+    let (mut g, mut h) = start();
+    for _ in 0..700 {
+        h.publish(&work(), S, "message.delta", 1, json!({}));
+    }
+    asks(&mut h, "p1", 1);
+    // Hermes keeps the last 512 events.
+    h.drop_through(&work(), S, 701 - 512);
+    assert_eq!(opened(&poll(&mut g, &mut h, 0)), ["p1"]);
+    let at = g.session(&work(), S);
+    let from = |seq| Step::Since {
         session: at.clone(),
-        cursor: cursor.map(|(epoch, seq)| Cursor {
-            epoch: epoch.into(),
+        cursor: Some(Cursor {
+            epoch: "epoch-1".into(),
             seq,
         }),
     };
-    // A session that waits or works is read; an idle one is left alone. A
-    // session waiting on a set of questions says `working`.
-    let rows = listed(&[
-        (SESSION, "waiting"),
-        ("local-idle", "idle"),
-        ("local-busy", "working"),
-    ]);
-    let effects = gateway.apply(
-        Input::Listed {
-            run: gateway.run(),
-            profile: &spike(),
-            result: &rows,
-        },
-        0,
-    );
-    let busy = Effect::Read {
-        session: gateway.session(&spike(), "local-busy"),
-        cursor: None,
-    };
-    assert_eq!(effects, [read(None), busy]);
+    // Not from 0, which Hermes refuses for good once it dropped anything.
+    assert_eq!(h.asked[3..], [from(701 - 448)]);
+    assert_eq!(h.snapshots(), 0);
 
-    // The first answer only tells the epoch. The next read starts at 0 in
-    // it, not at the latest event, which would skip the waiting request.
-    let nothing = replay(&[], 11, true, json!([]));
-    let effects = gateway.apply(
-        Input::Replayed {
-            run: gateway.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &nothing,
-        },
-        0,
+    // It keeps less than that (it also drops by size): nearer the end.
+    h.drop_through(&work(), S, 600);
+    assert_eq!(poll(&mut g, &mut h, 1), []);
+    assert_eq!(
+        h.asked[3..],
+        [from(701 - 448), from(701 - 256), from(701 - 64)]
     );
-    assert_eq!(effects, [read(Some((EPOCH, 0)))]);
+    assert_eq!((h.snapshots(), names(&g)), (0, vec!["p1".to_owned()]));
+}
 
-    let held = replay(&[question("p1", 1, 11, Some(20))], 11, false, json!([]));
-    let effects = gateway.apply(
-        Input::Replayed {
-            run: gateway.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &held,
-        },
-        100,
-    );
+#[test]
+fn a_snapshot_is_taken_only_where_the_events_cannot_say() {
+    let (mut g, mut h) = start();
+    asks(&mut h, "p1", 1);
+    for _ in 0..20 {
+        h.publish(&work(), S, "session.info", 1, json!({}));
+    }
+    // The request's event is gone from the stream while it still waits.
+    h.drop_through(&work(), S, 10);
+    let effects = poll(&mut g, &mut h, 0);
+    assert_eq!(h.asked.last(), Some(&Step::Snapshot(g.session(&work(), S))));
     assert_eq!(opened(&effects), ["p1"]);
-    assert_eq!(
-        gateway.cursor(&at),
-        Some(&Cursor {
-            epoch: EPOCH.into(),
-            seq: 11
-        })
-    );
-    assert_eq!(gateway.statuses()[0], (at.clone(), Status::Waiting));
+    // While that lasts, each poll asks again: the events never account
+    // for the card, and nothing is remembered from one poll to the next.
+    assert_eq!(poll(&mut g, &mut h, 1_000), []);
+    assert_eq!((h.snapshots(), names(&g)), (1, vec!["p1".to_owned()]));
 
-    // The same events read again open nothing twice.
-    assert_eq!(
-        gateway.apply(
-            Input::Replayed {
-                run: gateway.run(),
-                profile: &spike(),
-                session: SESSION,
-                result: &held
-            },
-            200
-        ),
-        []
-    );
+    // A second request, whose event the stream still holds, shows too.
+    asks(&mut h, "p2", 1);
+    assert_eq!(opened(&poll(&mut g, &mut h, 2_000)), ["p2"]);
+    assert_eq!(names(&g), ["p1", "p2"]);
 
-    // A card still showing is read even once the session says it is idle.
-    let rows = listed(&[(SESSION, "idle")]);
-    let effects = gateway.apply(
-        Input::Listed {
-            run: gateway.run(),
-            profile: &spike(),
-            result: &rows,
-        },
-        300,
+    // Both settle, and the stream drops everything it held. Hermes says
+    // the session works, so nothing of the kind waits in it: both close,
+    // with no snapshot and no event to say why.
+    settles(&mut h, "p1", 1);
+    settles(&mut h, "p2", 1);
+    h.drop_through(&work(), S, 24);
+    h.stream(&work(), S).running = true;
+    let effects = poll(&mut g, &mut h, 3_000);
+    assert_eq!(
+        closed(&effects),
+        [("p1", &Closed::Gone), ("p2", &Closed::Gone)]
     );
-    assert_eq!(effects, [read(Some((EPOCH, 11)))]);
-    let settled = event(
-        "clarify.settled",
-        1,
-        12,
-        json!({"prompt_id": "p1", "execution_generation": 1}),
-    );
-    let tail = replay(
-        &[settled, complete(1, 13, "complete")],
-        13,
-        false,
-        json!([]),
-    );
-    let effects = gateway.apply(
-        Input::Replayed {
-            run: gateway.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &tail,
-        },
-        400,
-    );
-    assert_eq!(closed(&effects), [("p1", &Closed::Settled)]);
-    assert_eq!(gateway.statuses()[0].1, Status::Idle);
+    assert_eq!(h.snapshots(), 0);
+
+    // A session that only works is never subscribed to, and a stream of
+    // which nothing can be read still tells its sets of questions.
+    h.stream(&work(), S).open = vec![set("srq-9")];
+    assert_eq!(opened(&poll(&mut g, &mut h, 4_000)), ["srq-9"]);
+    assert_eq!(h.snapshots(), 0);
 }
 
 #[test]
-fn a_request_asked_and_settled_within_one_reading_is_never_shown() {
-    let mut gateway = local();
-    let settled = event(
-        "clarify.settled",
-        1,
-        2,
-        json!({"prompt_id": "p1", "execution_generation": 1}),
-    );
-    let both = replay(
-        &[question("p1", 1, 1, Some(20)), settled],
-        2,
-        false,
-        json!([]),
-    );
-    gateway.apply(
-        Input::Replayed {
-            run: gateway.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &replay(&[], 2, true, json!([])),
-        },
-        0,
-    );
-    assert_eq!(
-        gateway.apply(
-            Input::Replayed {
-                run: gateway.run(),
-                profile: &spike(),
-                session: SESSION,
-                result: &both
-            },
-            0
-        ),
-        []
-    );
-    assert_eq!(waiting(&gateway), [] as [&str; 0]);
-}
-
-fn snapshot(prompts: Value, open_requests: Value, last: u64) -> Value {
-    json!({"session_id": SESSION, "replay_epoch": EPOCH, "last_sequence": last,
-        "subscription_id": "sub-1", "prompts": prompts, "open_requests": open_requests})
+fn a_request_that_cannot_be_shown_gets_no_card_and_no_snapshot() {
+    let (mut g, mut h) = start();
+    // A kind of prompt Hermes may add later, and a question without its text.
+    let unknown = json!({"kind": "passphrase", "prompt_id": "x1", "execution_generation": 1});
+    h.publish(&work(), S, "clarify.request", 1, unknown);
+    let mut blank = question("x2", 1, None);
+    blank["question"] = json!("");
+    h.publish(&work(), S, "clarify.request", 1, blank);
+    // The session waits, and the events read say on what: no card, and no
+    // snapshot, however often it is polled.
+    for now in [0, 1_000, 2_000] {
+        assert_eq!(poll(&mut g, &mut h, now), []);
+        assert_eq!(h.snapshots(), 0);
+    }
+    assert_eq!(g.status(&g.session(&work(), S)), Some(Status::Waiting));
+    // One that can be shown, asked beside them, still shows.
+    asks(&mut h, "p1", 1);
+    assert_eq!(opened(&poll(&mut g, &mut h, 3_000)), ["p1"]);
+    assert_eq!(h.snapshots(), 0);
 }
 
 #[test]
-fn a_stream_cut_short_is_made_whole_by_a_snapshot() {
-    let mut gateway = local();
-    let at = gateway.session(&spike(), SESSION);
-    feed(&mut gateway, &question("gone", 1, 5, Some(20)), 0);
-    // The stream no longer holds the range asked for: only a snapshot says
-    // what waits, and taking one subscribes.
-    let cut = replay(&[], 900, true, json!([]));
-    let effects = gateway.apply(
-        Input::Replayed {
-            run: gateway.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &cut,
+fn a_poll_that_could_not_tell_leaves_the_cards_alone() {
+    let (mut g, mut h) = start();
+    asks(&mut h, "p1", 1);
+    poll(&mut g, &mut h, 0);
+    let at = g.session(&work(), S);
+    // The profile's list fails; then the session's read fails.
+    for failing in [
+        Step::List(work()),
+        Step::Since {
+            session: at.clone(),
+            cursor: None,
         },
-        0,
-    );
-    assert_eq!(
-        effects,
-        [Effect::Resume {
-            session: at.clone()
-        }]
-    );
-
-    let asked = question("kept", 2, 0, Some(30))["params"]["payload"].clone();
-    let entry = &batch("srq-9");
-    let open = json!([{"id": "srq-9", "method": "clarify", "params": entry["params"]}]);
-    let whole = snapshot(json!([asked]), open, 900);
-    let effects = gateway.apply(
-        Input::Resumed {
-            run: gateway.run(),
-            profile: &spike(),
-            result: &whole,
-        },
-        1_000,
-    );
-    // What it does not list is over; what it lists is shown.
-    assert_eq!(closed(&effects), [("gone", &Closed::Gone)]);
-    assert_eq!(opened(&effects), ["kept", "srq-9"]);
-    // Read, not seen as it was asked: how long it has waited is unknown.
-    let kept = gateway.pending(&id(&gateway, "kept")).unwrap();
-    assert_eq!((kept.deadline_ms, kept.recheck_ms), (None, Some(31_000)));
-    assert_eq!(
-        gateway.cursor(&at),
-        Some(&Cursor {
-            epoch: EPOCH.into(),
-            seq: 900
-        })
-    );
-    assert_eq!(gateway.subscription(&at), Some("sub-1"));
-    // An event the snapshot already covers is not read again.
-    assert_eq!(
-        feed(&mut gateway, &question("early", 2, 900, None), 1_000),
-        []
-    );
-
-    // A snapshot that lags behind does not bring back a card closed this turn.
-    let request = id(&gateway, "kept");
-    let reply =
-        json!({"jsonrpc": "2.0", "id": 4, "result": {"status": "resolved", "prompt_id": "kept"}});
-    gateway.apply(
-        Input::Responded {
-            run: gateway.run(),
-            request: &request,
-            reply: &reply,
-        },
-        1_100,
-    );
-    let effects = gateway.apply(
-        Input::Resumed {
-            run: gateway.run(),
-            profile: &spike(),
-            result: &whole,
-        },
-        1_200,
-    );
-    assert_eq!(effects, []);
-    // The socket that subscribed is gone: so is the subscription.
-    gateway.apply(Input::Lost(Failure::Closed(1000)), 1_300);
-    assert_eq!(gateway.subscription(&at), None);
-
-    // A new epoch with a card from the old one: a replay of the new stream
-    // cannot settle it, so the model asks for a snapshot, not a replay.
-    let mut other = replay(&[], 3, true, json!([]));
-    other["replay_epoch"] = json!("epoch-2");
-    other["epoch"] = json!("epoch-2");
-    let mut fresh = local();
-    feed(&mut fresh, &question("held", 1, 5, None), 0);
-    let effects = fresh.apply(
-        Input::Replayed {
-            run: fresh.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &other,
-        },
-        0,
-    );
-    assert_eq!(effects, [Effect::Resume { session: at }]);
-}
-
-#[test]
-fn a_snapshot_is_asked_for_only_where_a_request_may_wait_unseen() {
-    let read = |gateway: &mut Gateway, result: &Value| {
-        gateway.apply(
-            Input::Replayed {
-                run: gateway.run(),
-                profile: &spike(),
-                session: SESSION,
-                result,
-            },
-            0,
-        )
-    };
-    let list = |gateway: &mut Gateway, status: &str| {
-        gateway.apply(
-            Input::Listed {
-                run: gateway.run(),
-                profile: &spike(),
-                result: &listed(&[(SESSION, status)]),
-            },
-            0,
-        );
-    };
-    let at = local().session(&spike(), SESSION);
-    let resume = [Effect::Resume {
-        session: at.clone(),
-    }];
-    let cut = replay(&[], 900, true, json!([]));
-
-    // A session that only works, cut short: a long turn outran the stream.
-    // Nothing can wait unseen, so the reading goes on from the latest
-    // event and the session is not subscribed to.
-    let mut working = local();
-    list(&mut working, "working");
-    read(&mut working, &cut);
-    assert_eq!(read(&mut working, &cut), []);
-    assert_eq!(
-        working.cursor(&at),
-        Some(&Cursor {
-            epoch: EPOCH.into(),
-            seq: 900
-        })
-    );
-
-    // One that waits, cut short: what it waits on is past, so a snapshot.
-    let mut waits = local();
-    list(&mut waits, "waiting");
-    read(&mut waits, &cut);
-    assert_eq!(read(&mut waits, &cut), resume);
-
-    // One that waits, read whole, with nothing in the stream to wait on:
-    // a snapshot, asked once for that place in the stream.
-    let mut silent = local();
-    list(&mut silent, "waiting");
-    read(&mut silent, &cut);
-    let whole = replay(&[], 900, false, json!([]));
-    assert_eq!(read(&mut silent, &whole), resume);
-    assert_eq!(read(&mut silent, &whole), []);
-    // The snapshot lists nothing either (a password prompt is not shown):
-    // it is not asked for again until the stream moves.
-    silent.apply(
-        Input::Resumed {
-            run: silent.run(),
-            profile: &spike(),
-            result: &snapshot(json!([]), json!([]), 900),
-        },
-        0,
-    );
-    assert_eq!(read(&mut silent, &whole), []);
-    assert_eq!(
-        read(&mut silent, &replay(&[], 901, false, json!([]))),
-        resume
-    );
-}
-
-#[test]
-fn a_set_of_questions_follows_what_is_open_now() {
-    let mut gateway = local();
-    let entry = batch("srq-1");
-    let open = json!([{"id": "srq-1", "method": "clarify", "params": entry["params"]}]);
-    gateway.apply(
-        Input::Replayed {
-            run: gateway.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &replay(&[], 4, true, json!([])),
-        },
-        0,
-    );
-    // Not subscribed, the request frame never arrives: the reading lists it.
-    let listing = replay(&[], 4, false, open.clone());
-    let effects = gateway.apply(
-        Input::Replayed {
-            run: gateway.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &listing,
-        },
-        0,
-    );
-    assert_eq!(opened(&effects), ["srq-1"]);
-
-    // Answered: nothing replies to the result frame. A reading right after
-    // may still list the set; one long after means the answer was dropped.
-    let request = id(&gateway, "srq-1");
-    gateway.apply(Input::Sent { request: &request }, 1_000);
-    assert_eq!(
-        gateway.apply(
-            Input::Replayed {
-                run: gateway.run(),
-                profile: &spike(),
-                session: SESSION,
-                result: &listing
-            },
-            2_000
-        ),
-        []
-    );
-    let effects = gateway.apply(
-        Input::Replayed {
-            run: gateway.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &listing,
-        },
-        6_000,
-    );
-    let pending = gateway.pending(&request).unwrap().clone();
-    assert_eq!(effects, [Effect::Unanswered { pending, why: None }]);
-
-    // No longer listed by a reading further on in the stream: it is over,
-    // with no event needed to say so.
-    let effects = gateway.apply(
-        Input::Replayed {
-            run: gateway.run(),
-            profile: &spike(),
-            session: SESSION,
-            result: &replay(&[], 5, false, json!([])),
-        },
-        7_000,
-    );
-    assert_eq!(closed(&effects), [("srq-1", &Closed::Gone)]);
+    ] {
+        h.failing.push(failing);
+        settles(&mut h, "p1", 1);
+        assert_eq!(poll(&mut g, &mut h, 1), []);
+        assert_eq!(names(&g), ["p1"]);
+        assert_eq!(g.status(&at), Some(Status::Waiting));
+    }
+    // The next poll asks everything again and finds it settled.
+    assert_eq!(closed(&poll(&mut g, &mut h, 2)), [("p1", &Closed::Settled)]);
+    // Nor does a poll that ends while the gateway is being dialled again.
+    asks(&mut h, "p3", 1);
+    let mut under_way = g.poll().unwrap();
+    super::fake::ask(&mut under_way, &mut h);
+    g.apply(Input::Dialing, 3);
+    assert_eq!(g.apply(Input::Polled(under_way), 3), []);
+    identified(&mut g, "one");
+    assert_eq!(opened(&poll(&mut g, &mut h, 3)), ["p3"]);
+    settles(&mut h, "p3", 1);
+    poll(&mut g, &mut h, 3);
+    // A poll that was never run to its end changes nothing either.
+    asks(&mut h, "p2", 1);
+    let unfinished = g.poll().unwrap();
+    assert_eq!(unfinished.steps().len(), 2);
+    assert_eq!(g.apply(Input::Polled(unfinished), 3), []);
+    assert!(names(&g).is_empty());
 }
 
 #[test]
 fn a_session_that_left_the_live_list_is_over_with_its_requests() {
-    let mut gateway = local();
-    let work = Profile::named("work");
-    feed(&mut gateway, &question("p1", 1, 1, None), 0);
-    gateway.apply(
-        Input::Frame {
-            run: gateway.run(),
-            profile: &work,
-            frame: &question("p1", 1, 1, None),
-        },
-        0,
-    );
-    // One list covers one profile: the other profile's session is not touched.
-    let effects = gateway.apply(
-        Input::Listed {
-            run: gateway.run(),
-            profile: &spike(),
-            result: &listed(&[]),
-        },
-        0,
-    );
+    let (mut g, mut h) = start();
+    asks(&mut h, "p1", 1);
+    h.stream(&work(), "local-bbbb").running = true;
+    poll(&mut g, &mut h, 0);
+    assert_eq!(g.statuses().len(), 2);
+    h.streams.remove(&(work(), S.to_owned()));
+    let effects = poll(&mut g, &mut h, 1);
     assert_eq!(closed(&effects), [("p1", &Closed::SessionEnded)]);
-    let left: Vec<String> = gateway
-        .waiting()
-        .map(|pending| pending.session.hud_id())
-        .collect();
-    assert_eq!(left, ["hermes:work:local-aaaa"]);
-    assert_eq!(gateway.statuses().len(), 1);
+    let Effect::Close { session, .. } = &effects[0] else {
+        panic!("a close");
+    };
+    assert_eq!(session.hud_id(), "hermes:verify:local-aaaa");
+    assert_eq!(
+        g.statuses(),
+        [(g.session(&work(), "local-bbbb"), Status::Working)]
+    );
+
+    // A turn that is over takes its card even where no event says it ended:
+    // no turn runs in a session that neither works nor waits.
+    let (mut g, mut h) = start();
+    asks(&mut h, "p1", 1);
+    poll(&mut g, &mut h, 0);
+    h.stream(&work(), S).status = Some("idle".into());
+    assert_eq!(
+        closed(&poll(&mut g, &mut h, 1)),
+        [("p1", &Closed::TurnEnded)]
+    );
 }
 
 #[test]
@@ -751,47 +593,84 @@ fn the_same_ids_on_two_gateways_or_profiles_are_different_requests() {
     let mut ids = std::collections::BTreeSet::new();
     for name in ["macbook", "mini"] {
         let mut gateway = Gateway::new(GatewayId::new(name));
-        for profile in [Profile::Default, Profile::named("work")] {
-            let effects = gateway.apply(
-                Input::Frame {
-                    run: gateway.run(),
-                    profile: &profile,
-                    frame: &question("p1", 1, 1, None),
-                },
-                0,
-            );
-            let [Effect::Open(pending)] = &effects[..] else {
-                panic!("one card");
+        identified(&mut gateway, "one");
+        let mut hermes = Hermes::default();
+        for profile in [Profile::Default, work()] {
+            hermes.publish(&profile, S, "clarify.request", 1, question("p1", 1, None));
+        }
+        for effect in poll(&mut gateway, &mut hermes, 0) {
+            let Effect::Open(pending) = effect else {
+                panic!("two cards");
             };
             assert_eq!(pending.session.gateway.as_str(), name);
-            assert_eq!(pending.session.profile, profile);
             ids.insert(pending.id());
         }
         assert_eq!(gateway.waiting().count(), 2);
     }
     let expected = [
         "hermes:macbook:default:local-aaaa:p1",
-        "hermes:macbook:work:local-aaaa:p1",
+        "hermes:macbook:verify:local-aaaa:p1",
         "hermes:mini:default:local-aaaa:p1",
-        "hermes:mini:work:local-aaaa:p1",
+        "hermes:mini:verify:local-aaaa:p1",
     ];
     assert_eq!(ids.iter().map(String::as_str).collect::<Vec<_>>(), expected);
 }
 
 #[test]
-fn a_change_of_sessions_is_a_hint_to_list_them() {
-    let mut gateway = local();
+fn hints_and_the_timer_say_when_to_poll() {
+    let event = |kind: &str, session: &str| {
+        json!({"jsonrpc": "2.0", "method": "event",
+        "params": {"type": kind, "session_id": session, "payload": {}}})
+    };
     for kind in ["sessions.changed", "platforms.changed"] {
-        let hint = json!({"jsonrpc": "2.0", "method": "event", "params": {"type": kind, "session_id": "", "payload": {}}});
-        assert_eq!(feed(&mut gateway, &hint, 0), [Effect::List]);
+        assert!(hints(&event(kind, "")));
     }
+    assert!(hints(&event("clarify.request", S)) && hints(&event("message.complete", S)));
+    assert!(hints(&set("srq-1")));
+    assert!(!hints(&event("gateway.ready", "")) && !hints(&event("message.delta", S)));
+    assert!(!hints(&json!({"jsonrpc": "2.0", "id": 4, "result": {}})));
     // Recorded: `sessions.changed` does arrive on an unsubscribed socket.
     let doc = fixture("session-list");
-    let seen = doc["clients"]["hud"]
-        .as_array()
-        .unwrap()
+    let frames = doc["clients"]["hud"].as_array().unwrap();
+    let changed = |entry: &&Value| entry["frame"]["params"]["type"] == "sessions.changed";
+    assert!(frames
         .iter()
-        .filter(|entry| entry["frame"]["params"]["type"] == "sessions.changed")
-        .count();
-    assert!(seen > 0);
+        .filter(changed)
+        .all(|entry| hints(&entry["frame"])));
+    assert!(frames.iter().any(|entry| changed(&entry)));
+
+    // The timer never stops: slow while nothing seems to happen, since a
+    // hint or a hook can be missed, and fast while anything does.
+    let (mut g, mut h) = start();
+    assert_eq!(g.poll_ms(), IDLE_POLL_MS);
+    h.stream(&work(), S).status = Some("idle".into());
+    poll(&mut g, &mut h, 0);
+    assert_eq!(g.poll_ms(), IDLE_POLL_MS);
+    for status in ["starting", "working", "waiting"] {
+        h.stream(&work(), S).status = Some(status.into());
+        poll(&mut g, &mut h, 0);
+        assert_eq!(g.poll_ms(), BUSY_POLL_MS, "{status}");
+    }
+}
+
+#[test]
+fn many_sessions_cost_a_read_only_where_something_may_wait() {
+    let (mut g, mut h) = start();
+    // More sessions than Hermes keeps streams for (64), all idle but two.
+    for index in 0..80 {
+        h.stream(&work(), &format!("local-{index:04}")).status = Some("idle".into());
+    }
+    h.stream(&work(), "local-0007").status = Some("starting".into());
+    h.publish(
+        &work(),
+        "local-0042",
+        "clarify.request",
+        3,
+        question("p1", 3, None),
+    );
+    h.stream(&work(), "local-0042").status = None;
+    assert_eq!(opened(&poll(&mut g, &mut h, 0)), ["p1"]);
+    // Two lists, and two reads of the one session that waits.
+    assert_eq!(h.asked.len(), 4);
+    assert_eq!(g.statuses().len(), 80);
 }

@@ -7,22 +7,25 @@ use serde_json::{json, Value};
 /// The first request of `kind` in a recording, as the model holds it.
 fn asked(name: &str, kind: &str) -> Pending {
     let doc = fixture(name);
-    let mut gateway = local();
+    let session = |id: &Value| local().session(&spike(), id.as_str().unwrap());
     for entry in doc["clients"]["hud"].as_array().unwrap() {
         let sent = &entry["frame"];
-        let is = sent["params"]["type"] == kind || (kind == "clarify" && sent["method"] == kind);
-        if entry["dir"] == "in" && is {
-            let effects = gateway.apply(
-                Input::Frame {
-                    run: gateway.run(),
-                    profile: &spike(),
-                    frame: sent,
-                },
-                1_000,
-            );
-            if let Some(Effect::Open(pending)) = effects.into_iter().next() {
-                return pending;
+        let found = match frame(sent) {
+            _ if entry["dir"] != "in" => None,
+            Frame::Event(event) if event.kind == kind => Ask::prompt(event.payload)
+                .map(|(ask, wait_ms)| (session(&sent["params"]["session_id"]), ask, wait_ms)),
+            Frame::Request { id, method, params } if method == kind => {
+                Ask::batch(id, method, params)
+                    .map(|ask| (session(&params["session_id"]), ask, None))
             }
+            _ => None,
+        };
+        if let Some((session, ask, wait_ms)) = found {
+            return Pending {
+                session,
+                ask,
+                wait_ms,
+            };
         }
     }
     panic!("{name} asks no {kind}");
@@ -111,22 +114,20 @@ fn a_question_takes_words_and_nothing_else() {
 #[test]
 fn several_picks_go_as_a_list_in_the_answer() {
     let doc = fixture("session-ids-and-hooks");
-    let mut gateway = local();
     let mut several = None;
     for entry in doc["clients"]["hud"].as_array().unwrap() {
-        let effects = gateway.apply(
-            Input::Frame {
-                run: gateway.run(),
-                profile: &spike(),
-                frame: &entry["frame"],
-            },
-            0,
-        );
-        for effect in effects {
-            if let Effect::Open(pending) = effect {
-                if matches!(&pending.ask, Ask::Question(q) if q.multi_select) {
-                    several = Some(pending);
-                }
+        let sent = &entry["frame"];
+        let Frame::Event(event) = frame(sent) else {
+            continue;
+        };
+        if let Some((ask, wait_ms)) = Ask::prompt(event.payload) {
+            if matches!(&ask, Ask::Question(q) if q.multi_select) {
+                let session = local().session(&spike(), event.session);
+                several = Some(Pending {
+                    session,
+                    ask,
+                    wait_ms,
+                });
             }
         }
     }
@@ -232,7 +233,7 @@ fn a_set_of_questions_is_answered_by_a_result_frame_and_never_a_call() {
         panic!("a set of questions");
     };
     assert_eq!(set.request, "srq-be9ca8d8cb91");
-    assert_eq!(batch.deadline_ms, None);
+    assert_eq!(batch.wait_ms, None);
     let qids: Vec<&str> = set.questions.iter().map(|q| q.qid.as_str()).collect();
     assert_eq!(qids, ["q0", "q1"]);
     assert!(!set.questions[0].multi_select && set.questions[1].multi_select);

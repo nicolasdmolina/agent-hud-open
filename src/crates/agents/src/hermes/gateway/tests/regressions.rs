@@ -1,8 +1,20 @@
-//! The orders of delivery an independent review of this model found it got
-//! wrong: a snapshot that arrives after newer events, a stream that starts
-//! over, a set of questions another viewer answers, a completion read late,
-//! and a duration taken for a deadline. The tests keep the review's names.
+//! The reproductions of both independent reviews of the first state layer
+//! (`evidence/12/verifier-regressions.rs`, 12 tests, and
+//! `verifier-2-new-regressions.rs`, 9 failing tests and 2 controls), under
+//! their own names. Each sets up in a pretend Hermes what the review set
+//! up by hand-ordered inputs, and asserts only what can be seen from
+//! outside: which cards show and which effects come out. Where a review
+//! delivered an older reading after a newer one, the older reading here is
+//! a poll that was begun, and asked its questions, before the newer one.
+//!
+//! What a review asserted of the old model's insides has nothing left to
+//! assert: its cursors (`cursor()`, in tests 1 and 21 and both controls),
+//! its subscriptions (`subscription()`, 21), its deadlines (`deadline_ms`
+//! in 9, `next_deadline()` in 10) and its runs (`run()`, a control). The
+//! model keeps none of them. Each of those tests still asserts the card
+//! behaviour the review was after.
 use super::super::*;
+use super::fake::{ask, identified, names, poll, Hermes};
 use serde_json::{json, Value};
 
 const S: &str = "synthetic-session";
@@ -11,71 +23,25 @@ fn profile() -> Profile {
     Profile::named("verify")
 }
 
-fn model() -> Gateway {
-    Gateway::new(GatewayId::new("synthetic-gateway"))
+/// A model that is ready, and a Hermes with nothing in it.
+fn start() -> (Gateway, Hermes) {
+    let mut gateway = Gateway::new(GatewayId::new("synthetic-gateway"));
+    identified(&mut gateway, "instance-1");
+    (gateway, Hermes::default())
 }
 
-fn payload(id: &str, generation: u64) -> Value {
-    json!({"kind": "clarify", "prompt_id": id, "execution_generation": generation,
+fn payload(id: &str, turn: u64) -> Value {
+    json!({"kind": "clarify", "prompt_id": id, "execution_generation": turn,
         "question": "Synthetic question", "choices": ["a (Recommended)", "b"], "multi_select": false})
 }
 
-fn event(kind: &str, generation: u64, seq: u64, body: Value) -> Value {
-    json!({"jsonrpc": "2.0", "method": "event", "params": {
-        "type": kind, "session_id": S, "execution_generation": generation,
-        "replay_epoch": "epoch-1", "seq": seq, "payload": body}})
+fn asks(hermes: &mut Hermes, id: &str, turn: u64) {
+    hermes.publish(&profile(), S, "clarify.request", turn, payload(id, turn));
 }
 
-fn ask(id: &str, generation: u64, seq: u64) -> Value {
-    event("clarify.request", generation, seq, payload(id, generation))
-}
-
-fn settled(id: &str, generation: u64, seq: u64) -> Value {
-    let body = json!({"prompt_id": id, "execution_generation": generation});
-    event("clarify.settled", generation, seq, body)
-}
-
-fn feed(g: &mut Gateway, frame: &Value) -> Vec<Effect> {
-    g.apply(
-        Input::Frame {
-            run: g.run(),
-            profile: &profile(),
-            frame,
-        },
-        0,
-    )
-}
-
-fn snapshot(prompts: Value, batches: Value, seq: u64) -> Value {
-    json!({"session_id": S, "replay_epoch": "epoch-1", "last_sequence": seq,
-        "subscription_id": "synthetic-sub", "prompts": prompts, "open_requests": batches})
-}
-
-fn resume(g: &mut Gateway, result: &Value, now: i64) -> Vec<Effect> {
-    g.apply(
-        Input::Resumed {
-            run: g.run(),
-            profile: &profile(),
-            result,
-        },
-        now,
-    )
-}
-
-fn replay(g: &mut Gateway, result: &Value, now: i64) -> Vec<Effect> {
-    g.apply(
-        Input::Replayed {
-            run: g.run(),
-            profile: &profile(),
-            session: S,
-            result,
-        },
-        now,
-    )
-}
-
-fn names(g: &Gateway) -> Vec<String> {
-    g.waiting().map(|p| p.ask.key().to_owned()).collect()
+fn settles(hermes: &mut Hermes, id: &str, turn: u64) {
+    let body = json!({"prompt_id": id, "execution_generation": turn});
+    hermes.publish(&profile(), S, "clarify.settled", turn, body);
 }
 
 fn batch(answers: Value) -> Value {
@@ -86,234 +52,137 @@ fn batch(answers: Value) -> Value {
         "answers": answers}})
 }
 
-fn identified(g: &mut Gateway, instance: &str) {
-    let answer = json!({"runtime_protocol": 1, "state": "ready", "instance_id": instance,
-        "authority_epoch": 1, "api_origin": "http://127.0.0.1:54321",
-        "capabilities": [SESSION_AUTHORITY],
-        "served_profiles": [{"profile_id": "synthetic", "home": "/synthetic"}]});
-    g.apply(
-        Input::Identified {
-            answer: &answer,
-            home: "/synthetic",
-        },
-        0,
-    );
+/// A poll begun now and asked now, whose answer reaches the model later.
+fn taken(gateway: &mut Gateway, hermes: &mut Hermes) -> Poll {
+    let mut poll = gateway.poll().expect("the gateway is ready");
+    ask(&mut poll, hermes);
+    poll
 }
+
+fn late(gateway: &mut Gateway, poll: Poll) -> Vec<Effect> {
+    gateway.apply(Input::Polled(poll), 1_000)
+}
+
+fn at(gateway: &Gateway) -> SessionRef {
+    gateway.session(&profile(), S)
+}
+
+// ---- Round 1 ----
 
 #[test]
 fn stale_snapshot_must_not_close_newer_live_card_or_regress_cursor() {
-    let mut g = model();
-    feed(&mut g, &ask("new", 2, 12));
-    let effects = resume(&mut g, &snapshot(json!([]), json!([]), 10), 100);
-    assert_eq!(
-        names(&g),
-        ["new"],
-        "older snapshot closed a live card: {effects:?}"
-    );
-    assert_eq!(g.cursor(&g.session(&profile(), S)).unwrap().seq, 12);
-    // A snapshot taken after the card was seen does say it is over.
-    let effects = resume(&mut g, &snapshot(json!([]), json!([]), 12), 200);
-    assert!(names(&g).is_empty(), "{effects:?}");
-}
-
-#[test]
-fn a_snapshot_from_before_events_that_were_never_read_is_not_merged() {
-    let mut g = model();
-    let list = json!({"sessions": [{"id": S, "status": "working"}]});
-    g.apply(
-        Input::Listed {
-            run: g.run(),
-            profile: &profile(),
-            result: &list,
-        },
-        0,
-    );
-    // A long turn outran the stream: the reading goes on from event 900,
-    // and what happened before it was never read.
-    let cut = json!({"replay_epoch": "epoch-1", "last_sequence": 900, "events": [],
-        "snapshot_required": true, "open_requests": []});
-    replay(&mut g, &cut, 0);
-    replay(&mut g, &cut, 0);
-    assert_eq!(g.cursor(&g.session(&profile(), S)).unwrap().seq, 900);
-    // A snapshot from event 500 may list what settled at 501, unseen.
-    let effects = resume(
-        &mut g,
-        &snapshot(json!([payload("early", 1)]), json!([]), 500),
-        100,
-    );
-    assert!(names(&g).is_empty(), "{effects:?}");
-    // One from where the reading went on is whole.
-    resume(
-        &mut g,
-        &snapshot(json!([payload("early", 1)]), json!([]), 900),
-        200,
-    );
-    assert_eq!(names(&g), ["early"]);
+    let (mut g, mut h) = start();
+    h.stream(&profile(), S).running = true;
+    // Read while nothing waited; it comes back after the request shows.
+    let older = taken(&mut g, &mut h);
+    asks(&mut h, "new", 2);
+    poll(&mut g, &mut h, 0);
+    assert_eq!(names(&g), ["new"]);
+    let effects = late(&mut g, older);
+    assert_eq!(names(&g), ["new"], "older reading closed a live card");
+    assert_eq!(effects, []);
 }
 
 #[test]
 fn settlement_seen_before_snapshot_must_prevent_stale_open() {
-    let mut g = model();
-    feed(&mut g, &settled("old", 1, 11));
-    let effects = resume(
-        &mut g,
-        &snapshot(json!([payload("old", 1)]), json!([]), 10),
-        100,
-    );
+    let (mut g, mut h) = start();
+    asks(&mut h, "old", 1);
+    // Read while it waited; it comes back after the settlement was seen.
+    let older = taken(&mut g, &mut h);
+    settles(&mut h, "old", 1);
+    assert_eq!(poll(&mut g, &mut h, 0), []);
+    let effects = late(&mut g, older);
     assert!(
         names(&g).is_empty(),
         "settled request reopened: {effects:?}"
     );
-    // The same for a set of questions withdrawn before it was ever shown.
-    let cancel = json!({"id": "srq-synthetic", "method": "clarify", "reason": "resolved"});
-    feed(&mut g, &event("request.cancel", 1, 12, cancel));
-    let effects = resume(
-        &mut g,
-        &snapshot(json!([]), json!([batch(json!({}))]), 10),
-        100,
-    );
-    assert!(names(&g).is_empty(), "withdrawn set reopened: {effects:?}");
+    assert_eq!(effects, []);
 }
 
 #[test]
 fn turn_end_must_not_erase_retirement_of_newer_generation() {
-    let mut g = model();
-    feed(&mut g, &ask("new", 2, 10));
-    feed(&mut g, &settled("new", 2, 11));
-    feed(
-        &mut g,
-        &event("message.complete", 1, 12, json!({"status": "complete"})),
+    let (mut g, mut h) = start();
+    asks(&mut h, "new", 2);
+    let older = taken(&mut g, &mut h);
+    settles(&mut h, "new", 2);
+    // An earlier turn's completion, published late.
+    h.publish(
+        &profile(),
+        S,
+        "message.complete",
+        1,
+        json!({"status": "complete"}),
     );
-    let effects = resume(
-        &mut g,
-        &snapshot(json!([payload("new", 2)]), json!([]), 10),
-        100,
-    );
+    h.stream(&profile(), S).status = Some("working".into());
+    assert_eq!(poll(&mut g, &mut h, 0), []);
+    let effects = late(&mut g, older);
     assert!(
         names(&g).is_empty(),
-        "old completion erased new retirement: {effects:?}"
+        "old completion let it reopen: {effects:?}"
     );
-    // Once its own turn ends, no reading of that turn shows it either.
-    feed(
-        &mut g,
-        &event("message.complete", 2, 13, json!({"status": "complete"})),
-    );
-    let effects = resume(
-        &mut g,
-        &snapshot(json!([payload("new", 2)]), json!([]), 10),
-        100,
-    );
-    assert!(names(&g).is_empty(), "{effects:?}");
+    // And however often it is read again, it stays over.
+    assert_eq!(poll(&mut g, &mut h, 1), []);
 }
 
 #[test]
 fn late_old_instance_snapshot_must_not_repopulate_restarted_gateway() {
-    let mut g = model();
-    identified(&mut g, "instance-1");
-    let asked_in = g.run();
-    feed(&mut g, &ask("old", 1, 10));
+    let (mut g, mut h) = start();
+    asks(&mut h, "old", 1);
+    poll(&mut g, &mut h, 0);
+    assert_eq!(names(&g), ["old"]);
+    let older = taken(&mut g, &mut h);
     identified(&mut g, "instance-2");
     assert!(names(&g).is_empty());
-    assert_ne!(g.run(), asked_in);
-    // Asked of instance 1, answered after instance 2 was identified.
-    let result = snapshot(json!([payload("old", 1)]), json!([]), 10);
-    let late = Input::Resumed {
-        run: asked_in,
-        profile: &profile(),
-        result: &result,
-    };
-    let effects = g.apply(late, 100);
+    let effects = late(&mut g, older);
     assert!(
         names(&g).is_empty(),
-        "old instance snapshot reopened request: {effects:?}"
+        "old instance reopened it: {effects:?}"
     );
-    assert!(g.statuses().is_empty());
-    // The same for its frames, its lists, its replays and its replies.
-    let frame = ask("old", 1, 11);
-    let list = json!({"sessions": [{"id": S, "status": "waiting"}]});
-    let reply = json!({"jsonrpc": "2.0", "id": 1, "result": {"status": "resolved"}});
-    for late in [
-        Input::Frame {
-            run: asked_in,
-            profile: &profile(),
-            frame: &frame,
-        },
-        Input::Listed {
-            run: asked_in,
-            profile: &profile(),
-            result: &list,
-        },
-        Input::Replayed {
-            run: asked_in,
-            profile: &profile(),
-            session: S,
-            result: &result,
-        },
-        Input::Responded {
-            run: asked_in,
-            request: "any",
-            reply: &reply,
-        },
-    ] {
-        assert_eq!(g.apply(late, 100), []);
-    }
-    assert!(g.statuses().is_empty());
+    assert_eq!(effects, []);
 }
 
 #[test]
 fn epoch_rollover_on_live_event_must_request_reconciliation() {
-    let mut g = model();
-    let at = g.session(&profile(), S);
-    feed(&mut g, &ask("old", 1, 10));
-    let mut changed = ask("new", 2, 1);
-    changed["params"]["replay_epoch"] = json!("epoch-2");
-    let effects = feed(&mut g, &changed);
-    let wanted = Effect::Resume {
-        session: at.clone(),
-    };
-    assert!(
-        effects.contains(&wanted),
-        "no snapshot requested: {effects:?}"
+    let (mut g, mut h) = start();
+    asks(&mut h, "old", 1);
+    poll(&mut g, &mut h, 0);
+    assert_eq!(names(&g), ["old"]);
+    // The stream is replaced. `old` settled in the stream that is gone, so
+    // no event can say so; the new stream holds only a new question.
+    h.new_epoch(&profile(), S, "epoch-2");
+    h.stream(&profile(), S).prompts.clear();
+    asks(&mut h, "new", 2);
+    let effects = poll(&mut g, &mut h, 100);
+    assert_eq!(
+        h.snapshots(),
+        1,
+        "no snapshot for a card the stream cannot explain"
     );
-    // Until a snapshot comes, every reading of the session asks again.
-    let tail = json!({"replay_epoch": "epoch-2", "last_sequence": 1, "events": [],
-        "snapshot_required": false, "open_requests": []});
-    assert_eq!(replay(&mut g, &tail, 100), std::slice::from_ref(&wanted));
-    let list = json!({"sessions": [{"id": S, "status": "waiting"}]});
-    let listed = g.apply(
-        Input::Listed {
-            run: g.run(),
-            profile: &profile(),
-            result: &list,
-        },
-        100,
-    );
-    assert_eq!(listed, [wanted]);
-    // What the old stream says now arrives late and changes nothing.
-    assert_eq!(feed(&mut g, &settled("new", 2, 11)), []);
-    assert_eq!(names(&g), ["new", "old"]);
-    // The snapshot of the new stream settles it: the old card is over.
-    let mut now = snapshot(json!([payload("new", 2)]), json!([]), 1);
-    now["replay_epoch"] = json!("epoch-2");
-    let effects = resume(&mut g, &now, 200);
     assert_eq!(names(&g), ["new"], "{effects:?}");
-    assert_eq!(replay(&mut g, &tail, 300), []);
+    assert!(effects.iter().any(
+        |effect| matches!(effect, Effect::Close { id, why: Closed::Gone, .. } if id.ends_with(":old"))
+    ));
+    // Had it still waited, the snapshot would have kept it.
+    let (mut g, mut h) = start();
+    asks(&mut h, "old", 1);
+    poll(&mut g, &mut h, 0);
+    h.new_epoch(&profile(), S, "epoch-2");
+    asks(&mut h, "new", 2);
+    poll(&mut g, &mut h, 100);
+    assert_eq!(
+        (h.snapshots(), names(&g)),
+        (1, vec!["new".to_owned(), "old".to_owned()])
+    );
 }
 
 #[test]
 fn batch_reread_must_update_locks_and_emit_changed_card() {
-    let mut g = model();
-    resume(
-        &mut g,
-        &snapshot(json!([]), json!([batch(json!({}))]), 10),
-        0,
-    );
-    let changed = snapshot(
-        json!([]),
-        json!([batch(json!({"q0": "a", "q1": null}))]),
-        11,
-    );
-    let effects = resume(&mut g, &changed, 100);
+    let (mut g, mut h) = start();
+    h.stream(&profile(), S).running = true;
+    h.stream(&profile(), S).open = vec![batch(json!({}))];
+    poll(&mut g, &mut h, 0);
+    h.stream(&profile(), S).open = vec![batch(json!({"q0": "a", "q1": null}))];
+    let effects = poll(&mut g, &mut h, 100);
     let pending = g.waiting().next().unwrap().clone();
     let Ask::Batch(set) = &pending.ask else {
         panic!("a set of questions");
@@ -323,36 +192,25 @@ fn batch_reread_must_update_locks_and_emit_changed_card() {
     // The same request, shown as it is now: no second card.
     assert_eq!(effects, [Effect::Changed(pending)]);
     assert_eq!(g.waiting().count(), 1);
-    // Read again unchanged, or from an older place, nothing changes.
-    assert_eq!(resume(&mut g, &changed, 200), []);
-    assert_eq!(
-        resume(
-            &mut g,
-            &snapshot(json!([]), json!([batch(json!({}))]), 10),
-            300
-        ),
-        []
-    );
+    // Read again unchanged, nothing is said.
+    assert_eq!(poll(&mut g, &mut h, 200), []);
 }
 
 #[test]
 fn batch_card_must_distinguish_locked_and_unanswered_questions() {
-    let read = |answers: Value| {
+    let (g, _) = start();
+    let card = |answers: Value| {
         let ask = Ask::batch("srq-synthetic", "clarify", &batch(answers)["params"]).unwrap();
-        let session = model().session(&profile(), S);
+        let (session, wait_ms) = (at(&g), None);
         Pending {
             session,
             ask,
-            deadline_ms: None,
-            recheck_ms: None,
+            wait_ms,
         }
         .view(0)
     };
-    let (unlocked, locked) = (read(json!({})), read(json!({"q0": "a", "q1": null})));
-    assert_ne!(
-        unlocked, locked,
-        "locked answer is invisible to ticket 14's card"
-    );
+    let (unlocked, locked) = (card(json!({})), card(json!({"q0": "a", "q1": null})));
+    assert_ne!(unlocked, locked);
     assert_eq!(unlocked["questions"][0]["lock"], Value::Null);
     assert_eq!(
         locked["questions"][0]["lock"],
@@ -363,99 +221,89 @@ fn batch_card_must_distinguish_locked_and_unanswered_questions() {
 
 #[test]
 fn old_completion_must_not_mark_new_turn_idle() {
-    let mut g = model();
-    feed(&mut g, &event("message.start", 2, 10, json!({})));
-    feed(
-        &mut g,
-        &event("message.complete", 1, 11, json!({"status": "complete"})),
+    let (mut g, mut h) = start();
+    h.publish(&profile(), S, "message.start", 2, json!({}));
+    h.publish(
+        &profile(),
+        S,
+        "message.complete",
+        1,
+        json!({"status": "complete"}),
     );
-    assert_eq!(
-        g.statuses()[0].1,
-        Status::Working,
-        "ticket 16 would report the new turn idle"
+    // What a session is doing is what Hermes lists, never worked out from
+    // the order of its events.
+    h.stream(&profile(), S).status = Some("working".into());
+    poll(&mut g, &mut h, 0);
+    assert_eq!(g.statuses(), [(at(&g), Status::Working)]);
+    // Nor does the old completion take the new turn's question.
+    asks(&mut h, "new", 2);
+    h.publish(
+        &profile(),
+        S,
+        "message.complete",
+        1,
+        json!({"status": "complete"}),
     );
-    // Nor does a start read late make an ended turn work again.
-    feed(
-        &mut g,
-        &event("message.complete", 2, 12, json!({"status": "complete"})),
-    );
-    feed(&mut g, &event("message.start", 1, 13, json!({})));
-    assert_eq!(g.statuses()[0].1, Status::Idle);
+    poll(&mut g, &mut h, 1);
+    assert_eq!(names(&g), ["new"]);
+    assert_eq!(g.statuses(), [(at(&g), Status::Waiting)]);
 }
 
 #[test]
 fn replayed_duration_must_not_be_treated_as_known_absolute_deadline() {
-    let mut g = model();
-    let at = g.session(&profile(), S);
-    let mut frame = ask("old", 1, 10);
-    frame["params"]["payload"]["timeout_s"] = json!(20);
-    let read = json!({"replay_epoch": "epoch-1", "last_sequence": 10,
-        "events": [frame["params"]], "snapshot_required": false, "open_requests": []});
-    replay(&mut g, &read, 100_000);
-    let pending = g.waiting().next().unwrap();
-    assert_eq!(
-        pending.deadline_ms, None,
-        "no creation timestamp: the expiration is unknown"
-    );
-    assert_eq!(pending.recheck_ms, Some(120_000));
-    assert_eq!((g.next_deadline(), g.next_wake()), (None, Some(120_000)));
-    // The recheck closes nothing. It asks Hermes, and sets itself again.
-    assert_eq!(g.apply(Input::Tick, 119_999), []);
-    assert_eq!(
-        g.apply(Input::Tick, 120_000),
-        [Effect::Resume { session: at }]
-    );
+    let (mut g, mut h) = start();
+    let mut body = payload("old", 1);
+    body["timeout_s"] = json!(20);
+    h.publish(&profile(), S, "clarify.request", 1, body);
+    poll(&mut g, &mut h, 100_000);
+    // The card says how long Hermes waits and claims no moment it ends.
+    assert_eq!(g.waiting().next().unwrap().wait_ms, Some(20_000));
+    // No time that passes closes it: only Hermes saying it is over does.
+    assert_eq!(poll(&mut g, &mut h, 100_000 + 3_600_000), []);
     assert_eq!(names(&g), ["old"]);
-    assert_eq!(g.next_wake(), Some(140_000));
-    // Hermes no longer lists it: that closes it.
-    let effects = resume(&mut g, &snapshot(json!([]), json!([]), 10), 120_500);
-    assert!(names(&g).is_empty(), "{effects:?}");
-
-    // The same request seen as it was asked has a deadline, kept when a
-    // later reading lists it again.
-    let mut live = model();
-    feed(&mut live, &frame);
-    assert_eq!(live.waiting().next().unwrap().deadline_ms, Some(20_000));
-    resume(
-        &mut live,
-        &snapshot(json!([frame["params"]["payload"]]), json!([]), 10),
-        5_000,
-    );
-    let pending = live.waiting().next().unwrap();
-    assert_eq!(
-        (pending.deadline_ms, pending.recheck_ms),
-        (Some(20_000), None)
-    );
-}
-
-#[test]
-fn same_instance_reconnect_preserves_card_and_deadline() {
-    let mut g = model();
-    identified(&mut g, "instance-1");
-    let mut frame = ask("kept", 1, 10);
-    frame["params"]["payload"]["timeout_s"] = json!(20);
-    feed(&mut g, &frame);
-    let run = g.run();
-    g.apply(Input::Lost(Failure::Closed(1006)), 100);
-    identified(&mut g, "instance-1");
-    assert_eq!(g.run(), run);
-    assert_eq!(names(&g), ["kept"]);
-    assert_eq!(g.next_deadline(), Some(20_000));
-    assert!(feed(&mut g, &frame).is_empty());
-}
-
-#[test]
-fn new_instance_identity_closes_existing_cards() {
-    let mut g = model();
-    identified(&mut g, "instance-1");
-    feed(&mut g, &ask("old", 1, 10));
-    identified(&mut g, "instance-2");
+    settles(&mut h, "old", 1);
+    poll(&mut g, &mut h, 100_000 + 3_600_001);
     assert!(names(&g).is_empty());
 }
 
 #[test]
+fn same_instance_reconnect_preserves_card_and_deadline() {
+    let (mut g, mut h) = start();
+    let mut body = payload("kept", 1);
+    body["timeout_s"] = json!(20);
+    h.publish(&profile(), S, "clarify.request", 1, body);
+    poll(&mut g, &mut h, 0);
+    g.apply(Input::Lost(Failure::Closed(1006)), 100);
+    assert_eq!(names(&g), ["kept"]);
+    assert!(
+        g.poll().is_none(),
+        "nothing is polled while the socket is gone"
+    );
+    assert_eq!(identified(&mut g, "instance-1").len(), 1);
+    assert_eq!(names(&g), ["kept"]);
+    assert_eq!(g.waiting().next().unwrap().wait_ms, Some(20_000));
+    // Read again after the reconnect, it is the same card: nothing is said.
+    assert_eq!(poll(&mut g, &mut h, 200), []);
+}
+
+#[test]
+fn new_instance_identity_closes_existing_cards() {
+    let (mut g, mut h) = start();
+    asks(&mut h, "old", 1);
+    poll(&mut g, &mut h, 0);
+    let effects = identified(&mut g, "instance-2");
+    assert!(names(&g).is_empty());
+    assert!(matches!(
+        &effects[0],
+        Effect::Close { why: Closed::GatewayRestarted, session, .. } if *session == at(&g)
+    ));
+    assert_eq!(g.statuses(), []);
+}
+
+#[test]
 fn approval_scopes_and_batch_multiselect_encode_exactly() {
-    let session = model().session(&profile(), S);
+    let (g, _) = start();
+    let session = at(&g);
     let approval = Approval {
         prompt: Prompt {
             id: "p".into(),
@@ -465,11 +313,11 @@ fn approval_scopes_and_batch_multiselect_encode_exactly() {
         description: "synthetic".into(),
         choices: vec![Choice::Once, Choice::Session, Choice::Always, Choice::Deny],
     };
-    let asked = Pending {
+    let (ask, wait_ms) = (Ask::Approval(approval), None);
+    let p = Pending {
         session: session.clone(),
-        ask: Ask::Approval(approval),
-        deadline_ms: None,
-        recheck_ms: None,
+        ask,
+        wait_ms,
     };
     for (kind, scope, word) in [
         ("allow", None, "once"),
@@ -477,11 +325,11 @@ fn approval_scopes_and_batch_multiselect_encode_exactly() {
         ("always", None, "always"),
         ("always", Some("session"), "session"),
     ] {
-        let mut decision = json!({"kind": kind});
+        let mut d = json!({ "kind": kind });
         if let Some(scope) = scope {
-            decision["suggestion"] = json!({"type": "scope", "scope": scope});
+            d["suggestion"] = json!({"type": "scope", "scope": scope});
         }
-        let Some(Reply::Call(call)) = asked.reply(&decision, Scope::Host).unwrap() else {
+        let Some(Reply::Call(call)) = p.reply(&d, Scope::Host).unwrap() else {
             panic!("a call");
         };
         assert_eq!(
@@ -494,16 +342,14 @@ fn approval_scopes_and_batch_multiselect_encode_exactly() {
     let mut params = batch(json!({}))["params"].clone();
     params["questions"][1]["multi_select"] = json!(true);
     let ask = Ask::batch("srq-synthetic", "clarify", &params).unwrap();
-    let set = Pending {
+    let b = Pending {
         session,
         ask,
-        deadline_ms: None,
-        recheck_ms: None,
+        wait_ms: None,
     };
-    let decision =
-        json!({"kind": "answer", "answers": {"q1": {"selected": ["a (Recommended)", "b"]}}});
+    let d = json!({"kind": "answer", "answers": {"q1": {"selected": ["a (Recommended)", "b"]}}});
     assert_eq!(
-        set.reply(&decision, Scope::Host).unwrap(),
+        b.reply(&d, Scope::Host).unwrap(),
         Some(Reply::Result(
             json!({"jsonrpc": "2.0", "id": "srq-synthetic",
             "result": {"answers": {"q1": "[\"a (Recommended)\",\"b\"]"}}})
@@ -511,32 +357,295 @@ fn approval_scopes_and_batch_multiselect_encode_exactly() {
     );
 }
 
+// ---- Round 2 ----
+
 #[test]
-fn the_sessions_are_listed_slowly_even_when_nothing_seems_to_happen() {
-    let mut g = model();
-    let list = |g: &mut Gateway, status: &str| {
-        let result = json!({"sessions": [{"id": S, "status": status}]});
-        g.apply(
-            Input::Listed {
-                run: g.run(),
-                profile: &profile(),
-                result: &result,
-            },
-            0,
-        );
-    };
-    // Nothing known, or everything idle: still listed, every ten seconds.
-    assert_eq!((BUSY_POLL_MS, IDLE_POLL_MS), (1_000, 10_000));
-    assert_eq!(g.poll_ms(), IDLE_POLL_MS);
-    list(&mut g, "idle");
-    assert_eq!(g.poll_ms(), IDLE_POLL_MS);
-    // A session that starts, works or waits is followed every second.
-    for status in ["starting", "working", "waiting"] {
-        list(&mut g, status);
-        assert_eq!(g.poll_ms(), BUSY_POLL_MS, "{status}");
+fn newer_empty_snapshot_must_fence_older_unseen_prompt() {
+    let (mut g, mut h) = start();
+    // It waits, its request event already dropped from the stream, so the
+    // older reading finds it by a snapshot. Agent HUD never showed it.
+    asks(&mut h, "unseen", 1);
+    h.publish(&profile(), S, "session.info", 1, json!({}));
+    h.drop_through(&profile(), S, 1);
+    let older = taken(&mut g, &mut h);
+    assert_eq!(h.snapshots(), 1);
+    // It settles, and a newer reading shows that nothing waits.
+    settles(&mut h, "unseen", 1);
+    assert_eq!(poll(&mut g, &mut h, 100), []);
+    let effects = late(&mut g, older);
+    assert!(
+        names(&g).is_empty(),
+        "older reading resurrected it: {effects:?}"
+    );
+}
+
+#[test]
+fn a_live_frame_must_not_hide_unread_lower_sequence_request() {
+    let (mut g, mut h) = start();
+    // The question at 11 and an unrelated event at 12 come in one reading.
+    for _ in 0..10 {
+        h.publish(&profile(), S, "message.delta", 2, json!({}));
     }
-    // So is a card that still shows on a session that says it is idle.
-    list(&mut g, "idle");
-    feed(&mut g, &ask("shown", 1, 1));
-    assert_eq!(g.poll_ms(), BUSY_POLL_MS);
+    asks(&mut h, "still-waits", 2);
+    h.publish(&profile(), S, "session.info", 2, json!({}));
+    poll(&mut g, &mut h, 100);
+    assert_eq!(names(&g), ["still-waits"]);
+    // Whatever else the session publishes while it waits, it keeps showing.
+    for _ in 0..40 {
+        h.publish(&profile(), S, "session.info", 2, json!({}));
+    }
+    assert_eq!(poll(&mut g, &mut h, 200), []);
+    assert_eq!(names(&g), ["still-waits"]);
+}
+
+#[test]
+fn a_late_list_must_not_close_a_newer_live_session() {
+    let (mut g, mut h) = start();
+    // The sessions were listed before this one existed.
+    let older = taken(&mut g, &mut h);
+    asks(&mut h, "new", 2);
+    poll(&mut g, &mut h, 0);
+    assert_eq!(names(&g), ["new"]);
+    let effects = late(&mut g, older);
+    assert_eq!(
+        names(&g),
+        ["new"],
+        "late list closed a live card: {effects:?}"
+    );
+    assert_eq!(g.statuses(), [(at(&g), Status::Waiting)]);
+}
+
+#[test]
+fn equal_cursor_batch_readings_must_not_erase_newer_locks() {
+    let (mut g, mut h) = start();
+    h.stream(&profile(), S).running = true;
+    h.stream(&profile(), S).open = vec![batch(json!({}))];
+    poll(&mut g, &mut h, 0);
+    // Read before another viewer answered q0, at the same place in the
+    // stream: locking an answer publishes no event.
+    let older = taken(&mut g, &mut h);
+    h.stream(&profile(), S).open = vec![batch(json!({"q0": "a"}))];
+    poll(&mut g, &mut h, 100);
+    let effects = late(&mut g, older);
+    let Ask::Batch(set) = &g.waiting().next().unwrap().ask else {
+        panic!("a set of questions");
+    };
+    assert_eq!(
+        set.questions[0].locked,
+        Some(Locked::Answered("a".into())),
+        "late reading erased another viewer's answer: {effects:?}"
+    );
+    assert_eq!(effects, []);
+}
+
+#[test]
+fn a_failed_recovery_must_be_requested_again_after_same_instance_reconnect() {
+    let (mut g, mut h) = start();
+    // A question survived a reset of the replay cache: it waits, and its
+    // new stream is empty.
+    asks(&mut h, "survivor", 1);
+    h.new_epoch(&profile(), S, "epoch-2");
+    // The snapshot fails before it returns.
+    h.failing.push(Step::Snapshot(at(&g)));
+    assert_eq!(poll(&mut g, &mut h, 0), []);
+    assert_eq!(h.snapshots(), 1);
+    // The socket drops and comes back to the same instance.
+    g.apply(Input::Lost(Failure::Closed(1006)), 2);
+    identified(&mut g, "instance-1");
+    let effects = poll(&mut g, &mut h, 3);
+    assert_eq!(h.snapshots(), 1, "the snapshot was not asked for again");
+    assert_eq!(names(&g), ["survivor"], "{effects:?}");
+    // Without any reconnect, the very next poll asks again as well.
+    let (mut g, mut h) = start();
+    asks(&mut h, "survivor", 1);
+    h.new_epoch(&profile(), S, "epoch-2");
+    h.failing.push(Step::Snapshot(at(&g)));
+    poll(&mut g, &mut h, 0);
+    poll(&mut g, &mut h, 1_000);
+    assert_eq!((h.snapshots(), names(&g)), (1, vec!["survivor".to_owned()]));
+}
+
+#[test]
+fn a_retired_batch_must_not_suppress_new_epoch_prompt_recovery() {
+    let (mut g, mut h) = start();
+    h.stream(&profile(), S).open = vec![batch(json!({}))];
+    h.stream(&profile(), S).running = true;
+    poll(&mut g, &mut h, 0);
+    assert_eq!(names(&g), ["srq-synthetic"]);
+    // The set ends and its turn with it; a new turn asks a question.
+    h.stream(&profile(), S).open.clear();
+    let cancel = json!({"id": "srq-synthetic", "method": "clarify", "reason": "resolved"});
+    h.publish(&profile(), S, "request.cancel", 1, cancel);
+    h.publish(
+        &profile(),
+        S,
+        "message.complete",
+        1,
+        json!({"status": "complete"}),
+    );
+    h.publish(&profile(), S, "message.start", 2, json!({}));
+    poll(&mut g, &mut h, 50);
+    assert!(names(&g).is_empty());
+    asks(&mut h, "later", 2);
+    // The stream is replaced before the question was ever read.
+    h.new_epoch(&profile(), S, "epoch-2");
+    let effects = poll(&mut g, &mut h, 100);
+    assert_eq!(
+        h.snapshots(),
+        1,
+        "an old set of questions suppressed the snapshot"
+    );
+    assert_eq!(names(&g), ["later"], "{effects:?}");
+}
+
+#[test]
+fn completed_batch_turns_must_not_accumulate_unbounded_terminal_ids() {
+    let (mut g, mut h) = start();
+    let mut size = 0;
+    for turn in 1..=2000_u64 {
+        let id = format!("srq-retired-{turn}");
+        let mut set = batch(json!({}));
+        set["id"] = json!(id);
+        h.stream(&profile(), S).open = vec![set];
+        h.stream(&profile(), S).running = true;
+        poll(&mut g, &mut h, 0);
+        assert_eq!(names(&g), std::slice::from_ref(&id));
+        h.stream(&profile(), S).open.clear();
+        let cancel = json!({"id": id, "method": "clarify", "reason": "resolved"});
+        h.publish(&profile(), S, "request.cancel", turn, cancel);
+        h.publish(
+            &profile(),
+            S,
+            "message.complete",
+            turn,
+            json!({"status": "complete"}),
+        );
+        // Hermes keeps 512 events of a stream.
+        let kept = h.stream(&profile(), S).latest.saturating_sub(512);
+        h.drop_through(&profile(), S, kept);
+        poll(&mut g, &mut h, 0);
+        assert!(names(&g).is_empty());
+        // Everything the model holds prints in its debug form, and after
+        // the first turn it never grows.
+        let debug = format!("{g:?}");
+        assert!(
+            !debug.contains("srq-retired-"),
+            "turn {turn} left an id behind"
+        );
+        if turn == 1 {
+            size = debug.len();
+        }
+        assert!(
+            debug.len() <= size + 8,
+            "turn {turn}: {} from {size}",
+            debug.len()
+        );
+    }
+}
+
+#[test]
+fn late_snapshot_must_not_recreate_a_session_removed_by_newer_list() {
+    let (mut g, mut h) = start();
+    asks(&mut h, "ended", 1);
+    poll(&mut g, &mut h, 0);
+    // Still in flight when the session ends.
+    let older = taken(&mut g, &mut h);
+    h.streams.clear();
+    let effects = poll(&mut g, &mut h, 100);
+    assert!(matches!(
+        &effects[..],
+        [Effect::Close {
+            why: Closed::SessionEnded,
+            ..
+        }]
+    ));
+    assert!(g.statuses().is_empty());
+    let effects = late(&mut g, older);
+    assert!(
+        names(&g).is_empty(),
+        "old reply recreated the card: {effects:?}"
+    );
+    assert!(g.statuses().is_empty(), "old reply recreated the session");
+}
+
+#[test]
+fn session_selectors_must_not_resolve_another_gateway_session() {
+    let (mut local, mut h) = start();
+    let mut remote = Gateway::new(GatewayId::new("remote"));
+    identified(&mut remote, "instance-1");
+    asks(&mut h, "local-only", 1);
+    poll(&mut local, &mut h, 0);
+    let (own, foreign) = (at(&local), at(&remote));
+    assert_eq!(local.status(&own), Some(Status::Waiting));
+    assert_eq!(
+        local.status(&foreign),
+        None,
+        "a remote session selected the local one"
+    );
+    assert_eq!(
+        local
+            .pending(&own.request_id("local-only"))
+            .map(|p| &p.session),
+        Some(&own)
+    );
+    assert_eq!(local.pending(&foreign.request_id("local-only")), None);
+    // What another gateway's poll found is never this gateway's.
+    let theirs = taken(&mut remote, &mut h);
+    assert_eq!(late(&mut local, theirs), []);
+    assert_eq!(names(&local), ["local-only"]);
+    // Every effect names the gateway its session is on.
+    let effects = identified(&mut local, "instance-2");
+    assert!(matches!(&effects[0], Effect::Close { session, .. } if *session == own));
+}
+
+// ---- Round 2's two controls, which passed before ----
+
+#[test]
+fn gateway_owned_state_and_restart_are_isolated() {
+    let mut a = Gateway::new(GatewayId::new("a"));
+    let mut b = Gateway::new(GatewayId::new("b"));
+    let mut h = Hermes::default();
+    asks(&mut h, "same", 1);
+    for g in [&mut a, &mut b] {
+        identified(g, "instance-1");
+        poll(g, &mut h, 0);
+    }
+    assert_ne!(
+        a.waiting().next().unwrap().id(),
+        b.waiting().next().unwrap().id()
+    );
+    identified(&mut a, "instance-2");
+    assert!(names(&a).is_empty());
+    assert_eq!(names(&b), ["same"]);
+    assert_eq!(poll(&mut b, &mut h, 1), []);
+}
+
+#[test]
+fn a_genuine_new_epoch_resets_cursor_and_keeps_current_run_reply() {
+    let (mut g, mut h) = start();
+    for _ in 0..99 {
+        h.publish(&profile(), S, "message.delta", 1, json!({}));
+    }
+    asks(&mut h, "old", 1);
+    poll(&mut g, &mut h, 0);
+    g.apply(Input::Lost(Failure::Closed(1006)), 1);
+    identified(&mut g, "instance-1");
+    // A new stream that starts again at 1, with a new question in it.
+    h.new_epoch(&profile(), S, "epoch-2");
+    h.stream(&profile(), S).prompts.clear();
+    asks(&mut h, "new", 2);
+    poll(&mut g, &mut h, 2);
+    assert_eq!(names(&g), ["new"]);
+    // An answer sent on the socket from before the stream changed still lands.
+    let request = g.waiting().next().unwrap().id();
+    let reply = json!({"result": {"status": "resolved"}});
+    let effects = g.apply(
+        Input::Responded {
+            request: &request,
+            reply: &reply,
+        },
+        3,
+    );
+    assert!(names(&g).is_empty());
+    assert_eq!(effects.last(), Some(&Effect::Poll));
 }

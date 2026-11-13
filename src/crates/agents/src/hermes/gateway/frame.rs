@@ -75,6 +75,30 @@ pub fn event(params: &Value) -> Option<Event<'_>> {
     })
 }
 
+/// Whether a frame the gateway sent is a reason to poll now, not at the
+/// next timer: its hint that sessions changed (which it sends at most
+/// every 2 s and can miss), a request asked or settled, a turn started or
+/// ended, or a set of questions asked. It is only ever a hint: what waits
+/// is read by the poll, never taken from the frame.
+pub fn hints(value: &Value) -> bool {
+    match frame(value) {
+        Frame::Event(event) => matches!(
+            event.kind,
+            "sessions.changed"
+                | "platforms.changed"
+                | "clarify.request"
+                | "approval.request"
+                | "clarify.settled"
+                | "approval.settled"
+                | "request.cancel"
+                | "message.start"
+                | "message.complete"
+        ),
+        Frame::Request { .. } => true,
+        Frame::Reply { .. } | Frame::Other => false,
+    }
+}
+
 /// Why the gateway refused a call (`error.message`, code 4001).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {

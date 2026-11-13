@@ -4,7 +4,7 @@ use super::super::*;
 use super::{fixture, local, spike};
 use serde_json::{json, Value};
 
-const HOME: &str = "/Users/USER/.hermes";
+pub const HOME: &str = "/Users/USER/.hermes";
 
 /// A recorded `identify` answer as the socket gave it. The restart
 /// recordings kept a few of its fields; the profiles it serves are the two
@@ -17,6 +17,12 @@ fn whole(recorded: &Value) -> Value {
         answer["served_profiles"] = listed["result"]["served_profiles"].clone();
     }
     answer
+}
+
+/// What the throwaway gateway of the recordings said of itself when ready.
+pub fn usual() -> Value {
+    let full = fixture("gateway-self-description");
+    full["control_socket"]["identify_throwaway_ready_two_profiles"].clone()
 }
 
 /// What the connection learns before a recording's first socket opens.
@@ -170,18 +176,7 @@ fn a_gateway_describes_itself_and_grants_a_ticket() {
             ..
         })
     ));
-    let mut gateway = local();
-    assert_eq!(
-        gateway.apply(
-            Input::Frame {
-                run: gateway.run(),
-                profile: &spike(),
-                frame: ready
-            },
-            0
-        ),
-        []
-    );
+    assert!(!hints(ready));
 }
 
 #[test]

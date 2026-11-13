@@ -11,15 +11,10 @@ use serde_json::Value;
 pub struct Pending {
     pub session: SessionRef,
     pub ask: Ask,
-    /// When Hermes stops waiting. Known only for a request seen as it was
-    /// asked, on a subscribed socket, which said how long it waits. A
-    /// request read later says how long but not since when.
-    pub deadline_ms: Option<i64>,
-    /// When Agent HUD asks Hermes whether the request still waits, where
-    /// its deadline is not known: the time it was first read plus how long
-    /// Hermes said it waits, by which Hermes's own wait is over. It closes
-    /// nothing by itself.
-    pub recheck_ms: Option<i64>,
+    /// How long Hermes said it waits for an answer, counted from when it
+    /// asked. A reading says how long and not since when, so when the wait
+    /// ends is not known. It is for a card to say; nothing closes on it.
+    pub wait_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

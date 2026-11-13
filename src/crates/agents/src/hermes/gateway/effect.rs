@@ -2,8 +2,9 @@
 //! (`Input`), what to do about it (`Effect`), and why a card closed.
 use super::ask::Pending;
 use super::connection::{Connection, Denied, Failure};
-use super::frame::{Cursor, Refusal};
-use super::identity::{Profile, SessionRef};
+use super::frame::Refusal;
+use super::identity::SessionRef;
+use super::poll::Poll;
 use serde_json::Value;
 
 /// What a session is doing, as `session.active_list` says it. A session
@@ -28,15 +29,8 @@ impl Status {
     }
 }
 
-/// One run of the gateway as the model follows it: it changes when the
-/// gateway restarts. Everything read from a socket is given back with the
-/// run it was asked in, and what an earlier run answers late is dropped.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Run(pub(super) u64);
-
-/// What happened. A profile comes with everything read through a call,
-/// since the gateway's rows and events do not name theirs.
-#[derive(Clone, Debug)]
+/// What happened.
+#[derive(Debug)]
 pub enum Input<'a> {
     /// The control socket is being asked.
     Dialing,
@@ -46,42 +40,13 @@ pub enum Input<'a> {
     Denied(Denied),
     /// The gateway could not be reached, or the socket closed.
     Lost(Failure),
-    /// A frame the gateway sent on a subscribed socket as it happened: an
-    /// event or a request of its own.
-    Frame {
-        run: Run,
-        profile: &'a Profile,
-        frame: &'a Value,
-    },
-    /// The result of `session.active_list` for one profile.
-    Listed {
-        run: Run,
-        profile: &'a Profile,
-        result: &'a Value,
-    },
-    /// The result of `session.events.since` for one session.
-    Replayed {
-        run: Run,
-        profile: &'a Profile,
-        session: &'a str,
-        result: &'a Value,
-    },
-    /// The result of `session.resume`: a snapshot, and a subscription.
-    Resumed {
-        run: Run,
-        profile: &'a Profile,
-        result: &'a Value,
-    },
+    /// A poll ran to its end: every step it asked for was answered or
+    /// failed. A poll that was cut off is dropped, not given.
+    Polled(Poll),
     /// The answer to the request with this id was written to the socket.
     Sent { request: &'a str },
     /// The gateway's reply frame to an answer.
-    Responded {
-        run: Run,
-        request: &'a str,
-        reply: &'a Value,
-    },
-    /// Time passed: `now_ms` may be past a deadline or a recheck.
-    Tick,
+    Responded { request: &'a str, reply: &'a Value },
 }
 
 /// Why a card closed.
@@ -93,14 +58,14 @@ pub enum Closed {
     Settled,
     AlreadyResolved,
     StaleGeneration,
-    /// Its own time ran out.
+    /// Hermes withdrew a set of questions when its own wait ran out.
     TimedOut,
     TurnEnded,
     /// The turn was stopped.
     Interrupted,
     /// Hermes withdrew it, in its own word for why.
     Withdrawn(String),
-    /// A full reading of the session no longer lists it.
+    /// What Hermes says of the session no longer holds it.
     Gone,
     SessionEnded,
     GatewayRestarted,
@@ -119,7 +84,7 @@ pub enum Effect {
     /// Withdraw the card: the request is over.
     Close {
         id: String,
-        session: String,
+        session: SessionRef,
         why: Closed,
     },
     /// An answer did not land and the request still waits: show its card
@@ -129,16 +94,6 @@ pub enum Effect {
         pending: Pending,
         why: Option<Refusal>,
     },
-    /// List the live sessions of every served profile now.
-    List,
-    /// Read the session's stream from `cursor` (`session.events.since`).
-    Read {
-        session: SessionRef,
-        cursor: Option<Cursor>,
-    },
-    /// The stream cannot say what waits: take a snapshot (`session.resume`),
-    /// which subscribes for as long as the socket that asks stays open.
-    Resume {
-        session: SessionRef,
-    },
+    /// Poll now, without waiting for the timer.
+    Poll,
 }

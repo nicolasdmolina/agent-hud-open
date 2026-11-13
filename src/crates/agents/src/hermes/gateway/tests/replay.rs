@@ -1,7 +1,13 @@
-//! Replays one recording through the model the way the connection will:
-//! every frame the gateway sent goes in, and every answer the recording
-//! sent is compared with what the model would send for the same decision.
+//! Replays one recording through the model. A recording is what one
+//! socket saw of Hermes over time; the model reads Hermes by polling. So
+//! each frame the gateway sent is first taken into a pretend Hermes
+//! (`World`), which then holds what the real one held at that moment, and
+//! a whole poll is run against it: the cards after every recorded frame.
+//! Every answer the recording sent is compared with what the model would
+//! send for the same decision.
 use super::super::*;
+use super::fake;
+use super::world::World;
 use super::{fixture, local, spike};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -24,7 +30,7 @@ fn why(closed: &Closed) -> String {
     format!("{closed:?}")
 }
 
-pub fn describe(effect: &Effect, now_ms: i64) -> String {
+pub fn describe(effect: &Effect) -> String {
     match effect {
         Effect::Connection(connection) => match connection {
             Connection::Ready(instance) => format!(
@@ -36,12 +42,9 @@ pub fn describe(effect: &Effect, now_ms: i64) -> String {
             other => format!("connection {other:?}"),
         },
         Effect::Open(pending) => {
-            let wait = match (pending.deadline_ms, pending.recheck_ms) {
-                (Some(at), _) => format!(" wait {}s", (at - now_ms) / 1000),
-                (None, Some(at)) => {
-                    format!(" deadline unknown, recheck in {}s", (at - now_ms) / 1000)
-                }
-                (None, None) => " no deadline".into(),
+            let wait = match pending.wait_ms {
+                Some(wait) => format!(" waits {}s", wait / 1000),
+                None => " says no wait".into(),
             };
             match &pending.ask {
                 Ask::Question(q) => format!(
@@ -86,15 +89,7 @@ pub fn describe(effect: &Effect, now_ms: i64) -> String {
         Effect::Unanswered { pending, why } => {
             format!("unanswered {} {why:?}", key(&pending.id()))
         }
-        Effect::List => "list".into(),
-        Effect::Read { session, cursor } => format!(
-            "read {} from {}",
-            short(&session.id),
-            cursor
-                .as_ref()
-                .map_or("the start".into(), |c| c.seq.to_string())
-        ),
-        Effect::Resume { session } => format!("resume {}", short(&session.id)),
+        Effect::Poll => "poll now".into(),
     }
 }
 
@@ -136,6 +131,7 @@ fn same(ours: &Value, theirs: &Value) -> bool {
 
 struct Replay {
     gateway: Gateway,
+    world: World,
     trace: Vec<String>,
     now_ms: i64,
     /// The recorded answers that the model would have sent itself; only
@@ -143,6 +139,8 @@ struct Replay {
     ours: Vec<u64>,
     /// The last count of live sessions said, which is said again on a change.
     live: String,
+    /// The last instance of the gateway that was ready.
+    instance: Option<String>,
 }
 
 /// Where the model's frame differs from the recorded one.
@@ -159,25 +157,50 @@ fn differs(ours: &Value, theirs: &Value) -> String {
 
 impl Replay {
     fn apply(&mut self, input: Input<'_>) {
-        let listed = matches!(input, Input::Listed { .. });
         let effects = self.gateway.apply(input, self.now_ms);
-        let now = self.now_ms;
-        for effect in &effects {
-            self.say(describe(effect, now));
-        }
-        if listed {
-            let statuses = self.gateway.statuses();
-            let count = |status| statuses.iter().filter(|(_, s)| *s == status).count();
-            let live = format!(
-                "live sessions: {} ({} working, {} waiting)",
-                statuses.len(),
-                count(Status::Working),
-                count(Status::Waiting)
-            );
-            if live != self.live {
-                self.live = live.clone();
-                self.say(live);
+        // Another instance is another Hermes: nothing of the old one is left.
+        if let Some(now) = self.instance() {
+            if self.instance.as_ref().is_some_and(|before| *before != now) {
+                self.world.restart();
             }
+            self.instance = Some(now);
+        }
+        for effect in &effects {
+            self.say(describe(effect));
+        }
+    }
+
+    fn instance(&self) -> Option<String> {
+        match self.gateway.connection() {
+            Connection::Ready(instance) => Some(instance.id.clone()),
+            _ => None,
+        }
+    }
+
+    /// One whole poll of Hermes as the recording has shown it so far, and
+    /// the cards and sessions after it.
+    fn poll(&mut self) {
+        let Some(mut poll) = self.gateway.poll() else {
+            return;
+        };
+        fake::ask(&mut poll, &mut self.world.hermes);
+        for step in self.world.hermes.asked.clone() {
+            if let Step::Snapshot(session) = step {
+                self.say(format!("snapshot {}", short(&session.id)));
+            }
+        }
+        self.apply(Input::Polled(poll));
+        let statuses = self.gateway.statuses();
+        let count = |status| statuses.iter().filter(|(_, s)| *s == status).count();
+        let live = format!(
+            "live sessions: {} ({} working, {} waiting)",
+            statuses.len(),
+            count(Status::Working),
+            count(Status::Waiting)
+        );
+        if live != self.live {
+            self.live = live.clone();
+            self.say(live);
         }
     }
 
@@ -306,65 +329,110 @@ fn clients(doc: &Value) -> Vec<(&String, &Vec<Value>, Scope)> {
         .collect()
 }
 
-/// Checks that the model's own encoder writes a recorded reading call, and
-/// says whether a recorded replay started where the model's cursor is.
-fn check_call(gateway: &Gateway, sent: &Value, scope: Scope, profile: &Profile) -> Option<String> {
+/// Checks that the model's own encoder writes a recorded reading call.
+fn check_call(gateway: &Gateway, sent: &Value, scope: Scope, profile: &Profile) {
     let params = &sent["params"];
     let at = gateway.session(profile, params["session_id"].as_str().unwrap_or(""));
-    let mut line = None;
     let ours = match sent["method"].as_str().unwrap() {
-        "session.active_list" => active_list(profile, scope),
-        "session.resume" => resume(&at, scope),
+        "session.active_list" => Step::List(profile.clone()).command(scope),
+        "session.resume" => Step::Snapshot(at).command(scope),
         "session.events.since" => {
             let cursor = params["replay_epoch"].as_str().map(|epoch| Cursor {
                 epoch: epoch.to_owned(),
                 seq: params["last_sequence"].as_u64().unwrap(),
             });
-            let from = cursor
-                .as_ref()
-                .map_or("the start".into(), |c| c.seq.to_string());
-            line = Some(if cursor.as_ref() == gateway.cursor(&at) {
-                format!("asked for events from {from}: where the model's cursor is")
-            } else {
-                format!("asked for events from {from}: not where the model's cursor is")
-            });
-            events_since(&at, cursor.as_ref(), scope)
+            let session = at;
+            Step::Since { session, cursor }.command(scope)
         }
         // The spike closed its own sessions with `end_reason`; the model never does.
         "session.detach" if params.get("end_reason").is_none() => {
             detach(&at, params["subscription_id"].as_str().unwrap(), scope)
         }
-        _ => return None,
+        _ => return,
     };
     assert_eq!(ours.frame(sent["id"].as_u64().unwrap()), *sent);
-    line
+}
+
+/// Checks the pretend Hermes against the real one: asked the recorded
+/// replay again, it answers what Hermes answered.
+fn check_replay(world: &mut World, at: &SessionRef, call: &Value, result: &Value) {
+    let cursor = call["params"]["replay_epoch"].as_str().map(|epoch| Cursor {
+        epoch: epoch.to_owned(),
+        seq: call["params"]["last_sequence"].as_u64().unwrap(),
+    });
+    let session = at.clone();
+    let ours = world
+        .hermes
+        .answer(&Step::Since { session, cursor })
+        .unwrap();
+    let seqs = |reply: &Value| -> Vec<u64> {
+        let events = reply["events"].as_array().unwrap();
+        events
+            .iter()
+            .map(|event| event["seq"].as_u64().unwrap())
+            .collect()
+    };
+    for key in ["snapshot_required", "truncated", "replay_epoch"] {
+        assert_eq!(ours[key], result[key], "{key} of {call}");
+    }
+    assert_eq!(seqs(&ours), seqs(result), "{call}");
+    // A refused read tells where the stream is by then, which may be past
+    // what the recording had shown of it.
+    if result["truncated"] == false {
+        assert_eq!(ours["latest_seq"], result["latest_seq"], "{call}");
+    }
 }
 
 pub fn replay(name: &str) -> Vec<String> {
     let doc = fixture(name);
     let mut run = Replay {
         gateway: local(),
+        world: World::default(),
         trace: Vec::new(),
         now_ms: 0,
         ours: Vec::new(),
         live: String::new(),
+        instance: None,
     };
+    // The gateway as it last described itself while ready: the recorded
+    // answer, or for a recording that kept none, the one the same
+    // throwaway gateway gave in `gateway-self-description`.
+    let mut described = super::handshake::usual();
     for (client, frames, scope) in clients(&doc) {
         if client != "hud" {
             super::handshake::between_sockets(&doc, &mut |input, note| {
                 if let Some(note) = note {
                     run.say(note);
                 }
+                if let Input::Identified { answer, .. } = &input {
+                    described = (*answer).clone();
+                }
                 run.apply(input);
             });
             run.say(format!("-- {client}"));
         } else {
-            super::handshake::before_first_socket(&doc, &mut |input| run.apply(input));
+            super::handshake::before_first_socket(&doc, &mut |input| {
+                if let Input::Identified { answer, .. } = &input {
+                    described = (*answer).clone();
+                }
+                run.apply(input)
+            });
+        }
+        // A socket opens only on a gateway that has just said it is ready.
+        let (answer, home) = (&described, super::handshake::HOME);
+        match run.gateway.connection() {
+            Connection::Ready(_) => {}
+            Connection::Disconnected => {
+                run.gateway
+                    .apply(Input::Identified { answer, home }, run.now_ms);
+                run.instance = run.instance();
+            }
+            _ => run.apply(Input::Identified { answer, home }),
         }
         let base = run.now_ms;
         let mut calls: BTreeMap<u64, Value> = BTreeMap::new();
         let mut asked_in: Option<SessionRef> = None;
-        for entry in frames {
+        for (index, entry) in frames.iter().enumerate() {
             let sent = &entry["frame"];
             run.now_ms = base + (entry["t"].as_f64().unwrap() * 1000.0) as i64;
             // The socket's own profile, or the one a host's socket names.
@@ -379,28 +447,24 @@ pub fn replay(name: &str) -> Vec<String> {
                         "clarify.respond" | "approval.respond" => {
                             run.compare(sent, scope, &profile)
                         }
-                        _ => {
-                            if let Some(line) = check_call(&run.gateway, sent, scope, &profile) {
-                                run.say(line);
-                            }
-                        }
+                        _ => check_call(&run.gateway, sent, scope, &profile),
                     }
                 } else {
                     run.compare_batch(sent, asked_in.as_ref().unwrap());
                 }
                 continue;
             }
-            run.apply(Input::Tick);
             let Some(call) = sent["id"].as_u64().and_then(|id| calls.get(&id)).cloned() else {
-                if let Frame::Request { params, .. } = frame(sent) {
-                    let session = params["session_id"].as_str().unwrap();
-                    asked_in = Some(run.gateway.session(&profile, session));
+                match frame(sent) {
+                    Frame::Request { params, .. } => {
+                        let session = params["session_id"].as_str().unwrap();
+                        asked_in = Some(run.gateway.session(&profile, session));
+                        run.world.request(&profile, sent);
+                    }
+                    Frame::Event(_) => run.world.event(&profile, &sent["params"]),
+                    _ => {}
                 }
-                run.apply(Input::Frame {
-                    run: run.gateway.run(),
-                    profile: &profile,
-                    frame: sent,
-                });
+                run.poll();
                 continue;
             };
             let profile = match (scope, call["params"]["profile"].as_str()) {
@@ -410,22 +474,13 @@ pub fn replay(name: &str) -> Vec<String> {
             let result = &sent["result"];
             let session = call["params"]["session_id"].as_str().unwrap_or("");
             match call["method"].as_str().unwrap() {
-                "session.active_list" if result.is_object() => run.apply(Input::Listed {
-                    run: run.gateway.run(),
-                    profile: &profile,
-                    result,
-                }),
-                "session.events.since" if result.is_object() => run.apply(Input::Replayed {
-                    run: run.gateway.run(),
-                    profile: &profile,
-                    session,
-                    result,
-                }),
-                "session.resume" if result.is_object() => run.apply(Input::Resumed {
-                    run: run.gateway.run(),
-                    profile: &profile,
-                    result,
-                }),
+                "session.active_list" if result.is_object() => run.world.listed(&profile, result),
+                "session.events.since" if result.is_object() => {
+                    run.world.replayed(&profile, session, result);
+                    let at = run.gateway.session(&profile, session);
+                    check_replay(&mut run.world, &at, &call, result);
+                }
+                "session.resume" if result.is_object() => run.world.resumed(&profile, result),
                 "clarify.respond" | "approval.respond" => {
                     let prompt = call["params"]["prompt_id"].as_str().unwrap();
                     let request = run.gateway.session(&profile, session).request_id(prompt);
@@ -434,12 +489,15 @@ pub fn replay(name: &str) -> Vec<String> {
                         Answered::AlreadyResolved => "already resolved".to_owned(),
                         Answered::Refused(refusal) => format!("refused {refusal:?}"),
                     };
+                    if matches!(answered(sent), Answered::Resolved) {
+                        run.world.answered(&profile, prompt, &frames[index..]);
+                    }
                     if run.ours.contains(&sent["id"].as_u64().unwrap()) {
                         run.say(format!("reply {outcome}"));
+                        let reply = sent;
                         run.apply(Input::Responded {
-                            run: run.gateway.run(),
                             request: &request,
-                            reply: sent,
+                            reply,
                         });
                     } else {
                         run.say(format!(
@@ -449,8 +507,10 @@ pub fn replay(name: &str) -> Vec<String> {
                 }
                 _ => {}
             }
+            run.poll();
         }
     }
+    assert_eq!(run.world.differs, [] as [String; 0], "{name}");
     let left: Vec<String> = run
         .gateway
         .waiting()

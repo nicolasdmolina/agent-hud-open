@@ -6,12 +6,15 @@ use super::*;
 use serde_json::Value;
 use std::path::PathBuf;
 
+mod cost;
 mod decisions;
+mod fake;
 mod handshake;
 mod regressions;
 mod replay;
 mod scenarios;
 mod transitions;
+mod world;
 
 fn folder() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
