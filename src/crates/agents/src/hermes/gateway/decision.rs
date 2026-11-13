@@ -115,21 +115,26 @@ impl Approval {
 }
 
 impl Batch {
-    /// The result frame that answers the questions given. A question left
-    /// out keeps what another viewer answered, or stays unanswered. None
-    /// when nothing is answered: a result without answers would cancel the
-    /// whole set for every viewer.
-    pub fn answer(&self, answers: &[(&str, Answer)]) -> Option<Value> {
+    /// The result frame that settles the set: each question answered here
+    /// with its answer, each other question skipped (`null`), except one
+    /// another viewer already answered or skipped, which keeps that (Hermes
+    /// merges the answers over those, `tools/clarify_batch.py`). The frame
+    /// always carries `answers`, even empty: without it Hermes ends the set
+    /// as cancelled for every viewer (`settle_batch`).
+    pub fn answer(&self, answers: &[(&str, Answer)]) -> Value {
         let written: Map<String, Value> = self
             .questions
             .iter()
             .filter_map(|question| {
-                let (_, answer) = answers.iter().find(|(qid, _)| *qid == question.qid)?;
-                Some((question.qid.clone(), json!(answer.as_str())))
+                match answers.iter().find(|(qid, _)| *qid == question.qid) {
+                    Some((_, answer)) => Some(json!(answer.as_str())),
+                    None if question.locked.is_some() => None,
+                    None => Some(Value::Null),
+                }
+                .map(|value| (question.qid.clone(), value))
             })
             .collect();
-        (!written.is_empty())
-            .then(|| json!({"jsonrpc": "2.0", "id": self.request, "result": {"answers": written}}))
+        json!({"jsonrpc": "2.0", "id": self.request, "result": {"answers": written}})
     }
 }
 
@@ -163,9 +168,7 @@ impl Pending {
                         Some((question.qid.as_str(), answer))
                     })
                     .collect();
-                Ok(Some(Reply::Result(
-                    batch.answer(&answers).ok_or_else(empty)?,
-                )))
+                Ok(Some(Reply::Result(batch.answer(&answers))))
             }
             Ask::Approval(approval) => {
                 let choice = match (kind, decision["suggestion"]["scope"].as_str()) {

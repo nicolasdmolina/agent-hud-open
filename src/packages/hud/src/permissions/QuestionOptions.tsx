@@ -4,7 +4,7 @@ import type { ApprovalQuestion } from "@agent-hud/protocol";
 import { alertFill, onAlertFill } from "../tokens";
 import { useGround } from "../ground";
 import { cardColumn } from "../card-column";
-import type { Draft } from "./PermissionQuestionCard";
+import type { Draft } from "./question-answers";
 
 /** A question's offered answers, to pick one or several, and the field for
  * an answer in one's own words. */

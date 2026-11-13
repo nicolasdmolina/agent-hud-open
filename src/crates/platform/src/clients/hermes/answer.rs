@@ -79,9 +79,8 @@ fn decided(shared: &Shared) -> Vec<(Pending, Value)> {
 fn deliver(shared: &Shared, pending: Pending, decision: &Value) {
     let reply = match pending.reply(decision, Scope::Host) {
         Ok(Some(reply)) => reply,
-        // Nothing to send: the request is left to Hermes's own windows, or
-        // every question of a set was skipped, which leaves the set to its
-        // other viewers. That is done, not an answer that failed.
+        // Nothing to send: the request is left to Hermes's own windows.
+        // That is done, not an answer that failed.
         Ok(None) => return shared.log.line(&format!("answer left id={}", pending.id())),
         Err(reason) => return shared.undelivered(&pending, reason),
     };

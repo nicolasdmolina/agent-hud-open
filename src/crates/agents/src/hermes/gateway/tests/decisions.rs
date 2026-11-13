@@ -73,6 +73,10 @@ fn a_question_takes_words_and_nothing_else() {
             frame("blue (Recommended)"),
         ),
         (pick(key, &[], Some("teal")), frame("teal")),
+        // No answer at all is never sent as the empty answer: where the
+        // gateway runs the turn, Hermes takes that as a timeout and drops
+        // the questions still to come (`question-skipped`'s tool result).
+        (json!({"kind": "answer", "answers": {}}), Err(EMPTY.into())),
         (pick(key, &["green"], Some(" teal ")), frame("teal")),
         // An empty answer would be taken as no answer: it is never sent.
         (pick(key, &[], None), Err(EMPTY.into())),
@@ -248,20 +252,31 @@ fn a_set_of_questions_is_answered_by_a_result_frame_and_never_a_call() {
             }})
         ))
     );
-    // One question answered: the other is left out, never sent as empty.
+    let result = |answers: Value| {
+        Ok(Some(
+            json!({"jsonrpc": "2.0", "id": "srq-be9ca8d8cb91", "result": {"answers": answers}}),
+        ))
+    };
+    // One question answered: the other was skipped on the card, and goes
+    // as skipped (`null`).
     assert_eq!(
         sent(&batch, &pick("q1", &["medium"], None), Scope::Profile),
-        Ok(Some(
-            json!({"jsonrpc": "2.0", "id": "srq-be9ca8d8cb91", "result": {
-                "answers": {"q1": r#"["medium"]"#},
-            }})
-        ))
+        result(json!({"q0": null, "q1": r#"["medium"]"#}))
     );
-    // Nothing answered sends nothing: a result without answers cancels the set.
+    // Every question skipped: the set is settled with each one skipped,
+    // never left waiting with its card gone.
+    let skipped = json!({"kind": "answer", "answers": {}});
+    assert_eq!(
+        sent(&batch, &skipped, Scope::Profile),
+        result(json!({"q0": null, "q1": null}))
+    );
     assert_eq!(
         sent(&batch, &pick("q0", &[], None), Scope::Profile),
-        Err(EMPTY.into())
+        result(json!({"q0": null, "q1": null}))
     );
+    // Hermes's timeout for a set can be turned off, so nothing but this
+    // frame would end it. The set has no wait of its own to rely on.
+    assert_eq!(batch.wait_ms, None);
     assert_eq!(
         sent(&batch, &json!({"kind": "leave"}), Scope::Profile),
         Ok(None)
@@ -286,6 +301,38 @@ fn a_set_of_questions_is_answered_by_a_result_frame_and_never_a_call() {
         Some(Locked::Answered("green".into()))
     );
     assert_eq!(read.questions[1].locked, Some(Locked::Skipped));
+    // A question another viewer answered or skipped, left alone, keeps
+    // that: it is not in the frame, and Hermes keeps its lock.
+    let locked = Pending {
+        session: batch.session.clone(),
+        ask: Ask::Batch(read.clone()),
+        wait_ms: None,
+    };
+    let leave_locked = |answers: Value| {
+        Ok(Some(
+            json!({"jsonrpc": "2.0", "id": "srq-1", "result": {"answers": answers}}),
+        ))
+    };
+    assert_eq!(
+        sent(&locked, &skipped, Scope::Profile),
+        leave_locked(json!({}))
+    );
+    assert_eq!(
+        sent(&locked, &pick("q0", &["green"], None), Scope::Profile),
+        leave_locked(json!({"q0": "green"}))
+    );
+    // q0 locked by another viewer, q1 skipped here.
+    let mut half = read.clone();
+    half.questions[1].locked = None;
+    let half = Pending {
+        session: batch.session.clone(),
+        ask: Ask::Batch(half),
+        wait_ms: None,
+    };
+    assert_eq!(
+        sent(&half, &skipped, Scope::Profile),
+        leave_locked(json!({"q1": null}))
+    );
     // A password or a secret Hermes asks its viewers for is never a card.
     assert_eq!(Ask::batch("srq-2", "sudo", &params), None);
     assert_eq!(Ask::batch("srq-3", "secret", &params), None);
@@ -301,8 +348,14 @@ fn a_card_offers_only_what_hermes_offers() {
     );
     assert_eq!(
         (&question["source"], &question["vendor"]),
-        (&json!("hermes"), &json!("Hermes"))
+        (&json!("hermes"), &json!("Hermes Agent · hud-spike"))
     );
+    // The default profile's card has the plain label, as its sessions do.
+    let mut default = asked("question-answered-here", "clarify.request");
+    default.session.profile = Profile::Default;
+    assert_eq!(default.view(0)["vendor"], "Hermes Agent");
+    // One question has no Skip; a set of questions has.
+    assert_eq!(question["canSkip"], false);
     assert_eq!(
         (&question["kind"], &question["answersQuestion"]),
         (&json!("question"), &json!(true))
@@ -325,6 +378,7 @@ fn a_card_offers_only_what_hermes_offers() {
     assert_eq!(open["questions"][0]["options"], json!([]));
 
     let set = asked("question-batch-answered-here", "clarify").view(0);
+    assert_eq!(set.get("canSkip"), None);
     let keys: Vec<&Value> = set["questions"]
         .as_array()
         .unwrap()

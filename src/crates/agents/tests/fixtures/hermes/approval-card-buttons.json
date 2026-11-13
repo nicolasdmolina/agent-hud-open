@@ -32,7 +32,7 @@
       "summary": "delete in root path",
       "title": "delete in root path",
       "toolName": "",
-      "vendor": "Hermes"
+      "vendor": "Hermes Agent · hud-spike"
     },
     "buttons": [
       {
@@ -96,7 +96,7 @@
       "summary": "Write to protected agent-instruction file(s): AGENTS.md. These files steer future agent behavior; approval is always required (not bypassed by auto-approve).",
       "title": "Write to protected agent-instruction file(s): AGENTS.md. These files steer future agent behavior; approval is always required (not bypassed by auto-approve).",
       "toolName": "",
-      "vendor": "Hermes"
+      "vendor": "Hermes Agent · hud-spike"
     },
     "buttons": [
       {

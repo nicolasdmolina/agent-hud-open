@@ -10,6 +10,11 @@ export type RequestDecision =
   | { kind: "answer"; answers: Record<string, RequestAnswer> }
   | { kind: "approve_plan"; acceptEdits: boolean }
   | { kind: "keep_planning"; message?: string };
+/** What another viewer of the same question already did with it: answered
+ * it, or skipped it. Leaving the question alone keeps that; an answer given
+ * here replaces it. */
+export type QuestionLock =
+  { state: "answered"; answer: string } | { state: "skipped" };
 export interface ApprovalQuestion {
   id: string | null;
   answerKey: string;
@@ -17,6 +22,7 @@ export interface ApprovalQuestion {
   header: string | null;
   options: { label: string; description: string | null }[];
   multiSelect: boolean;
+  lock?: QuestionLock | null;
 }
 export interface Approval {
   id: string;
@@ -46,6 +52,9 @@ export interface Approval {
   questions?: ApprovalQuestion[];
   plan?: string | null;
   answersQuestion?: boolean;
+  /** From the client's adapter: false where the client takes no skip, so
+   * every question needs an answer and the card offers no Skip. */
+  canSkip?: boolean;
   /** From Core: why a question can be answered only in the client's own
    * window, such as a Claude desktop box whose session Agent HUD cannot
    * reach; null when it can be answered here. */
