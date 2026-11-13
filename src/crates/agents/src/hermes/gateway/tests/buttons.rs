@@ -95,6 +95,14 @@ fn every_button_sends_the_answer_the_recording_sent() {
             "{}",
             button["label"]
         );
+        // On a socket for the whole host, the same frame names the profile.
+        let Ok(Some(Reply::Call(call))) = asked(name).reply(&button["decision"], Scope::Host)
+        else {
+            panic!("{name} sends no call");
+        };
+        let mut hosted = sent.clone();
+        hosted["params"]["profile"] = "hud-spike".into();
+        assert_eq!(call.frame(sent["id"].as_u64().unwrap()), hosted);
     }
     let words: Vec<Value> = full
         .as_array()

@@ -159,7 +159,15 @@ export function PermissionToolCard({
           </span>
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 6,
+        }}
+      >
         {permissionChoices(request, zh).map((choice, index) => (
           <Fragment key={index}>
             <CardButton
