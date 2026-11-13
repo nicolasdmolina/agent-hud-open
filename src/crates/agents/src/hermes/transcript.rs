@@ -1,4 +1,5 @@
 //! Hermes SQLite session reader (`state.db`).
+use super::gateway::{hud_session_id, Machine, Profile};
 use super::session_counts::{self, SessionCounts};
 use crate::transcript::{sql_column, sql_columns, sql_count, sql_model, sql_text, sql_time};
 use crate::{
@@ -57,18 +58,24 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
     let mut records = Vec::new();
     let mut last = scan;
     let mut seen = 0;
-    let folder = path.parent().unwrap_or(Path::new(""));
-    let profile = folder
-        .parent()
-        .and_then(Path::file_name)
-        .filter(|s| *s == "profiles")
-        .and_then(|_| folder.file_name())
-        .map(|s| s.to_string_lossy().into_owned());
+    // A `state.db` under a Hermes home is this machine's, and its folder
+    // says whose: a named profile's in `profiles/<name>`, else the default
+    // profile's of whatever root holds it.
+    let machine = Machine::This;
+    let of = Profile::of_home(path.parent().unwrap_or(Path::new("")));
+    let profile = match &of {
+        Profile::Named(name) => Some(name.as_str().to_owned()),
+        Profile::Default => None,
+    };
     while let Some(row) = rows.next()? {
         seen += 1;
         last = row.get(0)?;
         max_rowid = max_rowid.max(last);
         let Some(raw) = sql_text(row, 1) else {
+            continue;
+        };
+        // A row whose id can be no session's is left out, like one without.
+        let Some(id) = hud_session_id(&machine, &of, &raw) else {
             continue;
         };
         let Some(started) = sql_time(row, 2, true) else {
@@ -86,13 +93,6 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
         if last <= rowid_after && updated <= ts_after && !grew {
             continue;
         }
-        let id = format!(
-            "hermes:{}{raw}",
-            profile
-                .as_ref()
-                .map(|p| format!("{p}:"))
-                .unwrap_or_default()
-        );
         let title = sql_text(row, 3);
         let cwd = sql_text(row, 4);
         let title_fallback = sql_text(row, 5).map(|source| format!("Hermes · {source}"));

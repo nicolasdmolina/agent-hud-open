@@ -44,7 +44,7 @@ pub fn active_list(profile: &Profile, scope: Scope) -> Command {
 /// epoch, which returns what is still held, a waiting request included.
 pub fn events_since(session: &SessionRef, cursor: Option<&Cursor>, scope: Scope) -> Command {
     let mut params = json!({
-        "session_id": session.id,
+        "session_id": session.id(),
         "last_sequence": cursor.map_or(0, |cursor| cursor.seq),
     });
     if let Some(cursor) = cursor {
@@ -59,7 +59,7 @@ pub fn events_since(session: &SessionRef, cursor: Option<&Cursor>, scope: Scope)
 pub fn resume(session: &SessionRef, scope: Scope) -> Command {
     Command::routed(
         "session.resume",
-        json!({"session_id": session.id}),
+        json!({"session_id": session.id()}),
         &session.profile,
         scope,
     )
@@ -70,7 +70,7 @@ pub fn resume(session: &SessionRef, scope: Scope) -> Command {
 pub fn detach(session: &SessionRef, subscription: &str, scope: Scope) -> Command {
     Command::routed(
         "session.detach",
-        json!({"session_id": session.id, "subscription_id": subscription}),
+        json!({"session_id": session.id(), "subscription_id": subscription}),
         &session.profile,
         scope,
     )

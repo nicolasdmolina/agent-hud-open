@@ -117,8 +117,8 @@ fn an_answer_the_gateway_does_not_take_gives_up_and_its_card_comes_back() {
 fn what_a_failed_write_left_unsent_is_never_sent_with_a_later_frame() {
     use super::super::{control, socket::Socket};
     use agent_hud_agents::hermes::gateway::{
-        granted, identify, identify_line, resume, ticket_line, GatewayId, Identified, Profile,
-        Scope, SessionRef,
+        granted, identify, identify_line, resume, ticket_line, GatewayId, Identified, Machine,
+        Profile, Scope, SessionRef,
     };
     let lab = lab();
     let gateway = Fake::start(&lab.home, "instance-1");
@@ -134,11 +134,12 @@ fn what_a_failed_write_left_unsent_is_never_sent_with_a_later_frame() {
     // Subscribed, and from then on the gateway reads nothing.
     let stalled = Arc::new(Hold::default());
     gateway.world().stall_after_resume = Some(stalled.clone());
-    let session = SessionRef {
-        gateway: GatewayId::new("local"),
-        profile: Profile::named("hud-spike"),
-        id: id.clone(),
-    };
+    let session = SessionRef::new(
+        GatewayId::new(Machine::This, Profile::Default),
+        Profile::named("hud-spike").unwrap(),
+        &id,
+    )
+    .unwrap();
     socket.send(&resume(&session, Scope::Host)).unwrap();
     until("the gateway stops reading", || {
         stalled.entered.load(Ordering::Acquire)
