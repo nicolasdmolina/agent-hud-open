@@ -1,0 +1,23 @@
+{
+ "scenario": "ticket-lifetime",
+ "description": "A ticket is single use and expires 30 s after minting. Reuse and late use are refused at the WebSocket upgrade. Also: wrong instance_id and an unserved profile at the control socket.",
+ "captured": {
+  "hermes_version": "0.22.5",
+  "code_sha": "9847fb8d5dd0",
+  "date": "2026-11-12",
+  "gateway": "isolated throwaway gateway (own HOME and HERMES_HOME), profile hud-spike, approvals.mode manual, approvals.timeout 20, agent.clarify_timeout 20, scripted loopback model",
+  "scrubbed": "home path and login name replaced, system prompts removed, tool and skill inventories and skin colour tables trimmed, strings over 1500 chars cut. Tickets never appear in frames; ticket fields in notes are masked."
+ },
+ "notes": {
+  "grant_fields": {"ticket": "<masked>", "expires_in_seconds": 30, "instance_id": "872abcc3ca924469bbddc60f7e29ce80", "profile_id": "/Users/USER/.hermes/profiles/hud-spike", "runtime_protocol": 1},
+  "first_use": {"opened": true, "subprotocol": "hermes-gateway-v1", "ping": ["gateway.ready", {"pong": true}]},
+  "second_use_same_ticket": {"opened": false, "error": "InvalidStatus", "detail": "server rejected WebSocket connection: HTTP 403"},
+  "use_after_31s": {"opened": false, "error": "InvalidStatus", "detail": "server rejected WebSocket connection: HTTP 403", "waited_s": 31.1},
+  "garbage_ticket": {"opened": false, "error": "InvalidStatus", "detail": "server rejected WebSocket connection: HTTP 403"},
+  "control_wrong_instance": {"ok": false, "error": "PermissionError: stale runtime instance", "protocol": 1, "id": 1},
+  "control_unserved_profile": {"ok": false, "error": "PermissionError: bootstrap binding rejected", "protocol": 1, "id": 1},
+  "control_unknown_verb": {"ok": false, "error": "unknown verb: 'no-such-verb'", "protocol": 1, "supported_verbs": ["active-work", "identify", "migrate-profile-identity", "pause-for-update", "purge-profile-identity", "reload-plugins", "rescan-profiles", "serve-profile", "status", "unserve-profile"], "id": 1},
+  "no_ticket": {"opened": false, "error": "InvalidStatus", "detail": "server rejected WebSocket connection: HTTP 403"}
+ },
+ "clients": {}
+}

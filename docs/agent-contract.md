@@ -186,7 +186,10 @@ engine code that decides by client name. It goes in five slices:
    - `antigravity::LOCAL_SERVICE`, its language server;
    - `deepseek::PLUGIN`, Agent HUD's Harness plugin and the folder it shares
      with the app (`platform/src/deepseek_plugin/`); Harness 0.1's web
-     question stream, `deepseek::QUESTIONS`, still runs beside it.
+     question stream, `deepseek::QUESTIONS`, still runs beside it;
+   - `hermes::GATEWAY`, Hermes's local gateway, the live connection its
+     desktop app uses. Its pure half (shapes, frames to cards, decisions to
+     frames, state) is `agents/src/hermes/gateway/`.
 
    Each says what it carries (requests, quota) and on which OS it runs.
    Platform keeps them in `platform/src/clients/<id>/`, starts each only where

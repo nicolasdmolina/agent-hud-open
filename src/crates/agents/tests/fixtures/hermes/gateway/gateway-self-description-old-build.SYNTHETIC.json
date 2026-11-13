@@ -1,0 +1,11 @@
+{
+ "scenario": "gateway-self-description-old-build",
+ "SYNTHETIC": "NOT captured. No older gateway was available on this Mac. Built from the checks Hermes's own client applies (hermes_cli/gateway_runtime.py:98-131). Each entry is an identify result and the verdict that code gives it.",
+ "cases": [
+  {"why": "build without the session runtime: identify has no runtime_protocol", "identify_result": {"protocol": 1, "kind": "hermes-gateway", "pid": 1234, "profile": "default", "hermes_home": "/Users/USER/.hermes", "supervisor": "launchd"}, "verdict": {"state": "incompatible", "reason_code": "runtime_protocol"}},
+  {"why": "runtime_protocol is not the integer 1", "identify_result": {"protocol": 1, "runtime_protocol": 2, "state": "ready", "served_profiles": [{"profile_id": "/Users/USER/.hermes", "home": "/Users/USER/.hermes"}], "capabilities": ["session-authority-v1"], "instance_id": "x", "authority_epoch": 1, "api_origin": "http://127.0.0.1:50000", "supervisor": "none"}, "verdict": {"state": "incompatible", "reason_code": "runtime_protocol"}},
+  {"why": "ready, but capabilities lacks session-authority-v1", "identify_result": {"protocol": 1, "runtime_protocol": 1, "state": "ready", "served_profiles": [{"profile_id": "/Users/USER/.hermes", "home": "/Users/USER/.hermes"}], "capabilities": ["durable-admission-v1"], "instance_id": "x", "authority_epoch": 1, "api_origin": "http://127.0.0.1:50000", "supervisor": "none"}, "verdict": {"state": "incompatible", "reason_code": "session_authority_unavailable"}},
+  {"why": "still starting: capabilities is empty until ready (captured shape, see the real fixture)", "identify_result": {"protocol": 1, "runtime_protocol": 1, "state": "starting", "capabilities": [], "served_profiles": [{"profile_id": "/Users/USER/.hermes", "home": "/Users/USER/.hermes"}]}, "verdict": {"state": "starting", "reason_code": null, "note": "retry, not incompatible"}},
+  {"why": "the profile's home is not in served_profiles", "identify_result": {"protocol": 1, "runtime_protocol": 1, "state": "ready", "served_profiles": []}, "verdict": {"state": "inaccessible", "reason_code": "profile_mismatch"}}
+ ]
+}
