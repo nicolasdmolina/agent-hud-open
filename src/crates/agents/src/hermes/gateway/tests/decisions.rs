@@ -267,7 +267,11 @@ fn a_set_of_questions_is_answered_by_a_result_frame_and_never_a_call() {
     );
     // Skipping every question leaves the set to the other viewers.
     assert_eq!(
-        sent(&batch, &json!({"kind": "answer", "answers": {}}), Scope::Profile),
+        sent(
+            &batch,
+            &json!({"kind": "answer", "answers": {}}),
+            Scope::Profile
+        ),
         Ok(None)
     );
     assert_eq!(
