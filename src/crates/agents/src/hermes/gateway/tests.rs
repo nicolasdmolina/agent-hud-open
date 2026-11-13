@@ -6,6 +6,7 @@ use super::*;
 use serde_json::Value;
 use std::path::PathBuf;
 
+mod boundaries;
 mod buttons;
 mod completeness;
 mod cost;
@@ -13,6 +14,7 @@ mod decisions;
 mod fake;
 mod handshake;
 mod live;
+mod machines;
 mod regressions;
 mod replay;
 mod scenarios;
@@ -34,12 +36,23 @@ fn fixture(name: &str) -> Value {
 }
 
 fn local() -> Gateway {
-    Gateway::new(GatewayId::new("local"))
+    Gateway::new(GatewayId::new(Machine::This, Profile::Default))
+}
+
+/// The Hermes root of the made-up far machines, as the fixtures write homes.
+const FAR_HOME: &str = "/Users/USER/.hermes";
+/// Two made-up install ids, as Hermes writes one: a UUID as hex.
+const INSTALL: &str = "0123456789abcdef0123456789abcdef";
+const OTHER_INSTALL: &str = "fedcba9876543210fedcba9876543210";
+
+/// A far machine, which only a verified identity makes.
+fn far(install_id: &str) -> Machine {
+    Machine::Far(machine_key(Some(install_id), FAR_HOME).expect("a made-up identity"))
 }
 
 /// The throwaway profile every scenario was recorded in.
 fn spike() -> Profile {
-    Profile::named("hud-spike")
+    Profile::named("hud-spike").unwrap()
 }
 
 /// The fixtures with no frames to replay, each read by its own test.

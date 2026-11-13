@@ -98,12 +98,9 @@ impl Gateway {
     pub fn waiting(&self) -> impl Iterator<Item = &Pending> {
         self.cards.values().map(|card| &card.pending)
     }
-    pub fn session(&self, profile: &Profile, id: &str) -> SessionRef {
-        SessionRef {
-            gateway: self.id.clone(),
-            profile: profile.clone(),
-            id: id.to_owned(),
-        }
+    /// None for an id that can be no session's.
+    pub fn session(&self, profile: &Profile, id: &str) -> Option<SessionRef> {
+        SessionRef::new(self.id.clone(), profile.clone(), id)
     }
     /// What a live session is doing: waiting while a request of its own
     /// shows here, else what the last poll listed. None for a session that

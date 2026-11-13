@@ -344,7 +344,7 @@ fn the_hooks_and_the_gateway_name_the_same_session() {
     let frames = fixture("session-ids-and-hooks");
     let raw = frames["notes"]["gateway_session_id"].as_str().unwrap();
     assert_eq!(frames["notes"]["state_db_row"]["id"], raw);
-    let named = local().session(&spike(), raw).hud_id();
+    let named = local().session(&spike(), raw).unwrap().hud_id();
     assert_eq!(named, format!("hermes:hud-spike:{raw}"));
     let mut seen = 0;
     for recorded in hooks["payloads"].as_array().unwrap() {
@@ -355,7 +355,9 @@ fn the_hooks_and_the_gateway_name_the_same_session() {
         });
         assert_eq!(Profile::of_home(home.as_deref().unwrap()), spike());
         // Whichever session a hook is about, the gateway's id for it names it the same.
-        let of = local().session(&spike(), payload["session_id"].as_str().unwrap());
+        let of = local()
+            .session(&spike(), payload["session_id"].as_str().unwrap())
+            .unwrap();
         let event = crate::parse_event("hermes", "--completion-hook", &payload, 0).unwrap();
         if let Some(event) = event {
             assert_eq!(event.session_id, of.hud_id());
@@ -365,9 +367,9 @@ fn the_hooks_and_the_gateway_name_the_same_session() {
     assert_eq!(seen, 8);
     // The default profile's sessions carry no profile, as its state.db reader names them.
     assert_eq!(
-        local().session(&Profile::Default, "abc").hud_id(),
+        local().session(&Profile::Default, "abc").unwrap().hud_id(),
         "hermes:abc"
     );
     assert_eq!(Profile::of_home("/Users/USER/.hermes"), Profile::Default);
-    assert_eq!(Profile::named("default"), Profile::Default);
+    assert_eq!(Profile::named("default").unwrap(), Profile::Default);
 }

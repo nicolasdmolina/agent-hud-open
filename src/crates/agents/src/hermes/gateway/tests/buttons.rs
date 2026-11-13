@@ -26,7 +26,7 @@ fn asked(name: &str) -> Pending {
             if event.kind == "approval.request" {
                 let (ask, wait_ms) = Ask::prompt(event.payload).unwrap();
                 return Pending {
-                    session: local().session(&spike(), event.session),
+                    session: local().session(&spike(), event.session).unwrap(),
                     ask,
                     wait_ms,
                 };

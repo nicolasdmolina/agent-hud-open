@@ -15,7 +15,7 @@ const S: &str = "local-full";
 /// that waits among them.
 fn full(bytes: usize) -> Hermes {
     let mut hermes = Hermes::default();
-    let profile = Profile::named("verify");
+    let profile = Profile::named("verify").unwrap();
     let filler = "x".repeat(bytes);
     for index in 0..512 {
         if index == 300 {
@@ -34,9 +34,11 @@ fn full(bytes: usize) -> Hermes {
 fn a_full_stream_is_folded_again_on_every_poll_within_budget() {
     // 512 events of 8 KiB are 4 MiB, which is all Hermes keeps of a stream.
     let mut hermes = full(8 * 1024);
-    let mut gateway = Gateway::new(GatewayId::new("local"));
+    let mut gateway = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     identified(&mut gateway, "one");
-    let at = gateway.session(&Profile::named("verify"), S);
+    let at = gateway
+        .session(&Profile::named("verify").unwrap(), S)
+        .unwrap();
     let cursor = Some(Cursor {
         epoch: "epoch-1".into(),
         seq: 0,
