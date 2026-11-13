@@ -8,8 +8,9 @@
 //! them is decided then, so none sounds on its own later.
 //!
 //! A waiting session whose row its transcript now gives, in place of one
-//! only its cards or hooks made, is the same wait: the transcript's
-//! sightings of cards that already sounded make none.
+//! only its cards or hooks made, is the same wait: each card that already
+//! sounded and still waits stands for one new transcript sighting of its own
+//! kind, which makes no sound. A sighting no such card can stand for sounds.
 use super::*;
 
 mod requests;
@@ -126,18 +127,22 @@ impl Tracker {
             // A row its transcript now gives, in place of one only its cards
             // or hooks made, shows what those cards already told: the
             // transcript's sightings of them, which it may not pair with
-            // them one to one. While a card told before still waits, they
-            // are decided without a sound.
-            let handover = transcript
-                && previous.as_ref().is_some_and(|p| {
-                    !p.transcript
-                        && p.requests.iter().any(|told| {
-                            !told.names[0].starts_with("log:")
-                                && now_requests
-                                    .iter()
-                                    .any(|r| r.names.contains(&told.names[0]))
-                        })
-                });
+            // them one to one. Each card told before that still waits can
+            // stand for one new sighting of its own kind (`absorbs`); a
+            // sighting none can stand for is a request of its own.
+            let mut absorbs: HashMap<&str, usize> = HashMap::new();
+            if let Some(p) = previous.as_ref().filter(|p| transcript && !p.transcript) {
+                for heard in &p.requests {
+                    let card = !heard.names[0].starts_with("log:");
+                    if card
+                        && now_requests
+                            .iter()
+                            .any(|r| r.names.contains(&heard.names[0]))
+                    {
+                        *absorbs.entry(heard.kind.as_str()).or_default() += 1;
+                    }
+                }
+            }
             let mut told = None;
             for request in &now_requests {
                 let names: Vec<String> = request
@@ -145,6 +150,18 @@ impl Tracker {
                     .iter()
                     .map(|name| format!("needs-you:{source}:{id}:{name}"))
                     .collect();
+                // A new sighting a card told before stands for is decided
+                // without a sound; one none can stand for sounds.
+                let undecided = names.iter().all(|name| !self.decided.contains_key(name));
+                if request.names[0].starts_with("log:") && undecided {
+                    if let Some(left) = absorbs.get_mut(request.kind.as_str()).filter(|n| **n > 0) {
+                        *left -= 1;
+                        for name in &names {
+                            self.first(name, now);
+                        }
+                        continue;
+                    }
+                }
                 // New only if it goes by no name decided before; all its
                 // names are decided now.
                 let mut new = true;
@@ -153,11 +170,7 @@ impl Tracker {
                 }
                 // A wait already told without a card is the same wait once
                 // its card comes. The look's first new request names the alert.
-                let sighting = request.names[0].starts_with("log:");
-                if new
-                    && !(handover && sighting)
-                    && !previous.as_ref().is_some_and(|p| p.requests.is_empty())
-                {
+                if new && !previous.as_ref().is_some_and(|p| p.requests.is_empty()) {
                     told.get_or_insert(names[0].clone());
                 }
             }

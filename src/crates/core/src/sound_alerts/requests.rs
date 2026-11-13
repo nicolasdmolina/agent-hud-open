@@ -18,6 +18,8 @@ pub(crate) struct Heard<'a> {
 }
 pub(super) struct Request {
     pub names: Vec<String>,
+    /// Its kind ("permission", "question", "plan"), as the row names it.
+    pub kind: String,
 }
 struct Row<'a> {
     kind: &'a Value,
@@ -87,6 +89,9 @@ pub(super) fn requests(session: &Value, source: &str, id: &str, heard: &Heard) -
     cards
         .into_iter()
         .chain(sightings)
-        .map(|r| Request { names: r.names })
+        .map(|r| Request {
+            names: r.names,
+            kind: r.kind.as_str().unwrap_or("").to_owned(),
+        })
         .collect()
 }
