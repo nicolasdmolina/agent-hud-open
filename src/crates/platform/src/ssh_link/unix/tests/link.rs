@@ -338,7 +338,7 @@ fn a_lab_master_is_pointed_at_the_labs_own_files_whatever_the_host() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
     let own = lab.at("").display().to_string().to_lowercase();
-    for host in ["lab", "other", "silent", "anything.example"] {
+    for host in ["lab", "other", "silent", "anything.example", "::1"] {
         let target = Target::new(host, None, None, None).unwrap();
         let settings = Command::new(PROGRAM)
             .arg("-G")
@@ -362,6 +362,10 @@ fn a_lab_master_is_pointed_at_the_labs_own_files_whatever_the_host() {
         assert_eq!(named("globalknownhostsfile"), ["/dev/null"], "{host}");
         assert_eq!(named("identityagent"), ["none"], "{host}");
         assert_eq!(named("identitiesonly"), ["yes"], "{host}");
+        // After `--` the destination is the host, colons and all.
+        if !["lab", "other"].contains(&host) {
+            assert_eq!(named("hostname"), [host]);
+        }
     }
     assert_eq!(entries(folder.path()), Vec::<String>::new());
 }

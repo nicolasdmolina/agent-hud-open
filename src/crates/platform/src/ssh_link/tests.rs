@@ -11,6 +11,8 @@ fn a_target_is_made_only_from_plain_parts() {
         ("mini.local", Some("nicky"), Some(22)),
         ("10.0.0.5", Some("a.b-c_d"), Some(65535)),
         ("my-host_2", None, Some(1)),
+        ("::1", None, None),
+        ("fe80::1", Some("nicky"), Some(2222)),
     ] {
         let target = Target::new(host, user, port, Some(&key)).expect(host);
         assert_eq!(target.port(), port);
@@ -37,7 +39,6 @@ fn a_target_is_made_only_from_plain_parts() {
         "a/b",
         "a=b",
         "a@b",
-        "a:22",
         "a,b",
         "a*",
         "ünï",
@@ -53,8 +54,18 @@ fn a_target_is_made_only_from_plain_parts() {
             "user {host:?}"
         );
     }
+    // A colon is a host's alone, and a name is at most 255 long.
     assert_eq!(
-        Target::new(&"h".repeat(254), None, None, None),
+        Target::new("mini", Some("a:b"), None, None),
+        Err(Refused::Address)
+    );
+    assert!(Target::new(&"h".repeat(255), Some(&"u".repeat(255)), None, None).is_ok());
+    assert_eq!(
+        Target::new(&"h".repeat(256), None, None, None),
+        Err(Refused::Address)
+    );
+    assert_eq!(
+        Target::new("mini", Some(&"u".repeat(256)), None, None),
         Err(Refused::Address)
     );
     assert_eq!(

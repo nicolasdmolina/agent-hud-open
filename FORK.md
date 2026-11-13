@@ -154,7 +154,7 @@ To check against a real gateway, never use a Hermes home in use. Make a throwawa
 | File | Holds |
 | --- | --- |
 | `ssh_link.rs` | The interface and its words: `Settings`, `Failure` (`Refused` or `Lost`, each with its reason), `FarCommand`, `Ran`, `End`, `Forward`, `Closed`, `Swept`, and `quote`, the one function that quotes for a far shell. |
-| `target.rs` | `Target`: host, user, port and key path, made only by `Target::new`, which refuses a host or user outside letters, digits, `.`, `-` and `_`, or with a dash in front. An IPv6 address is refused too. |
+| `target.rs` | `Target`: host, user, port and key path, made only by `Target::new`, which refuses a host or user outside letters, digits, `.`, `-` and `_`, or with a dash in front, or longer than 255. A host may hold `:` as well, as an IPv6 address does. These are the list reader's rules (`agents/src/hermes/connections/address.rs`), held by the link too. A key path that starts with a dash or holds a control character is refused, which the reader does not check. |
 | `unix/args.rs` | Every argument list. The master's holds the design's options and nine more, seven of them for the same reason (each has its reason in the file). |
 | `unix/mod.rs` | `Link`: `open`, `run`, `forward`, `cancel`, `alive`, `close`. A dropped link closes itself. |
 | `unix/folder.rs`, `unix/sweep.rs` | `Folder`: the control folder, and `sweep`, the start-up cleanup. |
