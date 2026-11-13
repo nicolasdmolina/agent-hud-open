@@ -32,6 +32,8 @@ mod stalled;
 mod verifier;
 #[path = "tests/verifier2.rs"]
 mod verifier2;
+#[path = "tests/verifier3.rs"]
+mod verifier3;
 
 /// The pace of the tests: everything the app waits seconds for, in
 /// hundredths of them.

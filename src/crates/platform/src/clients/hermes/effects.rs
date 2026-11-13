@@ -42,9 +42,7 @@ impl Shared {
                     // An answer to it that is being written is cut.
                     model.cut_writing(|request| request == Some(id.as_str()));
                     self.requests.settle_native(&id);
-                    if let Some(batch) = model.answered.remove(&id) {
-                        self.receipt(&id, &session.hud_id(), &why, batch, now);
-                    }
+                    self.closed(model, &id, &session.hud_id(), &why, now);
                 }
                 Effect::Unanswered { pending, why } => {
                     let id = pending.id();
@@ -98,7 +96,7 @@ impl Shared {
     }
 
     /// What became of an answer given here, once its card closed.
-    fn receipt(&self, id: &str, session: &str, why: &Closed, batch: bool, now: i64) {
+    pub(super) fn receipt(&self, id: &str, session: &str, why: &Closed, batch: bool, now: i64) {
         match why {
             Closed::Answered => self.note(id, session, "confirmed", None, now),
             // Someone answered first, or the turn was over.
@@ -114,7 +112,14 @@ impl Shared {
         }
     }
 
-    fn note(&self, id: &str, session: &str, state: &str, reason: Option<String>, now: i64) {
+    pub(super) fn note(
+        &self,
+        id: &str,
+        session: &str,
+        state: &str,
+        reason: Option<String>,
+        now: i64,
+    ) {
         self.requests
             .note_native_delivery(id, AGENT.id, session, state, reason, now);
     }
@@ -187,7 +192,7 @@ fn unconfirmed() -> String {
     )
 }
 
-fn too_late() -> String {
+pub(super) fn too_late() -> String {
     l10n::text(
         "Hermes 已不再等待这个回答",
         "Hermes was no longer waiting for this answer.",

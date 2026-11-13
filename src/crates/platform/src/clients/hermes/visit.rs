@@ -14,7 +14,8 @@
 //! a short time. Stopping the observer, or closing the card, cuts the
 //! socket of every visit it finds writing, before it returns. So either
 //! the check fails and nothing is written, or the write is cut and its
-//! frame never completes: no answer leaves afterwards.
+//! frame never completes: no answer is written afterwards. A frame that was
+//! fully queued before then was sent in time; the gateway may still read it.
 //!
 //! A subscribed socket hears the session's events. Each one that hints at
 //! a change asks for a poll, as on the socket the polls run on; what waits
@@ -193,6 +194,17 @@ impl<'a> Visit<'a> {
         &mut self,
         write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
     ) -> Option<T> {
+        self.write_marked(|_| {}, write)
+    }
+
+    /// The same, with `marked` run under the lock in the very step that
+    /// marks the visit as writing: what the model has to know of the write
+    /// before anything can end what it is for.
+    pub(super) fn write_marked<T>(
+        &mut self,
+        marked: impl FnOnce(&mut Model),
+        write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
+    ) -> Option<T> {
         {
             let mut model = self.shared.model();
             if !self.wanted(&model) {
@@ -201,6 +213,7 @@ impl<'a> Visit<'a> {
             if let Some(held) = model.visits.get_mut(&self.key) {
                 held.writing = true;
             }
+            marked(&mut model);
         }
         let done = write(&mut self.socket);
         if let Some(held) = self.shared.model().visits.get_mut(&self.key) {

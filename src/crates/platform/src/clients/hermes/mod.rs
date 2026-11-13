@@ -10,7 +10,7 @@
 //! It reads Hermes and never writes under a Hermes home. It takes no part
 //! in collection: it never holds the collection gate, and every wait on
 //! the gateway, writes included, happens with nothing locked. An answer
-//! never leaves once the observer stopped or its card closed: a write is
+//! is never written once the observer stopped or its card closed: a write is
 //! checked and marked under the model's lock, and stopping or closing cuts
 //! the socket of a write that is under way (`visit.rs`).
 use crate::hooks::Wake;
@@ -35,6 +35,7 @@ mod control;
 mod effects;
 mod link;
 mod log;
+mod out;
 mod pace;
 mod polls;
 mod socket;
@@ -73,9 +74,9 @@ pub(super) struct Model {
     waiters: HashMap<String, Waiter>,
     /// When each card first opened, which its view keeps.
     opened: HashMap<String, i64>,
-    /// The cards answered here whose answer Hermes has yet to settle, and
-    /// whether each is a set of questions.
-    answered: HashMap<String, bool>,
+    /// The answers given here that are out, or on their way out, and whose
+    /// receipt is still to give (`answer.rs`).
+    answered: HashMap<String, out::Out>,
     /// Every short socket that is open now (`visit.rs`), so that stopping,
     /// or closing a card, can cut the ones that are writing.
     visits: HashMap<u64, visit::Held>,

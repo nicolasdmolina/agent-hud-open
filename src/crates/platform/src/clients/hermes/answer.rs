@@ -5,12 +5,15 @@
 //! answer was written and then what Hermes replied; it closes the card or
 //! brings it back.
 use super::{
+    effects::too_late,
+    out::Out,
     socket::{result, Reply as Came, Socket},
     visit::Visit,
-    Shared,
+    Model, Shared,
 };
 use agent_hud_agents::hermes::gateway::{
-    refusal, Ask, Command, Failure, Input, Pending, Refusal, Reply, Scope,
+    answered, refusal, Answered, Ask, Closed, Command, Failure, Input, Pending, Refusal, Reply,
+    Scope,
 };
 use agent_hud_core::l10n;
 use serde_json::{json, Value};
@@ -103,10 +106,7 @@ fn deliver(shared: &Shared, pending: Pending, decision: &Value) {
         Reply::Call(command) => going.asked(&mut visit, &command, wait).map(Some),
     };
     match told {
-        Some(Some(told)) => shared.apply(Input::Responded {
-            request: &id,
-            reply: &told,
-        }),
+        Some(Some(told)) => going.replied(&told),
         Some(None) => {}
         // Nothing was written. A card that closed, or an observer that
         // stopped, is left alone; a card that still shows comes back.
@@ -124,27 +124,89 @@ struct Going<'a> {
 impl Going<'_> {
     /// Writes one frame of the answer, if the answer may still go: the
     /// observer runs, the request still has its card, the gateway is still
-    /// the instance that asked (`Visit::write`, which checks under the
-    /// model's lock and writes outside it; a stop, or the card closing,
-    /// cuts the socket of a write under way). Then the model hears the
-    /// answer was written, and the card is remembered as answered here for
-    /// its receipt. None where it was not written, or not all of it.
+    /// the instance that asked (`Visit::write_marked`, which checks under
+    /// the model's lock and writes outside it; a stop, or the card closing,
+    /// cuts the socket of a write under way). The answer is filed as on its
+    /// way in that same locked step. Once the frame is out the model hears
+    /// it was written; a frame that did not get out is forgotten. None
+    /// where it was not written, or not all of it.
     fn written<T>(
         &self,
         visit: &mut Visit,
         write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
     ) -> Option<T> {
-        let done = visit.write(write)?;
         let id = self.pending.id();
+        let batch = matches!(self.pending.ask, Ask::Batch(_));
+        let file = |model: &mut Model| {
+            let out = Out {
+                batch,
+                written: false,
+                closed: None,
+            };
+            model.answered.insert(id.clone(), out);
+        };
+        let done = visit.write_marked(file, write);
         let mut model = self.shared.model();
-        // A card that closed while the frame went out has nothing to hear.
-        if !model.stopped && model.gateway.pending(&id).is_some() {
-            self.shared.log.line(&format!("answer sent id={id}"));
-            let batch = matches!(self.pending.ask, Ask::Batch(_));
-            model.answered.insert(id.clone(), batch);
-            self.shared.take(&mut model, Input::Sent { request: &id });
+        let Some(done) = done else {
+            // Not checked through, cut, or out of time: no answer left.
+            if model.answered.get(&id).is_some_and(|out| !out.written) {
+                model.answered.remove(&id);
+            }
+            return None;
+        };
+        let now = crate::hooks::now_ms();
+        let session = self.pending.session.hud_id();
+        match model.answered.remove(&id) {
+            // The card closed while the frame went out. For a set of
+            // questions that is the whole receipt; a question or an
+            // approval still has Hermes's reply to come.
+            Some(out) if out.closed.is_some() && out.batch => {
+                let why = out.closed.unwrap_or(Closed::Gone);
+                self.shared.receipt(&id, &session, &why, true, now);
+            }
+            Some(mut out) => {
+                out.written = true;
+                let open = out.closed.is_none();
+                model.answered.insert(id.clone(), out);
+                if open && !model.stopped && model.gateway.pending(&id).is_some() {
+                    self.shared.log.line(&format!("answer sent id={id}"));
+                    self.shared.take(&mut model, Input::Sent { request: &id });
+                }
+            }
+            None => {}
         }
         Some(done)
+    }
+
+    /// Hermes replied to the answer, or did not in time. Where a poll
+    /// closed the card before the reply came, the reply is all that says
+    /// what became of the answer, and gives its receipt; else the model
+    /// hears it.
+    fn replied(&self, told: &Value) {
+        let id = self.pending.id();
+        {
+            let mut model = self.shared.model();
+            if model
+                .answered
+                .get(&id)
+                .is_some_and(|out| out.closed.is_some())
+            {
+                model.answered.remove(&id);
+                let (session, now) = (self.pending.session.hud_id(), crate::hooks::now_ms());
+                match answered(told) {
+                    Answered::Resolved => self.shared.note(&id, &session, "confirmed", None, now),
+                    Answered::AlreadyResolved | Answered::Refused(Refusal::StaleGeneration) => self
+                        .shared
+                        .note(&id, &session, "failed", Some(too_late()), now),
+                    Answered::Refused(_) => {}
+                }
+                return;
+            }
+        }
+        self.shared.apply(Input::Responded {
+            request: &id,
+            reply: told,
+        });
     }
 
     /// Sends the answer and returns the reply frame; where none came, a
@@ -180,4 +242,15 @@ fn unreachable() -> String {
         "无法连接 Hermes 来送出这个回答",
         "Hermes could not be reached to send the answer.",
     )
+}
+
+// Test-only entry to the unchanged production Going::written path.
+#[cfg(test)]
+pub(super) fn verifier3_written<T>(
+    shared: &Shared,
+    pending: &Pending,
+    visit: &mut Visit,
+    write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
+) -> Option<T> {
+    Going { shared, pending }.written(visit, write)
 }

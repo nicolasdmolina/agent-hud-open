@@ -149,3 +149,38 @@ fn an_answer_still_goes_when_nothing_changed_while_it_was_on_its_way() {
     });
     assert_eq!(gateway.world().calls("clarify.respond").len(), 1);
 }
+
+#[test]
+fn an_answer_keeps_its_receipt_when_a_poll_closes_the_card_before_hermes_replies() {
+    // Hermes takes the answer and settles the request, and its reply is
+    // slow: the poll sees the request settled and closes the card first.
+    // The reply, when it comes, is all that says what became of the answer.
+    for (reply, state) in [(None, "confirmed"), (Some("already_resolved"), "failed")] {
+        let mut lab = lab();
+        let gateway = Fake::start(&lab.home, "instance-1");
+        gateway.world().answers_with = reply;
+        lab.follow();
+        lab.hears(&gateway, "question-answered-here", "clarify.request");
+        let id = lab.card()["id"].as_str().unwrap().to_owned();
+        let held = hold(&gateway, "clarify.respond");
+        let decision =
+            json!({"kind": "answer", "answers": {"715a2db63d": {"selected": ["green"]}}});
+        lab.requests
+            .answer(&id, &decision, crate::hooks::now_ms())
+            .unwrap();
+        until("Hermes holds its reply", || {
+            held.entered.load(Ordering::Acquire)
+        });
+        until("a poll closes the card", || {
+            lab.log().contains("why=Settled")
+        });
+        assert!(lab.requests.deliveries(crate::hooks::now_ms()).is_empty());
+        held.released.store(true, Ordering::Release);
+        assert_eq!(lab.delivery(&id)["state"], state, "{reply:?}");
+        // The card stays closed, and nothing is said twice.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(lab.cards().is_empty());
+        assert_eq!(lab.requests.deliveries(crate::hooks::now_ms()).len(), 1);
+        assert!(!lab.log().contains("unanswered id="), "{}", lab.log());
+    }
+}
