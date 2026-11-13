@@ -1,4 +1,5 @@
 //! Hermes SQLite session reader (`state.db`).
+use super::session_counts::{self, SessionCounts};
 use crate::transcript::{sql_column, sql_columns, sql_count, sql_model, sql_text, sql_time};
 use crate::{
     transcript::records::{Page, Record, Running},
@@ -38,24 +39,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
     } else {
         "NULL"
     };
-    // A session's counts as they are now, each on its own, to find one that
-    // grew without its activity passing the watermark: a write stamped
-    // earlier than another session's activity already read. Counts only
-    // grow (`running_totals`), so growth always changes one of them; rows
-    // that shrink while others grow by as much are outside that contract.
-    let print = format!(
-        "{}||'/'||{}",
-        tokens(&s, "s", "COALESCE({},0)"),
-        if u.contains("session_id") {
-            format!(
-                "(SELECT COUNT(*)||'/'||{}||'/'||IFNULL(MAX({}),'') FROM session_model_usage u WHERE u.session_id=s.id)",
-                tokens(&u, "u", "TOTAL({})"),
-                sql_column(&u, "u", "last_seen", "NULL"),
-            )
-        } else {
-            "''".into()
-        }
-    );
+    let print = session_counts::sql(&s, &u);
     let scan = cursor["scan"]
         .as_i64()
         .or_else(|| cursor.as_i64())
@@ -64,10 +48,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
     let ts_after = cursor["ts_after"].as_i64().unwrap_or(0);
     let mut max_rowid = cursor["max_rowid"].as_i64().unwrap_or(rowid_after);
     let mut max_ts = cursor["max_ts"].as_i64().unwrap_or(ts_after);
-    // One map of every session's counts, by rowid, carried from page to
-    // page and updated in place.
-    let mut prints = cursor["prints"].as_object().cloned().unwrap_or_default();
-    let mut visited = std::collections::HashSet::new();
+    let mut prints = SessionCounts::from_cursor(cursor);
     let mut statement = db.prepare(&format!(
         "SELECT s.rowid,s.id,s.started_at,{},{last_seen},{print} FROM sessions s WHERE s.rowid>?1 ORDER BY s.rowid LIMIT 100",
         fields.join(",")
@@ -101,9 +82,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
             .max()
             .unwrap_or(started);
         max_ts = max_ts.max(updated);
-        let print = Value::from(fnv(&sql_text(row, 18).unwrap_or_default()));
-        let grew = prints.insert(last.to_string(), print.clone()) != Some(print);
-        visited.insert(last);
+        let grew = prints.changed(last, &sql_text(row, 18).unwrap_or_default());
         if last <= rowid_after && updated <= ts_after && !grew {
             continue;
         }
@@ -233,14 +212,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
             record.updated = Some(updated);
         }
     }
-    // Sessions gone from the rows this page passed over, or past the last
-    // row once the pass ends, leave the map.
-    prints.retain(|rowid, _| {
-        rowid.parse::<i64>().is_ok_and(|rowid| {
-            visited.contains(&rowid) || rowid <= scan || (seen == 100 && rowid > last)
-        })
-    });
-    let prints = Value::Object(prints);
+    let prints = prints.finish(scan, last, seen < 100);
     Ok(Page {
         records,
         watermark: if seen < 100 {
@@ -269,27 +241,6 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
             })
         }),
     })
-}
-
-/// FNV-1a: a stable 64-bit digest of a session's counts, so the map stays
-/// small while every count still takes part.
-fn fnv(text: &str) -> u64 {
-    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
-    })
-}
-
-/// A table's four token counts, each in `wrap` (`{}` is the column) where
-/// the table has it, joined into one text.
-fn tokens(columns: &std::collections::HashSet<String>, alias: &str, wrap: &str) -> String {
-    [
-        "input_tokens",
-        "output_tokens",
-        "cache_read_tokens",
-        "cache_write_tokens",
-    ]
-    .map(|key| wrap.replace("{}", &sql_column(columns, alias, key, "0")))
-    .join("||'/'||")
 }
 
 /// A Hermes model with the route its billing provider and address name
