@@ -10,6 +10,7 @@ use std::{
 
 mod answer;
 mod deliveries;
+mod native;
 #[cfg(test)]
 mod tests;
 mod views;
@@ -32,11 +33,10 @@ struct State {
     dismissed: HashSet<String>,
     reviewers: HashMap<(String, String, String), Reviewer>,
     deliveries: VecDeque<Value>,
-    native_waiting: HashMap<String, HashSet<String>>,
-    /// What a native channel says each live session it names is doing.
-    native_states: HashMap<String, NativeStates>,
+    /// What each native channel's readers say of their sessions.
+    native: native::Readers,
 }
-pub use views::{NativeStates, LIVE_STATES_MS};
+pub use native::{NativeReadings, NativeStates, LIVE_STATES_MS};
 struct Reviewer {
     value: Option<String>,
     at: i64,
@@ -75,8 +75,7 @@ impl Default for Requests {
                 dismissed: HashSet::new(),
                 reviewers: HashMap::new(),
                 deliveries: VecDeque::new(),
-                native_waiting: HashMap::new(),
-                native_states: HashMap::new(),
+                native: native::Readers::default(),
             }),
             wake: Mutex::new(None),
         }))
@@ -217,10 +216,8 @@ impl Requests {
                     index += 1;
                 }
             }
-            // A channel's reading of its sessions is believed for so long.
-            let told = state.native_states.len();
-            state.native_states.retain(|_, states| states.fresh(now_ms));
-            let lapsed = state.native_states.len() != told;
+            // A reader's reading of its sessions is believed for so long.
+            let lapsed = state.native.lapse(now_ms);
             if !expired.is_empty() || lapsed {
                 state.revision = state.revision.wrapping_add(1);
             }
@@ -236,14 +233,11 @@ impl Requests {
     pub fn clear(&self) {
         let (pending, changed) = {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-            let changed = !state.pending.is_empty()
-                || !state.native_waiting.is_empty()
-                || !state.native_states.is_empty();
+            let changed = !state.pending.is_empty() || !state.native.is_empty();
             if changed {
                 state.revision = state.revision.wrapping_add(1);
             }
-            state.native_waiting.clear();
-            state.native_states.clear();
+            state.native.clear();
             state.dismissed.clear();
             (std::mem::take(&mut state.pending), changed)
         };

@@ -17,6 +17,7 @@ pub(crate) use daemon::daemon_tui_port_for as daemon_tui_port;
 use super::desktop_io::{endpoint, DesktopIpc, IpcError, ShutdownHandle};
 use crate::hooks::Wake;
 use agent_hud_agents::codex::AGENT;
+use agent_hud_agents::SOLE_READER;
 use agent_hud_core::requests::{Requests, Ticket};
 use pending::Pending;
 use serde_json::Value;
@@ -230,7 +231,7 @@ impl Shared {
         // Keep this complete-list replacement ordered with disconnect/stop. The
         // Requests owner changes phase only; this creates no actionable request.
         self.requests
-            .set_native_waiting(AGENT.id, &sessions, crate::hooks::now_ms());
+            .set_native_waiting(AGENT.id, SOLE_READER, &sessions, crate::hooks::now_ms());
     }
 }
 
