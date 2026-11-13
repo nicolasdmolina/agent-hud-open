@@ -189,7 +189,9 @@ fn verifier_permission_retry_must_stop_if_card_settled_during_resume() {
 #[test]
 fn verifier_hint_on_short_socket_must_request_poll() {
     use super::super::{control, log, visit::Visit, Model, Shared};
-    use agent_hud_agents::hermes::gateway::{identify_line, Connection, Gateway, GatewayId, Input};
+    use agent_hud_agents::hermes::gateway::{
+        identify_line, Connection, Gateway, GatewayId, Input, Machine, Profile,
+    };
     use std::{
         collections::HashMap,
         sync::{atomic::AtomicBool, Condvar, Mutex},
@@ -198,7 +200,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
     let gateway = Fake::start(&lab.home, "instance-1");
     let session_id = gateway.play("question-answered-elsewhere", Some("clarify.request"));
     gateway.world().hint_on_resume = true;
-    let mut model = Gateway::new(GatewayId::new("local"));
+    let mut model = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     let identified = control::ask(&lab.home, &identify_line(), Duration::from_secs(2)).unwrap();
     model.apply(
         Input::Identified {

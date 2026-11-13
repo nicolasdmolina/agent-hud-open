@@ -12,7 +12,7 @@ fn work() -> Profile {
 }
 
 fn start() -> (Gateway, Hermes) {
-    let mut gateway = Gateway::new(GatewayId::new("local"));
+    let mut gateway = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     identified(&mut gateway, "one");
     (gateway, Hermes::default())
 }
@@ -567,8 +567,10 @@ fn a_session_that_left_the_live_list_is_over_with_its_requests() {
 #[test]
 fn the_same_ids_on_two_gateways_or_profiles_are_different_requests() {
     let mut ids = std::collections::BTreeSet::new();
-    for name in ["macbook", "mini"] {
-        let mut gateway = Gateway::new(GatewayId::new(name));
+    let macbook = GatewayId::new(Machine::This, Profile::Default);
+    let mini = GatewayId::new(super::far(super::INSTALL), Profile::Default);
+    for id in [macbook, mini] {
+        let mut gateway = Gateway::new(id.clone());
         identified(&mut gateway, "one");
         let mut hermes = Hermes::default();
         for profile in [Profile::Default, work()] {
@@ -578,16 +580,16 @@ fn the_same_ids_on_two_gateways_or_profiles_are_different_requests() {
             let Effect::Open(pending) = effect else {
                 panic!("two cards");
             };
-            assert_eq!(pending.session.gateway.as_str(), name);
+            assert_eq!(pending.session.gateway, id);
             ids.insert(pending.id());
         }
         assert_eq!(gateway.waiting().count(), 2);
     }
     let expected = [
-        "hermes:macbook:default:local-aaaa:p1",
-        "hermes:macbook:verify:local-aaaa:p1",
-        "hermes:mini:default:local-aaaa:p1",
-        "hermes:mini:verify:local-aaaa:p1",
+        "hermes:aaeda597d860920c/default:default:local-aaaa:p1",
+        "hermes:aaeda597d860920c/default:verify:local-aaaa:p1",
+        "hermes:local:default:local-aaaa:p1",
+        "hermes:local:verify:local-aaaa:p1",
     ];
     assert_eq!(ids.iter().map(String::as_str).collect::<Vec<_>>(), expected);
 }

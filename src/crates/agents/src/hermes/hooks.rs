@@ -19,7 +19,8 @@
 //! Hermes asks the person once for each `(event, command)` pair it has not
 //! seen before it runs it, so these five hooks are asked about the next time
 //! `hermes chat` starts. Its gateway never asks: it runs them once approved.
-use super::settings;
+use super::gateway::{hud_session_id, Machine, Profile};
+use super::{settings, AGENT};
 use crate::hooks::{
     Began, Begin, Completed, Completion, Hooks, Layout, Text, ENVIRONMENT, POSIX_ONLY,
 };
@@ -69,15 +70,19 @@ pub static HOOKS: Hooks = Hooks {
 /// The session a payload names, as Agent HUD's Hermes reader names it from
 /// `state.db`: a profile's sessions carry the profile in front
 /// (`<profile>:<id>`). Approval events carry no session id; in the CLI their
-/// session key is the session's id.
+/// session key is the session's id. A hook runs on this machine.
 fn session(payload: &Value) -> Option<String> {
     let id = text(&payload["session_id"])
         .or_else(|| text(&payload["extra"]["session_key"]))
         .filter(|id| *id != "default")?;
-    Some(match profile(payload) {
-        Some(profile) => format!("{profile}:{id}"),
-        None => id.to_owned(),
-    })
+    let profile = match profile(payload) {
+        Some(profile) => Profile::Named(profile.to_owned()),
+        None => Profile::Default,
+    };
+    let whole = hud_session_id(&Machine::This, &profile, id);
+    // Whoever reads this writes the agent in front (`prefixed_sessions`).
+    let named = whole.strip_prefix(AGENT.id)?.strip_prefix(':')?;
+    Some(named.to_owned())
 }
 
 /// The named profile that fired a hook: the one the payload names (newer

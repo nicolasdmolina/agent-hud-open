@@ -34,7 +34,7 @@ fn full(bytes: usize) -> Hermes {
 fn a_full_stream_is_folded_again_on_every_poll_within_budget() {
     // 512 events of 8 KiB are 4 MiB, which is all Hermes keeps of a stream.
     let mut hermes = full(8 * 1024);
-    let mut gateway = Gateway::new(GatewayId::new("local"));
+    let mut gateway = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     identified(&mut gateway, "one");
     let at = gateway.session(&Profile::named("verify"), S);
     let cursor = Some(Cursor {

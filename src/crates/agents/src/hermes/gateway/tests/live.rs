@@ -11,7 +11,7 @@ fn verify() -> Profile {
 }
 
 fn start() -> (Gateway, Hermes) {
-    let mut gateway = Gateway::new(GatewayId::new("local"));
+    let mut gateway = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     identified(&mut gateway, "one");
     (gateway, Hermes::default())
 }
@@ -78,7 +78,7 @@ fn a_waiting_session_stays_waiting_however_long_it_waits() {
 
 #[test]
 fn nothing_is_told_but_what_a_poll_read_since_the_gateway_was_last_ready() {
-    let mut g = Gateway::new(GatewayId::new("local"));
+    let mut g = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     let mut h = Hermes::default();
     lists(&mut h, &Profile::Default, "local-long", "working");
     let running = [("hermes:local-long".to_owned(), Running)];

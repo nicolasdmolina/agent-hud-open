@@ -17,7 +17,7 @@ fn work() -> Profile {
 }
 
 fn start() -> (Gateway, Hermes) {
-    let mut gateway = Gateway::new(GatewayId::new("local"));
+    let mut gateway = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     identified(&mut gateway, "one");
     (gateway, Hermes::default())
 }

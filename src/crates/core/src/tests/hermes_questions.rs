@@ -6,7 +6,7 @@
 //! recorded ones in the agents crate's gateway fixtures.
 use super::*;
 use agent_hud_agents::hermes::gateway::{
-    frame, Ask, Frame, Gateway, GatewayId, Pending, Profile, Reply, Scope,
+    frame, Ask, Frame, Gateway, GatewayId, Machine, Pending, Profile, Reply, Scope,
 };
 
 fn recorded(name: &str) -> Value {
@@ -19,7 +19,7 @@ fn recorded(name: &str) -> Value {
 /// The first question (or set of questions) the recording `name` asks, as
 /// the gateway model holds it, in the throwaway profile it was recorded in.
 fn asked(name: &str) -> Pending {
-    let gateway = Gateway::new(GatewayId::new("local"));
+    let gateway = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     let profile = Profile::named("hud-spike");
     let doc = recorded(name);
     for entry in doc["clients"]["hud"].as_array().unwrap() {
