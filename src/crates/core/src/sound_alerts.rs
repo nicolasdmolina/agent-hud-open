@@ -135,9 +135,10 @@ impl Tracker {
                     .collect();
                 // New only if it goes by no name decided before; all its
                 // names are decided now.
-                let new = names
-                    .iter()
-                    .fold(true, |new, name| self.first(name, now) && new);
+                let mut new = true;
+                for name in &names {
+                    new &= self.first(name, now);
+                }
                 // A wait already told without a card is the same wait once
                 // its card comes. The look's first new request names the alert.
                 if new && !previous.as_ref().is_some_and(|p| p.requests.is_empty()) {

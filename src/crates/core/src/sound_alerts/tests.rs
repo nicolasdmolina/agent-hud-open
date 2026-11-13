@@ -490,7 +490,13 @@ fn a_new_question_card_soon_after_an_answered_sighting_sounds() {
         iso(T + 5_000).as_str().unwrap(),
     );
     assert_eq!(
-        look(&mut tracker, &no_events(), &[b.clone()], &on(), T + 5_001),
+        look(
+            &mut tracker,
+            &no_events(),
+            std::slice::from_ref(&b),
+            &on(),
+            T + 5_001
+        ),
         [needs_you("s1")]
     );
     assert!(look(&mut tracker, &no_events(), &[b], &on(), T + 6_000).is_empty());
