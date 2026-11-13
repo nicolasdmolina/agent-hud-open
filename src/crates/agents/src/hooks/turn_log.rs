@@ -147,6 +147,7 @@ fn record(v: &Value) -> Option<Record> {
         parent: None,
         archived: None,
         updated: None,
+        running: None,
         duration_ms: None,
     })
 }

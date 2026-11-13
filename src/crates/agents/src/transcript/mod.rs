@@ -12,6 +12,7 @@ pub mod live;
 pub mod log;
 pub mod metering;
 pub mod records;
+mod running_totals;
 mod session_state;
 mod shared_items;
 pub mod turns;
@@ -19,6 +20,8 @@ pub mod usage;
 
 #[cfg(test)]
 mod call_timing_tests;
+#[cfg(test)]
+mod running_totals_tests;
 
 pub use live::LiveLog;
 pub use log::{Log, RecentCall};
@@ -192,6 +195,7 @@ impl Log {
         self.turns.clear();
         self.buckets.clear();
         self.meter_events.clear();
+        self.forget_running_totals();
     }
 
     /// Corrections replace the same source response, not a second usage event.

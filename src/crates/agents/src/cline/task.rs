@@ -207,6 +207,7 @@ pub(super) fn task(path: &Path, source: &str) -> Option<Vec<Record>> {
                 parent: parent.clone(),
                 archived: Some(false),
                 updated: None,
+                running: None,
                 duration_ms: None,
             })
             .collect(),
