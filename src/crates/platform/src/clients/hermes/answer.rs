@@ -181,32 +181,38 @@ impl Going<'_> {
     /// Hermes replied to the answer, or did not in time. Where a poll
     /// closed the card before the reply came, the reply is all that says
     /// what became of the answer, and gives its receipt; else the model
-    /// hears it.
+    /// hears it. Both under one hold of the model's lock: a poll that
+    /// closes the card comes wholly before this, and the reply gives the
+    /// receipt, or wholly after, and finds the card already closed by the
+    /// reply. It cannot land between looking and acting.
     fn replied(&self, told: &Value) {
         let id = self.pending.id();
-        {
-            let mut model = self.shared.model();
-            if model
-                .answered
-                .get(&id)
-                .is_some_and(|out| out.closed.is_some())
-            {
-                model.answered.remove(&id);
-                let (session, now) = (self.pending.session.hud_id(), crate::hooks::now_ms());
-                match answered(told) {
-                    Answered::Resolved => self.shared.note(&id, &session, "confirmed", None, now),
-                    Answered::AlreadyResolved | Answered::Refused(Refusal::StaleGeneration) => self
-                        .shared
-                        .note(&id, &session, "failed", Some(too_late()), now),
-                    Answered::Refused(_) => {}
-                }
-                return;
-            }
+        #[cfg(test)]
+        before_reply(self.shared, &id);
+        let mut model = self.shared.model();
+        if model.stopped {
+            return;
         }
-        self.shared.apply(Input::Responded {
-            request: &id,
-            reply: told,
-        });
+        let closed = model
+            .answered
+            .get(&id)
+            .is_some_and(|out| out.closed.is_some());
+        if !closed {
+            let heard = Input::Responded {
+                request: &id,
+                reply: told,
+            };
+            return self.shared.take(&mut model, heard);
+        }
+        model.answered.remove(&id);
+        let (session, now) = (self.pending.session.hud_id(), crate::hooks::now_ms());
+        match answered(told) {
+            Answered::Resolved => self.shared.note(&id, &session, "confirmed", None, now),
+            Answered::AlreadyResolved | Answered::Refused(Refusal::StaleGeneration) => self
+                .shared
+                .note(&id, &session, "failed", Some(too_late()), now),
+            Answered::Refused(_) => {}
+        }
     }
 
     /// Sends the answer and returns the reply frame; where none came, a
@@ -253,4 +259,22 @@ pub(super) fn verifier3_written<T>(
     write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
 ) -> Option<T> {
     Going { shared, pending }.written(visit, write)
+}
+
+/// Where a test may pause an answer's thread: after Hermes's reply is read
+/// and before it is handled, which is where a poll can still close the
+/// card. Set by the tests that need it; nothing in the app calls it. It is
+/// told which observer the answer belongs to (by address) as well as the
+/// request, since tests that run side by side replay the same recordings
+/// and so share request ids.
+#[cfg(test)]
+pub(super) static BEFORE_REPLY: std::sync::RwLock<Option<fn(usize, &str)>> =
+    std::sync::RwLock::new(None);
+
+#[cfg(test)]
+fn before_reply(shared: &Shared, id: &str) {
+    let pause = *BEFORE_REPLY.read().unwrap_or_else(|held| held.into_inner());
+    if let Some(pause) = pause {
+        pause(shared as *const Shared as usize, id);
+    }
 }

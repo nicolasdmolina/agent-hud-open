@@ -34,6 +34,8 @@ mod verifier;
 mod verifier2;
 #[path = "tests/verifier3.rs"]
 mod verifier3;
+#[path = "tests/verifier4.rs"]
+mod verifier4;
 
 /// The pace of the tests: everything the app waits seconds for, in
 /// hundredths of them.

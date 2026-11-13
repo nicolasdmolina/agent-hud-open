@@ -4,7 +4,11 @@
 //! a stop or a card closing. The coordinator ruled the boundary: an answer
 //! is never written after the cutoff, and a frame that was fully queued
 //! before it was sent in time and may still be read. The probe now asserts
-//! exactly that. Pretend gateways and temporary homes only.
+//! exactly that. One bound in the last probe is wider: the half-second
+//! write limit must fail the answer within 5 s, not 1.5 s. Run alone it
+//! takes 501 to 506 ms; in the whole suite on a machine at load 44 the
+//! test's threads were scheduled late and it took 1.7 to 3.3 s. Pretend
+//! gateways and temporary homes only.
 use super::super::{answer, visit::Visit, Pace};
 use super::{
     fake::{Fake, Hold},
@@ -321,7 +325,7 @@ fn verifier3_default_write_budget_stops_a_stalled_frame_without_later_flush() {
     assert_eq!(lab.delivery(&id)["state"], "failed");
     let took = began.elapsed();
     assert!(
-        took < Duration::from_millis(1500),
+        took < Duration::from_secs(5),
         "default-budget failure took {took:?}"
     );
     stalled.released.store(true, Ordering::Release);

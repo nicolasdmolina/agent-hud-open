@@ -84,7 +84,13 @@ fn an_answer_given_on_a_card_goes_to_hermes_on_a_socket_of_its_own() {
 
     until("the card goes", || lab.cards().is_empty());
     assert_eq!(lab.delivery(&id)["state"], "confirmed");
-    assert!(lab.log().contains("why=Answered"), "{}", lab.log());
+    // Closed by Hermes's reply, or by a poll that saw the request settled
+    // a moment before the reply was handled: the receipt is the same.
+    let log = lab.log();
+    assert!(
+        log.contains("why=Answered") || log.contains("why=Settled"),
+        "{log}"
+    );
 }
 
 #[test]
@@ -164,7 +170,12 @@ fn an_answer_that_came_too_late_closes_the_card_and_says_so() {
         .as_str()
         .is_some_and(|why| !why.is_empty()));
     assert!(lab.cards().is_empty());
-    assert!(lab.log().contains("why=AlreadyResolved"), "{}", lab.log());
+    // Closed by Hermes's reply, or by a poll a moment before it.
+    let log = lab.log();
+    assert!(
+        log.contains("why=AlreadyResolved") || log.contains("why=Settled"),
+        "{log}"
+    );
 }
 
 #[test]

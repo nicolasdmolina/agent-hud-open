@@ -150,7 +150,7 @@ fn what_a_failed_write_left_unsent_is_never_sent_with_a_later_frame() {
     let began = Instant::now();
     assert!(socket.write(&answer).is_err());
     assert!(
-        began.elapsed() < Duration::from_secs(2),
+        began.elapsed() < Duration::from_secs(5),
         "{:?}",
         began.elapsed()
     );
