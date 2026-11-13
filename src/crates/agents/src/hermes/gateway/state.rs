@@ -66,6 +66,8 @@ pub struct Gateway {
     pub(super) snapshotted: BTreeMap<SessionRef, i64>,
     /// The latest time `apply` was given.
     pub(super) now_ms: i64,
+    /// What the HUD can be told of `listed`, and since when (`live.rs`).
+    pub(super) told: super::live::Told,
 }
 
 impl Gateway {
@@ -79,6 +81,7 @@ impl Gateway {
             listed: BTreeMap::new(),
             snapshotted: BTreeMap::new(),
             now_ms: 0,
+            told: Default::default(),
         }
     }
     pub fn id(&self) -> &GatewayId {
@@ -177,6 +180,7 @@ impl Gateway {
     }
 
     fn connect(&mut self, next: Connection, effects: &mut Vec<Effect>) {
+        self.told.follow(&next);
         if self.connection != next {
             self.connection = next.clone();
             effects.push(Effect::Connection(next));

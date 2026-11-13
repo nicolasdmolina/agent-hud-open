@@ -32,6 +32,7 @@ impl Gateway {
         let unlisted = |listed: Option<&Option<bool>>| matches!(listed, Some(None | Some(false)));
         self.listed
             .retain(|at, _| unlisted(poll.profiles.get(&at.profile)));
+        self.told.read(&poll, now_ms);
         for (at, look) in &poll.sessions {
             self.listed.insert(at.clone(), look.status);
         }

@@ -124,11 +124,12 @@ impl Shared {
             .note_native_delivery(id, AGENT.id, session, state, reason, now);
     }
 
-    /// Tells core what the gateway's sessions are doing: here, which of
-    /// them wait on a card. It is called after everything the model takes
-    /// in, changed or not, since core ignores what it already knows; and
-    /// with no gateway when the observer stops, which clears it. Whatever
-    /// else core is to know of the live sessions is told here too.
+    /// Tells core what the gateway's sessions are doing: which of them wait
+    /// on a card, and what each is doing as the newest poll that counted
+    /// listed it (`live_states`, ticket 16). It is called after everything
+    /// the model takes in, changed or not, since core ignores what it
+    /// already knows; and with no gateway when the observer stops, which
+    /// clears both.
     pub(super) fn tell(&self, gateway: Option<&Gateway>, now: i64) {
         let mut waiting: Vec<String> = gateway
             .into_iter()
@@ -138,6 +139,8 @@ impl Shared {
         waiting.sort();
         waiting.dedup();
         self.requests.set_native_waiting(AGENT.id, &waiting, now);
+        let states = gateway.map(Gateway::live_states).unwrap_or_default();
+        self.requests.set_native_states(AGENT.id, &states);
     }
 }
 

@@ -7,6 +7,29 @@ use std::{
     sync::PoisonError,
 };
 
+/// How long a native channel's reading of its sessions is believed after it
+/// came back. The channel that tells states today reads its client every
+/// second while anything runs and every ten seconds when all is idle;
+/// thirty seconds is three idle readings, room for a slow one. A channel that stops reading without a word
+/// (a call that hangs on a socket that still looks open) gives its sessions
+/// back to their hooks and logs by then.
+pub const LIVE_STATES_MS: i64 = 30_000;
+
+/// What a native channel last said of its live sessions, and when it read
+/// them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NativeStates {
+    pub read_ms: i64,
+    pub sessions: HashMap<String, agent_hud_agents::LiveState>,
+}
+
+impl NativeStates {
+    /// Whether the reading is still believed at `now_ms`.
+    pub fn fresh(&self, now_ms: i64) -> bool {
+        now_ms.saturating_sub(self.read_ms) < LIVE_STATES_MS
+    }
+}
+
 impl Requests {
     /// The first time a waiting request expires or a delivery leaves the
     /// hour it is kept for; `views` and `deliveries` change then.
@@ -23,6 +46,10 @@ impl Requests {
             .iter()
             .map(|item| item.deadline_ms)
             .chain(deliveries)
+            .chain(state.native_states.values().map(|states| {
+                // When the reading lapses.
+                states.read_ms.saturating_add(LIVE_STATES_MS)
+            }))
             .min()
     }
     pub fn revision(&self) -> u64 {
@@ -96,6 +123,59 @@ impl Requests {
         if changed {
             self.wake();
         }
+    }
+    /// What `source`'s native channel says each live session is doing,
+    /// whole, as of `states.read_ms`: a session it leaves out, or an empty
+    /// list, goes back to what its hooks and its log say, and so does every
+    /// session once the reading is `LIVE_STATES_MS` old. A channel may call
+    /// this after everything it does: the very same reading told again
+    /// changes nothing. Any newer reading wakes the HUD, even of the same
+    /// sessions, since it decides again against hooks that reported since
+    /// the last one (a channel reads at most about once a second).
+    pub fn set_native_states(&self, source: &str, states: &agent_hud_agents::LiveStates) {
+        let sessions: HashMap<_, _> = states
+            .sessions
+            .iter()
+            .filter(|(id, _)| !id.is_empty())
+            .cloned()
+            .collect();
+        let read_ms = states.read_ms;
+        let changed = {
+            let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let renewed = match state.native_states.get_mut(source) {
+                None if sessions.is_empty() => false,
+                // The same sessions, read again and not lapsed meanwhile.
+                Some(old) if old.sessions == sessions && old.fresh(read_ms) => {
+                    let newer = read_ms > old.read_ms;
+                    old.read_ms = old.read_ms.max(read_ms);
+                    newer
+                }
+                _ => {
+                    if sessions.is_empty() {
+                        state.native_states.remove(source);
+                    } else {
+                        let next = NativeStates { read_ms, sessions };
+                        state.native_states.insert(source.into(), next);
+                    }
+                    true
+                }
+            };
+            if renewed {
+                state.revision = state.revision.wrapping_add(1);
+            }
+            renewed
+        };
+        if changed {
+            self.wake();
+        }
+    }
+    pub fn native_states(&self) -> HashMap<String, NativeStates> {
+        self.0
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .native_states
+            .clone()
     }
     pub fn native_waiting_sessions(&self) -> HashMap<String, HashSet<String>> {
         self.0
