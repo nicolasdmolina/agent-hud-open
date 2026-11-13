@@ -46,7 +46,7 @@ Open is the floor, not the ceiling. Next must not do worse than Open; where it c
 | [c02](c02-deepseek-catalog.md) | DeepSeek, provider catalog, window names | 43 | 10 | 0 | 1 | 5 | 3 | 21 | 3 |
 | [c02a](c02a-grok-devin.md) | Grok CLI, Grok Bot, Devin | 55 | 18 | 4 | 0 | 2 | 11 | 19 | 1 |
 | [c02b](c02b-antigravity-cursor.md) | Antigravity, Cursor | 51 | 21 | 1 | 2 | 5 | 6 | 16 | 0 |
-| [c02c](c02c-buddy-copilot-qwen-zcode-hermes-openclaw.md) | CodeBuddy/WorkBuddy, Copilot, Qwen, ZCode, Hermes, OpenClaw | 70 | 29 | 0 | 1 | 7 | 4 | 26 | 3 |
+| [c02c](c02c-buddy-copilot-qwen-zcode-hermes-openclaw.md) | CodeBuddy/WorkBuddy, Copilot, Qwen, ZCode, Hermes, OpenClaw | 70 | 29 | 0 | 1 | 9 | 4 | 24 | 3 |
 | [c02d](c02d-openagents-additional.md) | Kimi, OpenCode/Go, GLM, Pi, additional sources | 57 | 16 | 2 | 0 | 5 | 5 | 28 | 1 |
 | [c03](c03-hooks-store-ledger.md) | Hooks, permissions, collector, store, ledger | 104 | 44 | 6 | 6 | 4 | 8 | 28 | 8 |
 | [c04](c04-models-logic.md) | Models, quota math, session phases, formatting, demo | 122 | 49 | 3 | 7 | 18 | 12 | 26 | 7 |
@@ -56,7 +56,7 @@ Open is the floor, not the ceiling. Next must not do worse than Open; where it c
 | [c08](c08-bots.md) | Bots and Clawd | 58 | 35 | 1 | 2 | 1 | 1 | 15 | 3 |
 | [c09](c09-app-settings.md) | App lifecycle, Settings, menu bar | 90 | 25 | 6 | 6 | 7 | 9 | 32 | 5 |
 | [c10](c10-statistics-debug.md) | Statistics, sessions window, debug, recording | 101 | 14 | 1 | 9 | 13 | 8 | 54 | 2 |
-| **Total** | | **1,217** | **408** | **48** | **50** | **174** | **87** | **404** | **46** |
+| **Total** | | **1,217** | **408** | **48** | **50** | **176** | **87** | **402** | **46** |
 
 `pnpm run parity:ledger` recounts this table from the rows; `pnpm run check` fails when it is stale.
 
@@ -71,7 +71,7 @@ Open is the floor, not the ceiling. Next must not do worse than Open; where it c
 
 These account for most rows. Fixing each once fixes many rows.
 
-1. **Session titles.** Fixed 2026-10-20. Readers record evidence (a name the client keeps, the first prompt, a client-specific last resort) and one resolver, `naming::session_title::display`, applies Open's rule and each client's fallbacks. Claude's custom and generated titles, and Copilot's, Kimi's and Grok CLI's title files, are now read, and Antigravity's non-ASCII titles decode. Still open: Codex sub-agent names, Hermes and OpenClaw client labels, and observer titles for placeholder sessions.
+1. **Session titles.** Fixed 2026-10-20. Readers record evidence (a name the client keeps, the first prompt, a client-specific last resort) and one resolver, `naming::session_title::display`, applies Open's rule and each client's fallbacks. Claude's custom and generated titles, and Copilot's, Kimi's and Grok CLI's title files, are now read, and Antigravity's non-ASCII titles decode. Hermes client labels are fixed 2026-11-12 (c02c #58). Still open: Codex sub-agent names and observer titles for placeholder sessions.
 2. **English-only text.** Fixed 2026-10-20 for what people see: Rust writes its notices, statuses and card text in the app's language (`agent_hud_core::l10n`, as Open's `L10n`), Core publishes the resolved language so the windows follow it even where the web view does not know the system language, the remaining English-only labels in Settings, Statistics, Sessions and the HUD are bilingual, and the implementation notes and the migration page are gone. Internal errors that only reach logs or MCP callers stay in English. Forecast and sampling text is still built in English in TypeScript (#3).
 3. **Logic in TypeScript.** Short window labels are fixed 2026-10-20: Core names every window's short form as Open does, checked against Open's own functions. Forecast text, status levels, queue membership, the mark director, cache-hit rate and turn reconstruction are still computed in the UI. Open keeps them in Core, and the TS versions already disagree with it.
 4. **Silent data loss.** Open excludes malformed or unverifiable records and says so in a notice. Next mostly skips them without a word, or counts a bad value as 0.

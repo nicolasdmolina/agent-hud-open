@@ -158,6 +158,7 @@ pub fn read(db: &Connection, cursor: &Value, store: &super::Store) -> rusqlite::
         records.push(Record {
             id: format!("{source}:{raw}"),
             title,
+            client: None,
             title_fallback: None,
             cwd: sql_text(row, 5).or_else(|| v["path"]["root"].as_str().map(str::to_owned)),
             model: format!("{model}#{provider}"),

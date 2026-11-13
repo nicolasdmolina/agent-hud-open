@@ -208,6 +208,7 @@ pub(crate) fn read(
         records.push(Record {
             id: session.clone(),
             title: caption.clone(),
+            client: None,
             title_fallback: Some(fallback.clone()),
             cwd: meta.cwd.clone(),
             model,
@@ -241,6 +242,7 @@ pub(crate) fn read(
             records.push(Record {
                 id: session.clone(),
                 title: caption,
+                client: None,
                 title_fallback: Some(fallback),
                 cwd: meta.cwd,
                 model: "Unknown".into(),

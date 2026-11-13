@@ -77,6 +77,7 @@ pub fn read(db: &Connection, cursor: &Value) -> rusqlite::Result<Page> {
         records.push(Record {
             id: format!("devin:{raw}"),
             title: sql_text(row, 4),
+            client: None,
             title_fallback: None,
             cwd: sql_text(row, 5),
             model: fields[2].as_str().unwrap_or("Unknown").into(),

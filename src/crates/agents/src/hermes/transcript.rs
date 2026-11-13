@@ -28,6 +28,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
         "cache_write_tokens",
         "ended_at",
         "last_activity_at",
+        "profile_name",
     ]
     .map(|key| sql_column(&s, "s", key, "NULL"));
     let scan = cursor["scan"]
@@ -83,6 +84,11 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
         let title = sql_text(row, 3);
         let cwd = sql_text(row, 4);
         let title_fallback = sql_text(row, 5).map(|source| format!("Hermes · {source}"));
+        // The profile the session names, else its database's (Open's
+        // HermesSessions); the default profile names none.
+        let client = sql_text(row, 16)
+            .filter(|name| !name.is_empty() && name != "default")
+            .or_else(|| profile.clone());
         let mut any = false;
         if u.contains("session_id") && u.contains("model") {
             let fields = [
@@ -118,6 +124,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
                     id: id.clone(),
                     title: title.clone(),
                     title_fallback: title_fallback.clone(),
+                    client: client.clone(),
                     cwd: cwd.clone(),
                     model: routed(
                         sql_model(sql_text(row, 0)),
@@ -157,6 +164,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
                 id: id.clone(),
                 title,
                 title_fallback,
+                client,
                 cwd,
                 model: routed(
                     sql_model(sql_text(row, 6)),
@@ -211,3 +219,7 @@ fn routed(model: String, provider: Option<String>, base_url: Option<String>) -> 
         None => model,
     }
 }
+
+#[cfg(test)]
+#[path = "transcript_tests.rs"]
+mod tests;

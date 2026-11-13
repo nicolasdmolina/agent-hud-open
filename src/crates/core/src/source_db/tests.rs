@@ -1059,3 +1059,99 @@ fn devin_sessions_take_their_client_from_the_hooks_and_count_once() {
     assert!(unknown["client"].is_null(), "{unknown}");
     assert_eq!(unknown["origins"]["latest"], "others:devin");
 }
+
+/// Two Hermes homes' databases: the default profile's and `reports`'.
+fn hermes_homes(home: &Path) {
+    let now = chrono::Utc::now().timestamp();
+    for (folder, profile) in [
+        (home.to_path_buf(), None),
+        (home.join("profiles/reports"), Some("reports")),
+    ] {
+        std::fs::create_dir_all(&folder).unwrap(); // plain directory
+        let db = Connection::open(folder.join("state.db")).unwrap();
+        db.execute_batch(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, model TEXT, started_at REAL NOT NULL, input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, title TEXT, profile_name TEXT);",
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO sessions VALUES ('s1', 'cli', 'claude-test', ?1, 10, 3, 'Fix the build', ?2)",
+            params![now - 60, profile],
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn hermes_sessions_the_previous_reader_stored_are_read_again_for_their_profile() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join(".hermes");
+    hermes_homes(&home);
+    let open = || {
+        let mut backend = AgentHudCore::new(vec![], root.path().join("hud"));
+        backend.provider_roots = vec![(home.clone(), "hermes")];
+        backend
+    };
+    let clients = |backend: &AgentHudCore| {
+        let mut clients = backend
+            .logs
+            .values()
+            .filter(|head| head.source == "hermes" && head.id.starts_with("hermes:"))
+            .map(|head| (head.id.clone(), head.client.clone()))
+            .collect::<Vec<_>>();
+        clients.sort();
+        clients
+    };
+    let labelled = vec![
+        ("hermes:reports:s1".to_owned(), Some("reports".to_owned())),
+        ("hermes:s1".to_owned(), None),
+    ];
+    let mut backend = open();
+    refresh(&mut backend);
+    assert_eq!(clients(&backend), labelled);
+
+    // As the previous reader left them: version 2, no client on any session.
+    let paths = backend
+        .logs
+        .iter()
+        .filter(|(_, head)| head.source == "hermes")
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    let logs = paths
+        .iter()
+        .map(|path| {
+            let (mut log, _) = backend.load_parser(path).unwrap();
+            if log.reader_version == 3 {
+                log.reader_version = 2;
+            }
+            log.client = None;
+            log
+        })
+        .collect::<Vec<_>>();
+    let updated = backend.next_timestamp_ms();
+    let ledger = backend.database.as_mut().unwrap();
+    let transaction = ledger.transaction().unwrap();
+    for log in &logs {
+        checkpoints::upsert_log(
+            &transaction,
+            &log.path.to_string_lossy(),
+            &serde_json::to_string(log).unwrap(),
+            &serde_json::to_string(&LogHead::from_log(log)).unwrap(),
+            updated,
+        )
+        .unwrap();
+    }
+    transaction.commit().unwrap();
+    drop(backend);
+
+    let mut backend = open();
+    assert_eq!(
+        clients(&backend),
+        vec![
+            ("hermes:reports:s1".to_owned(), None),
+            ("hermes:s1".to_owned(), None)
+        ]
+    );
+    refresh(&mut backend);
+    assert_eq!(clients(&backend), labelled);
+    assert_eq!(backend.logs[&home.join("state.db")].reader_version, 3);
+}

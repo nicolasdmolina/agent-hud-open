@@ -8,6 +8,7 @@ Add one row for every difference the fork introduces.
 
 | Area | Change | Files | Reason | Ticket |
 | ---- | ------ | ----- | ------ | ------ |
+| Hermes sessions | Each Hermes session shows "Hermes Agent", or "Hermes Agent · <profile>" for a named profile, in the Sessions list, the session page and search. Database readers can now name a session's client. The Hermes reader version goes from 2 to 3 so sessions already read are read again and pick up the label. | `src/crates/agents/src/transcript/records.rs`, `src/crates/agents/src/hermes/transcript.rs`, `src/crates/agents/src/naming/clients.rs`, `src/crates/core/src/source_db/scan.rs`, `src/crates/core/src/source_db.rs` | Profiles looked the same. Matches the Swift reference (`HermesSessions.swift:62-66`), so it is no difference from Swift. | 09 |
 
 ## Updating from upstream
 
