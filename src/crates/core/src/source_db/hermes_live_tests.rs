@@ -4,7 +4,7 @@
 //! gateway says nothing.
 use super::*;
 use crate::SourceRoot;
-use agent_hud_agents::{parse_event, LiveState};
+use agent_hud_agents::{parse_event, LiveState, LiveStates};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::fs;
@@ -50,13 +50,20 @@ fn hook(core: &mut AgentHudCore, event: &str, ago: i64) {
     core.ingest_hook_events(vec![event]);
 }
 
-fn live(core: &AgentHudCore, sessions: &[(&str, LiveState)]) {
-    let sessions: Vec<(String, LiveState)> = sessions
+/// The channel tells what it read `ago` ms ago.
+fn read(core: &AgentHudCore, sessions: &[(&str, LiveState)], ago: i64) {
+    let sessions = sessions
         .iter()
         .map(|(id, state)| (id.to_string(), *state))
         .collect();
+    let read_ms = now() - ago;
     core.requests()
-        .set_native_states("hermes", &sessions, now());
+        .set_native_states("hermes", &LiveStates { sessions, read_ms });
+}
+
+/// The channel tells what it has just read.
+fn live(core: &AgentHudCore, sessions: &[(&str, LiveState)]) {
+    read(core, sessions, 0);
 }
 
 /// The session's row in a fresh snapshot, or None where it is not listed.
@@ -159,20 +166,122 @@ fn the_gateway_says_when_a_turn_runs_and_when_it_is_over() {
 fn telling_the_same_states_again_changes_nothing() {
     let requests = crate::requests::Requests::default();
     let revision = requests.revision();
-    requests.set_native_states("hermes", &[], now());
+    let told = |sessions: Vec<(String, LiveState)>, read_ms| LiveStates { sessions, read_ms };
+    requests.set_native_states("hermes", &told(vec![], now()));
     assert_eq!(
         requests.revision(),
         revision,
         "nothing told, nothing to clear"
     );
-    let told = [(ID.to_owned(), LiveState::Running)];
-    requests.set_native_states("hermes", &told, now());
+    let running = vec![(ID.to_owned(), LiveState::Running)];
+    let first = now();
+    requests.set_native_states("hermes", &told(running.clone(), first));
     let after = requests.revision();
     assert_ne!(after, revision);
-    // A channel tells after everything it does; only a change counts.
-    requests.set_native_states("hermes", &told, now());
+    // The same sessions told again from the same reading change nothing.
+    requests.set_native_states("hermes", &told(running.clone(), first));
     assert_eq!(requests.revision(), after);
-    requests.set_native_states("hermes", &[], now());
-    assert_ne!(requests.revision(), after);
+    // A newer reading of the same sessions renews it, and the views are
+    // made again (it decides anew against hooks that reported since).
+    requests.set_native_states("hermes", &told(running.clone(), first + 1_000));
+    let renewed = requests.revision();
+    assert_ne!(renewed, after);
+    assert_eq!(requests.native_states()["hermes"].read_ms, first + 1_000);
+    requests.set_native_states("hermes", &told(vec![], first + 2_000));
+    assert_ne!(requests.revision(), renewed);
     assert!(requests.native_states().is_empty());
+}
+
+#[test]
+fn a_reading_lapses_on_its_own_and_wakes_the_hud() {
+    let requests = crate::requests::Requests::default();
+    let read_ms = now();
+    let sessions = vec![(ID.to_owned(), LiveState::Running)];
+    requests.set_native_states("hermes", &LiveStates { sessions, read_ms });
+    let lapses = read_ms + crate::requests::LIVE_STATES_MS;
+    assert_eq!(requests.next_deadline(), Some(lapses));
+    let revision = requests.revision();
+    requests.expire(lapses - 1);
+    assert_eq!(requests.revision(), revision, "still believed");
+    requests.expire(lapses);
+    assert_ne!(requests.revision(), revision);
+    assert!(requests.native_states().is_empty());
+    assert_eq!(requests.next_deadline(), None);
+}
+
+/// Verifier, round 1: a channel that read once and then went quiet without
+/// a word (a hung poll on a socket that still looks open) must not hold
+/// the session over its hooks.
+#[test]
+fn verifier_stale_live_state_must_return_to_hooks_without_another_publish() {
+    let root = tempfile::tempdir().unwrap();
+    let mut core = hermes(root.path(), 10 * MINUTE);
+    hook(&mut core, "on_session_end", 5_000);
+    assert_eq!(state(&mut core), "idle");
+    read(&core, &[(ID, LiveState::Running)], 365 * 24 * 60 * MINUTE);
+    core.requests().expire(now());
+    assert_eq!(
+        state(&mut core),
+        "idle",
+        "a year-old poll must stop overriding the hooks"
+    );
+}
+
+/// Verifier, round 1: the same, for a session only the reading kept listed.
+#[test]
+fn verifier_stale_live_state_must_not_keep_an_ancient_session_visible() {
+    let root = tempfile::tempdir().unwrap();
+    let mut core = hermes(root.path(), 3 * 24 * 60 * MINUTE);
+    assert_eq!(row(&mut core), None);
+    read(&core, &[(ID, LiveState::Running)], 365 * 24 * 60 * MINUTE);
+    core.requests().expire(now());
+    assert_eq!(
+        row(&mut core),
+        None,
+        "an expired poll must release the session from the panel"
+    );
+}
+
+#[test]
+fn a_reading_is_believed_for_thirty_seconds_and_no_longer() {
+    let root = tempfile::tempdir().unwrap();
+    let mut core = hermes(root.path(), 3 * 24 * 60 * MINUTE);
+    // Read 25 s ago and not since: still believed.
+    read(&core, &[(ID, LiveState::Running)], 25_000);
+    assert_eq!(state(&mut core), "running");
+    // Read 31 s ago (a channel that has just started, telling an old
+    // reading): not believed, whether or not anything expired it yet.
+    live(&core, &[]);
+    read(&core, &[(ID, LiveState::Running)], 31_000);
+    assert_eq!(row(&mut core), None);
+}
+
+#[test]
+fn a_long_turn_stays_running_while_every_reading_renews_it() {
+    let root = tempfile::tempdir().unwrap();
+    let mut core = hermes(root.path(), 3 * 24 * 60 * MINUTE);
+    hook(&mut core, "pre_tool_call", 20 * MINUTE);
+    for _ in 0..3 {
+        live(&core, &[(ID, LiveState::Running)]);
+        core.requests().expire(now());
+        assert_eq!(state(&mut core), "running");
+    }
+}
+
+#[test]
+fn a_turn_end_the_hooks_push_after_the_reading_wins_until_the_next_one() {
+    let root = tempfile::tempdir().unwrap();
+    let mut core = hermes(root.path(), 10 * MINUTE);
+    hook(&mut core, "pre_tool_call", 3 * MINUTE);
+    read(&core, &[(ID, LiveState::Running)], 2_000);
+    assert_eq!(state(&mut core), "running");
+    // The turn ends a second after the reading: the hook is newer news.
+    hook(&mut core, "on_session_end", 1_000);
+    assert_eq!(state(&mut core), "idle");
+    // A reading taken after the hook stands again, whatever it says: here
+    // Hermes's list is a moment behind and still says running.
+    live(&core, &[(ID, LiveState::Running)]);
+    assert_eq!(state(&mut core), "running");
+    live(&core, &[(ID, LiveState::Idle)]);
+    assert_eq!(state(&mut core), "idle");
 }

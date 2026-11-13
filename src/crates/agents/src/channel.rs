@@ -25,6 +25,15 @@ pub enum LiveState {
     Idle,
 }
 
+/// What a native channel says of its live sessions, and when it read them:
+/// the time its newest successful reading came back, which is all that
+/// vouches for them. A channel that told nothing has no sessions.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LiveStates {
+    pub sessions: Vec<(String, LiveState)>,
+    pub read_ms: i64,
+}
+
 impl LiveState {
     /// The word a session row's `state` uses.
     pub fn word(self) -> &'static str {

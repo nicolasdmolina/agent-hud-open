@@ -69,6 +69,8 @@ pub struct Gateway {
     /// The profiles the newest poll listed since the gateway was last
     /// ready: what `listed` says of them is current (`live.rs`).
     pub(super) fresh: BTreeSet<Profile>,
+    /// When the newest poll that counted came back.
+    pub(super) read_ms: i64,
 }
 
 impl Gateway {
@@ -83,6 +85,7 @@ impl Gateway {
             snapshotted: BTreeMap::new(),
             now_ms: 0,
             fresh: BTreeSet::new(),
+            read_ms: 0,
         }
     }
     pub fn id(&self) -> &GatewayId {

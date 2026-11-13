@@ -21,7 +21,7 @@ fn lists(hermes: &mut Hermes, profile: &Profile, session: &str, status: &str) {
 }
 
 fn told(gateway: &Gateway) -> Vec<(String, LiveState)> {
-    gateway.live_states()
+    gateway.live_states().sessions
 }
 
 #[test]
@@ -68,6 +68,8 @@ fn a_waiting_session_stays_waiting_however_long_it_waits() {
     for minute in 0..60 {
         poll(&mut g, &mut h, minute * 60_000);
         assert_eq!(told(&g), [("hermes:verify:local-asks".to_owned(), Waiting)]);
+        // Each poll vouches for it anew.
+        assert_eq!(g.live_states().read_ms, minute * 60_000);
     }
     lists(&mut h, &verify(), "local-asks", "working");
     poll(&mut g, &mut h, 3_600_000);
@@ -123,4 +125,22 @@ fn a_profile_whose_list_failed_is_left_to_the_hooks() {
     // The next poll that lists it tells it again.
     poll(&mut g, &mut h, 2_000);
     assert_eq!(told(&g).len(), 2);
+}
+
+#[test]
+fn only_a_poll_that_counts_renews_what_is_told() {
+    let (mut g, mut h) = start();
+    lists(&mut h, &Profile::Default, "local-long", "working");
+    poll(&mut g, &mut h, 1_000);
+    assert_eq!(g.live_states().read_ms, 1_000);
+    // A poll begun and never given back (a hung call) renews nothing, and
+    // neither does anything else that happens meanwhile.
+    let hung = g.poll().unwrap();
+    g.apply(Input::Sent { request: "nothing" }, 50_000);
+    assert_eq!(g.live_states().read_ms, 1_000);
+    assert_eq!(told(&g).len(), 1);
+    // A stale poll that comes back late is dropped and renews nothing.
+    poll(&mut g, &mut h, 60_000);
+    g.apply(Input::Polled(hung), 70_000);
+    assert_eq!(g.live_states().read_ms, 60_000);
 }

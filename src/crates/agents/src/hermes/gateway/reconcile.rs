@@ -37,6 +37,7 @@ impl Gateway {
             .iter()
             .filter(|(_, listed)| **listed == Some(true));
         self.fresh = answered.map(|(profile, _)| profile.clone()).collect();
+        self.read_ms = now_ms;
         for (at, look) in &poll.sessions {
             self.listed.insert(at.clone(), look.status);
         }

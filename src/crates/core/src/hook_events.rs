@@ -94,6 +94,17 @@ impl HookEvidence {
             first_delivery: report(&entry.delivery, true),
         }
     }
+    /// When a session's hooks last said what it is doing: its newest turn
+    /// observation or completion still in its window.
+    pub(crate) fn reported_at(&self, source: &str, session: &str, now: i64) -> Option<i64> {
+        let entry = self.sessions.get(source)?.get(session)?;
+        [&entry.observation, &entry.completion]
+            .into_iter()
+            .flatten()
+            .filter(|event| valid(event, now, 30 * DAY))
+            .map(|event| event.at_ms)
+            .max()
+    }
     pub(crate) fn has_evidence(&self, source: &str, session: &str) -> bool {
         self.sessions
             .get(source)

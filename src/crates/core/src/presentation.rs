@@ -10,7 +10,7 @@ pub(super) struct Presentation<'a> {
     claude_processes: &'a agent_hud_agents::claude::processes::ClaudeProcesses,
     discovery: &'a [ProviderDiscovery],
     pending: HashMap<String, HashMap<String, Vec<Value>>>,
-    native: live::Native,
+    native: live::Native<'a>,
     /// Each carded session's transcript requests before cards hide them.
     pub(super) heard: std::cell::RefCell<requests::Heard>,
     now: i64,
@@ -25,7 +25,7 @@ impl AgentHudCore {
             claude_processes: &self.claude_desktop.processes,
             discovery: &self.discovery,
             pending: self.requests.session_attention(),
-            native: live::Native::of(&self.requests),
+            native: live::Native::of(&self.requests, &self.hook_events, now),
             heard: Default::default(),
             now,
         }
