@@ -353,7 +353,7 @@ fn the_hooks_and_the_gateway_name_the_same_session() {
         crate::hooks::add_environment("hermes", &mut payload, &|name| {
             home.clone().filter(|_| name == "HERMES_HOME")
         });
-        assert_eq!(Profile::of_home(home.as_deref().unwrap()), Some(spike()));
+        assert_eq!(Profile::of_home(home.as_deref().unwrap()), spike());
         // Whichever session a hook is about, the gateway's id for it names it the same.
         let of = local()
             .session(&spike(), payload["session_id"].as_str().unwrap())
@@ -370,9 +370,6 @@ fn the_hooks_and_the_gateway_name_the_same_session() {
         local().session(&Profile::Default, "abc").unwrap().hud_id(),
         "hermes:abc"
     );
-    assert_eq!(
-        Profile::of_home("/Users/USER/.hermes"),
-        Some(Profile::Default)
-    );
+    assert_eq!(Profile::of_home("/Users/USER/.hermes"), Profile::Default);
     assert_eq!(Profile::named("default").unwrap(), Profile::Default);
 }

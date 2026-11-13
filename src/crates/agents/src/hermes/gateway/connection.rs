@@ -132,12 +132,9 @@ pub fn identify(answer: &Value, home: &str) -> Identified {
             let profile_id = crate::text(&entry["profile_id"])?;
             Some((crate::text(&entry["home"])?, profile_id))
         })
-        // A home in a folder that is no profile's serves nothing to follow.
-        .filter_map(|(home, profile_id)| {
-            Some(Served {
-                profile: Profile::of_home(home)?,
-                profile_id: profile_id.to_owned(),
-            })
+        .map(|(home, profile_id)| Served {
+            profile: Profile::of_home(home),
+            profile_id: profile_id.to_owned(),
         })
         .collect();
     let same =

@@ -58,19 +58,14 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
     let mut records = Vec::new();
     let mut last = scan;
     let mut seen = 0;
-    let folder = path.parent().unwrap_or(Path::new(""));
-    let profile = folder
-        .parent()
-        .and_then(Path::file_name)
-        .filter(|s| *s == "profiles")
-        .and_then(|_| folder.file_name())
-        .map(|s| s.to_string_lossy().into_owned());
-    // A `state.db` under a Hermes home is this machine's. One in a folder
-    // that is no profile's is not read.
+    // A `state.db` under a Hermes home is this machine's, and its folder
+    // says whose: a named profile's in `profiles/<name>`, else the default
+    // profile's of whatever root holds it.
     let machine = Machine::This;
-    let of = match &profile {
-        Some(folder) => Profile::folder(folder).ok_or(rusqlite::Error::InvalidQuery)?,
-        None => Profile::Default,
+    let of = Profile::of_home(path.parent().unwrap_or(Path::new("")));
+    let profile = match &of {
+        Profile::Named(name) => Some(name.as_str().to_owned()),
+        Profile::Default => None,
     };
     while let Some(row) = rows.next()? {
         seen += 1;

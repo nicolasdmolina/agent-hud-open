@@ -66,14 +66,16 @@ fn sessions_are_labelled_by_their_profile() {
     );
 }
 
-/// What the review of the machine identity found at the reader
-/// (`evidence/22/verifier-report.md`, finding 3): a folder or a row could
-/// name a far machine's session.
+/// What the reviews of the machine identity found at the reader
+/// (`evidence/22/verifier-report.md`, finding 3, and `verifier-report-2.md`,
+/// finding 1): a folder or a row could name a far machine's session, and
+/// then a root in a folder that is no profile's was not read at all.
 #[test]
-fn a_folder_or_a_row_that_hermes_would_not_write_names_no_session() {
+fn a_folder_or_a_row_that_hermes_would_not_write_names_no_far_session() {
     let home = tempfile::tempdir().unwrap();
     let home = home.path();
-    // A folder under `profiles` that is no profile's is not read.
+    // A folder under `profiles` that is no profile's is a root of its own:
+    // read, as its default profile, and named by nothing in its path.
     for folder in [
         "Work",
         "a:b",
@@ -82,8 +84,11 @@ fn a_folder_or_a_row_that_hermes_would_not_write_names_no_session() {
         "19dc3a759af7f225:default",
     ] {
         let path = home.join("profiles").join(folder).join("state.db");
-        let db = state_db(&path, None);
-        assert!(read(&db, &path, &Value::Null).is_err(), "{folder}");
+        assert_eq!(
+            labels(&path, None),
+            [("hermes:s1".to_owned(), Some("Hermes Agent".to_owned()))],
+            "{folder}"
+        );
     }
     // A row named as a far session is left out; the rows beside it stay.
     let path = home.join("state.db");

@@ -282,7 +282,7 @@ fn a_listed_session_with_no_session_id_is_not_followed() {
 }
 
 #[test]
-fn a_served_home_in_a_folder_that_is_no_profiles_is_not_served() {
+fn a_served_home_in_a_folder_that_is_no_profiles_is_the_default_profile() {
     let mut answer = super::fake::ready("instance-1", &["default", "verify"]);
     let served = answer["served_profiles"].as_array_mut().unwrap();
     let home = format!("/synthetic/profiles/{SRV_KEY}:default");
@@ -290,6 +290,127 @@ fn a_served_home_in_a_folder_that_is_no_profiles_is_not_served() {
     let Identified::Ready(instance) = identify(&answer, "/synthetic") else {
         panic!("ready");
     };
+    // Every home has a profile, and none takes its name from a folder
+    // that is no profile's: no name made here holds a colon or a slash.
     let profiles: Vec<&str> = instance.served.iter().map(|s| s.profile.name()).collect();
-    assert_eq!(profiles, ["default", "verify"]);
+    assert_eq!(profiles, ["default", "verify", "default"]);
+}
+
+// ---- Round 2: a root in any folder is still followed, read and reported ----
+// (`evidence/22/verifier-2-files/custom-roots.rs`, `persistence.rs`)
+
+/// A gateway that is ready and serves `home` alone.
+fn serving(home: &str) -> Instance {
+    let answer = json!({"runtime_protocol": 1, "state": "ready", "instance_id": "synthetic",
+        "authority_epoch": 1, "api_origin": "http://127.0.0.1:54321",
+        "capabilities": [SESSION_AUTHORITY],
+        "served_profiles": [{"profile_id": home, "home": home}]});
+    let Identified::Ready(instance) = identify(&answer, home) else {
+        panic!("ready: {home}");
+    };
+    instance
+}
+
+/// The ids the reader gives the one session of a `state.db` in `home`.
+fn read_in(home: &str) -> rusqlite::Result<Vec<String>> {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        "CREATE TABLE sessions(id TEXT,started_at REAL,source TEXT,model TEXT,input_tokens INTEGER,output_tokens INTEGER);
+         INSERT INTO sessions VALUES('s1',1760000000,'cli','m',10,2);
+         CREATE TABLE session_model_usage(session_id TEXT,model TEXT);",
+    )
+    .unwrap();
+    let path = format!("{home}/state.db");
+    let page = crate::hermes::transcript::read(&db, std::path::Path::new(&path), &Value::Null)?;
+    Ok(page.records.into_iter().map(|record| record.id).collect())
+}
+
+/// The session an old-style hook names, which says where it ran only by
+/// its `HERMES_HOME`.
+fn hook_in(home: &str) -> Option<String> {
+    let mut payload = json!({"hook_event_name": "pre_llm_call", "session_id": "s1"});
+    crate::hooks::add_environment("hermes", &mut payload, &|key| {
+        (key == "HERMES_HOME").then(|| home.to_owned())
+    });
+    hook(&payload)
+}
+
+#[test]
+fn custom_roots_remain_followed_read_and_hooked() {
+    // `HERMES_HOME` is any folder: a root need not be named as a profile is.
+    let roots = [
+        "/srv/profiles/Work",
+        "/srv/profiles/work.name",
+        "/srv/profiles/.hermes",
+        "/srv/profiles/My Home",
+        "/srv/profiles/default",
+        "/srv/profiles",
+        "/srv/Hermes Root",
+        "/opt/hermes",
+    ];
+    for home in roots {
+        // Followed: its one home is served, as the default profile.
+        let served = serving(home).served;
+        assert_eq!(served.len(), 1, "{home}");
+        assert_eq!(served[0].profile, Profile::Default, "{home}");
+        // Read, and reported, as the same session.
+        assert_eq!(read_in(home).unwrap(), ["hermes:s1"], "{home}");
+        assert_eq!(hook_in(home).as_deref(), Some("hermes:s1"), "{home}");
+    }
+}
+
+#[test]
+fn a_home_in_a_profiles_folder_with_a_profiles_name_stays_named() {
+    // The ids already saved for these homes keep their namespace.
+    for (home, name) in [
+        ("/Users/USER/.hermes/profiles/work", "work"),
+        ("/srv/profiles/work", "work"),
+        ("/srv/profiles/hud-spike", "hud-spike"),
+        ("/srv/profiles/9_lives", "9_lives"),
+    ] {
+        let served = serving(home).served;
+        assert_eq!(served[0].profile.name(), name, "{home}");
+        assert_eq!(
+            read_in(home).unwrap(),
+            [format!("hermes:{name}:s1")],
+            "{home}"
+        );
+        assert_eq!(hook_in(home), Some(format!("hermes:{name}:s1")), "{home}");
+        // With or without a slash at its end, as a hook's home may come.
+        assert_eq!(
+            hook_in(&format!("{home}/")),
+            Some(format!("hermes:{name}:s1"))
+        );
+    }
+    // What is left open: a root that is itself at `…/profiles/<name>` reads
+    // as that named profile, by its path. Whoever knows the root is not
+    // misled, and ticket 26 does.
+    let root = "/srv/profiles/work";
+    assert_eq!(anchor(root, [root]), Some(Profile::Default));
+    assert_eq!(Profile::in_root(root, root), Some(Profile::Default));
+    assert_eq!(Profile::of_home(root), Profile::named("work").unwrap());
+}
+
+#[test]
+fn a_named_profile_value_is_still_checked_where_a_home_is_not() {
+    // A home always has a profile; a profile a payload names must be one.
+    for name in [
+        "Work",
+        "work.name",
+        ".hermes",
+        "a/b",
+        "19dc3a759af7f225/default",
+    ] {
+        assert_eq!(Profile::named(name), None, "{name}");
+        assert_eq!(hook(&began(S, Some(name))), None, "{name}");
+        // The same text as a root's folder is only a folder.
+        let home = format!("/srv/profiles/{name}");
+        assert_eq!(Profile::of_home(&home), Profile::Default, "{name}");
+    }
+    // A named value that is malformed is not rescued by the hook's home.
+    let mut payload = began(S, Some("Work"));
+    crate::hooks::add_environment("hermes", &mut payload, &|key| {
+        (key == "HERMES_HOME").then(|| "/srv/profiles/work".to_owned())
+    });
+    assert_eq!(hook(&payload), None);
 }

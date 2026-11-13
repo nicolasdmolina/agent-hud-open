@@ -26,7 +26,6 @@ use crate::hooks::{
 };
 use crate::{text, Location, Profiles};
 use serde_json::Value;
-use std::path::Path;
 
 pub static HOOKS: Hooks = Hooks {
     settings: Some(Location {
@@ -71,35 +70,32 @@ pub static HOOKS: Hooks = Hooks {
 /// `state.db`: a profile's sessions carry the profile in front
 /// (`<profile>:<id>`). Approval events carry no session id; in the CLI their
 /// session key is the session's id. A hook runs on this machine. None for
-/// a payload whose profile or session Hermes would not write: a hook is
-/// handed whatever its caller sends, and names no session of another
-/// machine.
+/// a payload that names a profile or a session Hermes would not write: a
+/// hook is handed whatever its caller sends, and names no session of
+/// another machine.
 fn session(payload: &Value) -> Option<String> {
     let id = text(&payload["session_id"])
         .or_else(|| text(&payload["extra"]["session_key"]))
         .filter(|id| *id != "default")?;
-    let profile = match profile(payload) {
-        Some(profile) => Profile::folder(profile)?,
-        None => Profile::Default,
-    };
-    let whole = hud_session_id(&Machine::This, &profile, id)?;
+    let whole = hud_session_id(&Machine::This, &profile(payload)?, id)?;
     // Whoever reads this writes the agent in front (`prefixed_sessions`).
     let named = whole.strip_prefix(AGENT.id)?.strip_prefix(':')?;
     Some(named.to_owned())
 }
 
-/// The named profile that fired a hook: the one the payload names (newer
-/// Hermes writes `profile`), else the one the hook's `HERMES_HOME` is the
-/// folder of, `profiles/<name>`, as the reader tells a profile's `state.db`.
-/// None for the default profile.
-fn profile(payload: &Value) -> Option<&str> {
-    let named = text(&payload["profile"]).or_else(|| {
-        let home = Path::new(text(&payload[ENVIRONMENT]["HERMES_HOME"])?);
-        (home.parent()?.file_name()? == "profiles")
-            .then(|| home.file_name()?.to_str())
-            .flatten()
-    });
-    named.filter(|profile| *profile != "default")
+/// The profile that fired a hook: the one the payload names (newer Hermes
+/// writes `profile`), else the one the hook's `HERMES_HOME` is the home of,
+/// as the reader tells a profile's `state.db` (`Profile::of_home`): a named
+/// profile in `profiles/<name>`, the default profile in any other home, a
+/// root of any name among them. None only for a payload that names what is
+/// no profile's name: a name is checked, a home always has a profile.
+fn profile(payload: &Value) -> Option<Profile> {
+    match text(&payload["profile"]) {
+        Some(name) => Profile::named(name),
+        None => Some(
+            text(&payload[ENVIRONMENT]["HERMES_HOME"]).map_or(Profile::Default, Profile::of_home),
+        ),
+    }
 }
 
 /// A turn under way, or waiting while the person is asked to approve a

@@ -121,20 +121,25 @@ impl Profile {
         }
         Self::folder(home.strip_prefix(root_home)?.strip_prefix("/profiles/")?)
     }
-    /// The profile whose home is `home`, by its path alone, as the gateway
-    /// lists it in `served_profiles`: a guess where the root is not known,
-    /// which takes a root lying in a folder called `profiles` for a named
-    /// profile (`in_root` does not). None for a folder that is no profile's.
-    pub fn of_home(home: &str) -> Option<Self> {
-        let home = Path::new(home);
+    /// The profile whose home is `home`, by its path alone, as the hooks
+    /// (`HERMES_HOME`), the `state.db` reader and `identify` know it: the
+    /// named profile `<name>` where the home is `…/profiles/<name>` and the
+    /// name is one Hermes allows, else the default profile of the root that
+    /// home is. Every home has a profile, so a root in any folder, of any
+    /// name, is followed, read and reported. It is a guess where the root
+    /// is not known: a root that is itself at `…/profiles/<name>` reads as
+    /// the named profile (`in_root`, which is told the root, does not).
+    pub fn of_home(home: impl AsRef<Path>) -> Self {
+        let home = home.as_ref();
         let inside_profiles = home
             .parent()
             .and_then(Path::file_name)
             .is_some_and(|folder| folder == "profiles");
-        match home.file_name().and_then(|name| name.to_str()) {
-            Some(name) if inside_profiles => Self::named(name),
-            _ => Some(Self::Default),
-        }
+        let named = home.file_name().and_then(|name| name.to_str());
+        named
+            .filter(|_| inside_profiles)
+            .and_then(Self::folder)
+            .unwrap_or(Self::Default)
     }
     /// The name Hermes routes a call by (`profile: "<name>"`).
     pub fn name(&self) -> &str {
