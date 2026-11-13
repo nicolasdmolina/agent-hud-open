@@ -65,3 +65,66 @@ fn sessions_are_labelled_by_their_profile() {
         shown("hermes:coder:s1", "Hermes Agent · coder")
     );
 }
+
+const SCHEMA: &str = include_str!("../../tests/fixtures/hermes/macos/state.schema.sql");
+
+/// A real-schema `state.db` in memory with `count` sessions, one usage row
+/// each, all last active at the same time.
+fn sessions(count: i64) -> Connection {
+    let db = Connection::open_in_memory().unwrap();
+    db.execute_batch(SCHEMA).unwrap();
+    for n in 1..=count {
+        db.execute(
+            "INSERT INTO sessions(id,source,model,started_at,last_activity_at) VALUES(?1,'cli','m',1760000000,1760000600)",
+            [format!("s{n}")],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO session_model_usage(session_id,model,input_tokens,first_seen,last_seen) VALUES(?1,'m',10,1760000000,1760000600)",
+            [format!("s{n}")],
+        )
+        .unwrap();
+    }
+    db
+}
+
+/// One whole pass from `cursor`, as core reads it: the records' session ids,
+/// and the watermark it ends with. Each page carries one map of counts and
+/// the first page drops the last pass's watermark.
+fn pass(db: &Connection, cursor: Value) -> (Vec<String>, Value) {
+    let path = Path::new("state.db");
+    let (mut cursor, mut ids, mut first) = (cursor, Vec::new(), true);
+    loop {
+        let page = read(db, path, &cursor).unwrap();
+        ids.extend(page.records.into_iter().map(|record| record.id));
+        let Some(next) = page.cursor else {
+            return (ids, page.watermark.unwrap());
+        };
+        assert!(next["next"].is_null(), "one map, not two");
+        assert_eq!(page.watermark, first.then_some(Value::Null));
+        first = false;
+        cursor = next;
+    }
+}
+
+#[test]
+fn a_pass_keeps_one_map_of_counts_and_rereads_a_session_that_grew_behind_the_watermark() {
+    let db = sessions(250);
+    let (ids, watermark) = pass(&db, Value::Null);
+    assert_eq!(ids.len(), 250);
+    assert_eq!(watermark["prints"].as_object().unwrap().len(), 250);
+    let (ids, watermark) = pass(&db, watermark);
+    assert!(ids.is_empty(), "nothing changed");
+
+    // A call stamped no later than the watermark, and a session removed.
+    db.execute_batch(
+        "UPDATE session_model_usage SET input_tokens=20 WHERE session_id='s150';
+         DELETE FROM session_model_usage WHERE session_id='s7'; DELETE FROM sessions WHERE id='s7';",
+    )
+    .unwrap();
+    let (ids, watermark) = pass(&db, watermark);
+    assert_eq!(ids, ["hermes:s150"]);
+    let prints = watermark["prints"].as_object().unwrap();
+    assert_eq!(prints.len(), 249);
+    assert!(!prints.contains_key("7"));
+}

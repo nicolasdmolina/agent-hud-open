@@ -6,18 +6,21 @@
 //! read that finds nothing new adds nothing and a later read or a relaunch
 //! never counts a row twice.
 //!
-//! A running total only grows: each count is cumulative. A smaller total
-//! (a read caught mid-write, or a correction) adds nothing and takes nothing
-//! back; later growth counts only once it passes the most already counted.
+//! A running total only grows: each count is cumulative, and that is the
+//! contract a reader relies on. A smaller total (a read caught mid-write, or
+//! a correction) is outside it: it adds nothing and takes nothing back, later
+//! growth counts only once it passes the most already counted, and a reader
+//! may not notice rows that shrink while others grow by as much (Hermes's
+//! change check, `hermes/transcript.rs`).
 use super::{records::Running, Log, Usage};
 use serde_json::{json, Value};
 
 /// The period growth is grouped by, as Open's ledger buckets it.
 const PERIOD_MS: i64 = 15 * 60 * 1000;
 
-/// The rows a log has seen, by key, with the latest `last_seen` each had
-/// (null when the client gave none); a row read at zero is seen without a
-/// usage event.
+/// The rows a log has seen, by key, with the `last_seen` each had when last
+/// read (null when the client gave none); a row read at zero is seen without
+/// a usage event.
 const SEEN: &str = "runningSeen";
 
 impl Log {
@@ -25,7 +28,8 @@ impl Log {
     /// on first sight, after that only what it gained. Growth is dated at the
     /// row's `last_seen` when that moved past the stamp the row had when last
     /// read, otherwise at `now`, the time of this read: a stale or missing
-    /// stamp does not say when the growth happened. Growth keys extend `key`
+    /// stamp, or one after a read without a stamp, does not say when the
+    /// growth happened. Growth keys extend `key`
     /// with `@<period>`, so no other key may start with `key@`.
     #[allow(clippy::too_many_arguments)]
     pub fn count_running_total(
@@ -41,11 +45,7 @@ impl Log {
         let before = self.source_state[SEEN].get(&key).cloned();
         let sighted = before.is_some() || self.messages.contains_key(&key);
         let before = before.as_ref().and_then(Value::as_i64);
-        let latest = match (before, running.last_seen) {
-            (Some(old), Some(new)) => Some(old.max(new)),
-            (old, new) => old.or(new),
-        };
-        self.source_state[SEEN][key.as_str()] = json!(latest);
+        self.source_state[SEEN][key.as_str()] = json!(running.last_seen);
         if !sighted {
             self.count_timed_source(key, model, at, total, false, duration_ms);
             return;

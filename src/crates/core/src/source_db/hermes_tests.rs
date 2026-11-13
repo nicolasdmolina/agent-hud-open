@@ -294,3 +294,43 @@ fn a_usage_row_first_read_at_zero_dates_its_first_tokens_when_they_come() {
     assert_eq!(events(&core), [(seen, 100, 0)]);
     assert_eq!(tokens(&mut core), 100);
 }
+
+#[test]
+fn rows_that_shrink_while_others_grow_by_as_much_are_outside_the_contract() {
+    let root = tempfile::tempdir().unwrap();
+    let (db, mut core) = hermes(root.path(), SCHEMA);
+    let first = start();
+    session(&db, first, 200, 0);
+    db.execute(
+        "INSERT INTO session_model_usage(session_id,model,input_tokens,first_seen,last_seen)
+         VALUES('s1','m2',100,?1,?1)",
+        [seconds(first)],
+    )
+    .unwrap();
+    refresh(&mut core);
+    assert_eq!(tokens(&mut core), 300);
+
+    // One row shrinks as another grows, every count's sum and every stamp
+    // unchanged: counts only grow, so the reader does not look again.
+    db.execute(
+        "UPDATE session_model_usage SET input_tokens=150 WHERE session_id='s1'",
+        [],
+    )
+    .unwrap();
+    refresh(&mut core);
+    assert_eq!(tokens(&mut core), 300);
+
+    // The next real growth is read, and counts only what passed the most
+    // already counted: m stays at 200, m2 gains 100.
+    let seen = first + 3_600_000 + 1_000;
+    db.execute(
+        "UPDATE session_model_usage SET input_tokens=200,last_seen=?1 WHERE model='m2'",
+        [seconds(seen)],
+    )
+    .unwrap();
+    refresh(&mut core);
+    assert_eq!(tokens(&mut core), 400);
+    let mut counted = events(&core);
+    counted.sort();
+    assert_eq!(counted, [(first, 100, 0), (first, 200, 0), (seen, 100, 0)]);
+}

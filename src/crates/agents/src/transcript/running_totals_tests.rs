@@ -74,7 +74,7 @@ fn growth_under_a_stale_or_missing_last_seen_is_dated_at_the_read() {
     read(&mut log, usage(200, 20), Some(FIRST), FIRST + HOUR);
     // Grown with no stamp at all.
     read(&mut log, usage(300, 30), None, FIRST + 2 * HOUR);
-    // A stamp older than one already seen has not moved either.
+    // A stamp after a read without one has nothing to have moved past.
     read(
         &mut log,
         usage(400, 40),
@@ -135,4 +135,15 @@ fn a_total_read_again_unchanged_adds_nothing() {
     read(&mut log, usage(100, 10), Some(FIRST + HOUR), FIRST + HOUR);
     read(&mut log, usage(100, 10), None, FIRST + 2 * HOUR);
     assert_eq!(meter(&log), [(FIRST, 100, 10)]);
+}
+
+#[test]
+fn growth_is_compared_with_the_stamp_of_the_previous_read_not_the_latest_ever() {
+    let mut log = log();
+    read(&mut log, usage(100, 0), Some(FIRST + 3_000), FIRST + 3_000);
+    // Read again with an earlier stamp: no growth, but it is now the stamp
+    // the next read is compared with.
+    read(&mut log, usage(100, 0), Some(FIRST + 1_000), FIRST + 5_000);
+    read(&mut log, usage(200, 0), Some(FIRST + 2_000), FIRST + 10_000);
+    assert_eq!(meter(&log), [(FIRST, 100, 0), (FIRST + 2_000, 100, 0)]);
 }
