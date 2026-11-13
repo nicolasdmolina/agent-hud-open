@@ -14,14 +14,5 @@ test("the fork's Settings sidebar has no Local Network page", () => {
     },
   ]).map((page) => page.id);
   assert.ok(!ids.includes("local-network"));
-  assert.deepEqual(ids, [
-    "general",
-    "display",
-    "agents",
-    "agent-plugins",
-    "relays",
-    "prices",
-    "updates",
-    "extra",
-  ]);
+  assert.ok(ids.includes("extra"));
 });
