@@ -16,6 +16,10 @@ use agent_hud_agents::hermes::gateway::{
     Scope,
 };
 use agent_hud_core::l10n;
+#[cfg(test)]
+use probes::{at_apply, before_reply};
+#[cfg(test)]
+pub(super) use probes::{verifier3_written, AT_APPLY, BEFORE_REPLY};
 use serde_json::{json, Value};
 use std::{
     sync::{mpsc::TryRecvError, Arc},
@@ -202,6 +206,8 @@ impl Going<'_> {
                 request: &id,
                 reply: told,
             };
+            #[cfg(test)]
+            at_apply(self.shared, &id);
             return self.shared.take(&mut model, heard);
         }
         model.answered.remove(&id);
@@ -250,31 +256,51 @@ fn unreachable() -> String {
     )
 }
 
-// Test-only entry to the unchanged production Going::written path.
+/// What only the tests use: a way into `Going::written`, and the places
+/// in the reply handler a test may be told of.
 #[cfg(test)]
-pub(super) fn verifier3_written<T>(
-    shared: &Shared,
-    pending: &Pending,
-    visit: &mut Visit,
-    write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
-) -> Option<T> {
-    Going { shared, pending }.written(visit, write)
-}
+mod probes {
+    use super::*;
 
-/// Where a test may pause an answer's thread: after Hermes's reply is read
-/// and before it is handled, which is where a poll can still close the
-/// card. Set by the tests that need it; nothing in the app calls it. It is
-/// told which observer the answer belongs to (by address) as well as the
-/// request, since tests that run side by side replay the same recordings
-/// and so share request ids.
-#[cfg(test)]
-pub(super) static BEFORE_REPLY: std::sync::RwLock<Option<fn(usize, &str)>> =
-    std::sync::RwLock::new(None);
+    // Test-only entry to the unchanged production Going::written path.
+    pub(in super::super) fn verifier3_written<T>(
+        shared: &Shared,
+        pending: &Pending,
+        visit: &mut Visit,
+        write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
+    ) -> Option<T> {
+        Going { shared, pending }.written(visit, write)
+    }
 
-#[cfg(test)]
-fn before_reply(shared: &Shared, id: &str) {
-    let pause = *BEFORE_REPLY.read().unwrap_or_else(|held| held.into_inner());
-    if let Some(pause) = pause {
-        pause(shared as *const Shared as usize, id);
+    /// Where a test may pause an answer's thread: after Hermes's reply is read
+    /// and before it is handled, which is where a poll can still close the
+    /// card. Set by the tests that need it; nothing in the app calls it. It is
+    /// told which observer the answer belongs to (by address) as well as the
+    /// request, since tests that run side by side replay the same recordings
+    /// and so share request ids.
+    pub(in super::super) static BEFORE_REPLY: Probe = Probe::new(None);
+
+    /// Where a test may look at an answer's thread: the card was found open
+    /// and the reply is about to be given to the model, which has to be still
+    /// held from the look at the card. A test looks from another thread
+    /// whether it is.
+    pub(in super::super) static AT_APPLY: Probe = Probe::new(None);
+
+    /// A place a test may be told of: the observer, by address, and the request.
+    pub(in super::super) type Probe = std::sync::RwLock<Option<fn(usize, &str)>>;
+
+    pub(super) fn before_reply(shared: &Shared, id: &str) {
+        told(&BEFORE_REPLY, shared, id);
+    }
+
+    pub(super) fn at_apply(shared: &Shared, id: &str) {
+        told(&AT_APPLY, shared, id);
+    }
+
+    fn told(probe: &Probe, shared: &Shared, id: &str) {
+        let test = *probe.read().unwrap_or_else(|held| held.into_inner());
+        if let Some(test) = test {
+            test(shared as *const Shared as usize, id);
+        }
     }
 }

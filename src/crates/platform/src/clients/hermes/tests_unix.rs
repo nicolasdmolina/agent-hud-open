@@ -26,6 +26,8 @@ mod handshake;
 mod live;
 #[path = "tests/reconnect.rs"]
 mod reconnect;
+#[path = "tests/replies.rs"]
+mod replies;
 #[path = "tests/stalled.rs"]
 mod stalled;
 #[path = "tests/verifier.rs"]

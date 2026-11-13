@@ -8,8 +8,14 @@
 //! the test). The pause is keyed by the observer as well as the request:
 //! tests that run side by side replay the same recordings and so share
 //! request ids, and keyed by the id alone another test's answer walked
-//! into it. Every assertion stands. Only pretend gateways and temporary
-//! homes.
+//! into it. And the recorded settlement is played for a stale-generation
+//! refusal in both orderings, as the fifth review's diagnostic did: the
+//! pretend gateway refused the answer as stale and still listed its
+//! request as waiting, so the poll let go at the end reopened the card
+//! about once in thirty runs. Every assertion stands. The fifth review
+//! found that the moved pause no longer tells a handler with two holds
+//! from one with one; `replies.rs` checks that at the place itself. Only
+//! pretend gateways and temporary homes.
 use super::super::{answer, visit::Visit};
 use super::{
     fake::{Fake, Hold},
@@ -109,13 +115,15 @@ fn verifier4_poll_between_reply_check_and_apply_must_keep_question_and_approval_
                 assert!(shared.model().gateway.pending(&id).is_some());
                 assert!(shared.model().answered.get(&id).unwrap().closed.is_none());
                 let socket = gateway.world().calls(method)[0].0;
+                // Success and already_resolved settle in the fake gateway
+                // before replying. A stale-generation refusal is followed
+                // by the recorded external settlement, in both orderings:
+                // a request refused as stale is over in the gateway too,
+                // and a poll let go afterwards must not find it waiting.
+                if reply == Some("stale_generation") {
+                    gateway.play(recording, Some(settled));
+                }
                 if preempt {
-                    // Success and already_resolved settle in the fake gateway
-                    // before replying. A stale-generation refusal is followed
-                    // by the recorded external settlement before its poll.
-                    if reply == Some("stale_generation") {
-                        gateway.play(recording, Some(settled));
-                    }
                     poll.released.store(true, Ordering::Release);
                     shared.want_poll();
                     until("real poll closes card in reply check/apply gap", || {
