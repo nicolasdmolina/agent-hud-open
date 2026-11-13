@@ -111,11 +111,12 @@ impl Requests {
         let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut result: HashMap<String, HashMap<String, Vec<Value>>> = HashMap::new();
         for item in &state.pending {
-            let (source, session, kind) = match &item.content {
+            let (source, session, kind, call) = match &item.content {
                 Content::Hook(request) => (
                     request.source.as_str(),
                     request.session_id.as_str(),
                     request.kind.as_str(),
+                    request.call_id.as_deref(),
                 ),
                 Content::Native(view) => {
                     match (view["source"].as_str(), view["sessionId"].as_str()) {
@@ -123,13 +124,14 @@ impl Requests {
                             source,
                             session,
                             view["kind"].as_str().unwrap_or("permission"),
+                            view["callId"].as_str(),
                         ),
                         _ => continue,
                     }
                 }
             };
             result.entry(source.into()).or_default().entry(session.into()).or_default().push(
-                serde_json::json!({"id":item.id,"sessionId":session,"kind":kind,"at":chrono::DateTime::<chrono::Utc>::from_timestamp_millis(item.created_ms).map(|v|v.to_rfc3339())})
+                serde_json::json!({"id":item.id,"callId":call,"sessionId":session,"kind":kind,"at":chrono::DateTime::<chrono::Utc>::from_timestamp_millis(item.created_ms).map(|v|v.to_rfc3339())})
             );
         }
         result

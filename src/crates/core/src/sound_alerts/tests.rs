@@ -156,10 +156,14 @@ fn a_second_request_waiting_beside_the_first_sounds_again() {
 }
 
 #[test]
-fn the_transcripts_sighting_and_its_card_are_one_wait() {
+fn a_card_seen_beside_its_sighting_is_one_request() {
     let mut tracker = started();
     let seen = [waiting("s1", &[("log:claude:s1:call-1", "permission")])];
-    let card = [waiting("s1", &[("card-1", "permission")])];
+    // Presentation hides the sighting behind the card and notes it.
+    let card = [same_as(
+        waiting("s1", &[("card-1", "permission")]),
+        "log:claude:s1:call-1",
+    )];
     assert_eq!(
         look(&mut tracker, &no_events(), &seen, &on(), T + 1).len(),
         1
@@ -167,13 +171,56 @@ fn the_transcripts_sighting_and_its_card_are_one_wait() {
     assert!(look(&mut tracker, &no_events(), &card, &on(), T + 2).is_empty());
     // The card runs out and the transcript shows the call waiting still.
     assert!(look(&mut tracker, &no_events(), &seen, &on(), T + 3).is_empty());
+    // Card first, its sighting read later: still one request.
     let mut tracker = started();
+    let alone = [waiting("s1", &[("card-1", "permission")])];
     assert_eq!(
-        look(&mut tracker, &no_events(), &card, &on(), T + 1).len(),
+        look(&mut tracker, &no_events(), &alone, &on(), T + 1).len(),
         1
     );
+    assert!(look(&mut tracker, &no_events(), &card, &on(), T + 2).is_empty());
+    assert!(look(&mut tracker, &no_events(), &seen, &on(), T + 3).is_empty());
+}
+
+#[test]
+fn a_card_and_a_sighting_never_seen_together_are_two_requests() {
+    // Preferring an extra sound to a silenced question.
+    let mut tracker = started();
+    let seen = [waiting("s1", &[("log:claude:s1:call-1", "permission")])];
+    let card = [waiting("s1", &[("card-1", "permission")])];
+    assert_eq!(
+        look(&mut tracker, &no_events(), &seen, &on(), T + 1).len(),
+        1
+    );
+    assert_eq!(
+        look(&mut tracker, &no_events(), &card, &on(), T + 2),
+        [needs_you("s1")]
+    );
     let other = [waiting("s1", &[("log:claude:s1:call-2", "permission")])];
-    assert!(look(&mut tracker, &no_events(), &other, &on(), T + 2).is_empty());
+    assert_eq!(
+        look(&mut tracker, &no_events(), &other, &on(), T + 3),
+        [needs_you("s1")]
+    );
+}
+
+#[test]
+fn a_card_and_a_sighting_naming_one_call_are_one_request() {
+    let mut tracker = started();
+    let mut seen = waiting("s1", &[("log:droid:s1:toolu_1", "permission")]);
+    seen["liveFacts"]["requests"][0]["callId"] = json!("toolu_1");
+    let mut card = waiting("s1", &[("hook:droid:9:1", "permission")]);
+    card["liveFacts"]["requests"][0]["callId"] = json!("toolu_1");
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[seen], &on(), T + 1).len(),
+        1
+    );
+    assert!(look(&mut tracker, &no_events(), &[card.clone()], &on(), T + 2).is_empty());
+    card["liveFacts"]["requests"][0]["id"] = json!("hook:droid:9:2");
+    card["liveFacts"]["requests"][0]["callId"] = json!("toolu_2");
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[card], &on(), T + 3),
+        [needs_you("s1")]
+    );
 }
 
 #[test]
@@ -234,6 +281,11 @@ fn the_chosen_sound_names_ride_on_each_alert() {
     );
 }
 
+/// `session`, its one request a card standing for the sighting `log`.
+fn same_as(mut session: Value, log: &str) -> Value {
+    session["liveFacts"]["requests"][0]["sameAs"] = json!(log);
+    session
+}
 /// A session waiting on one request of `kind` opened at `at`.
 fn waiting_since(id: &str, request: &str, kind: &str, at: &str) -> Value {
     let mut session = waiting(id, &[(request, kind)]);
@@ -413,4 +465,99 @@ fn decided_identities_are_forgotten_a_day_after_last_seen() {
     assert_eq!(tracker.decided.len(), 100);
     tracker.update(&no_events(), &[], &on(), T + 100 + 86_400_000);
     assert!(tracker.decided.is_empty());
+}
+
+#[test]
+fn a_new_question_card_soon_after_an_answered_sighting_sounds() {
+    let mut tracker = started();
+    let a = waiting_since(
+        "s1",
+        "log:claude:s1:call-a",
+        "question",
+        iso(T).as_str().unwrap(),
+    );
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[a], &on(), T + 1).len(),
+        1
+    );
+    // A is answered outside the HUD and a different question B opens five
+    // seconds later; no look sees the session running in between. B's card
+    // stands for no sighting, as A's was gone when it came.
+    let b = waiting_since(
+        "s1",
+        "hook:claude:epoch:2",
+        "question",
+        iso(T + 5_000).as_str().unwrap(),
+    );
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[b.clone()], &on(), T + 5_001),
+        [needs_you("s1")]
+    );
+    assert!(look(&mut tracker, &no_events(), &[b], &on(), T + 6_000).is_empty());
+}
+
+#[test]
+fn the_same_question_carded_eleven_seconds_late_does_not_repeat() {
+    let mut tracker = started();
+    let a = waiting_since(
+        "s1",
+        "log:claude:s1:call-a",
+        "question",
+        iso(T).as_str().unwrap(),
+    );
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[a], &on(), T + 1).len(),
+        1
+    );
+    // The hook for the same call registers eleven seconds later, while the
+    // transcript still shows the call open beside it.
+    let card = waiting_since(
+        "s1",
+        "hook:claude:epoch:1",
+        "question",
+        iso(T + 11_000).as_str().unwrap(),
+    );
+    let card = same_as(card, "log:claude:s1:call-a");
+    assert!(look(&mut tracker, &no_events(), &[card], &on(), T + 11_001).is_empty());
+}
+
+#[test]
+fn the_same_question_observed_late_does_not_repeat() {
+    let mut tracker = started();
+    let a = waiting_since(
+        "s1",
+        "log:claude:s1:call-a",
+        "question",
+        iso(T).as_str().unwrap(),
+    );
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[a], &on(), T + 1).len(),
+        1
+    );
+    let card = waiting_since(
+        "s1",
+        "hook:claude:epoch:1",
+        "question",
+        iso(T + 1_000).as_str().unwrap(),
+    );
+    let card = same_as(card, "log:claude:s1:call-a");
+    assert!(look(&mut tracker, &no_events(), &[card], &on(), T + 11_001).is_empty());
+}
+
+#[test]
+fn the_ring_keeps_each_look_and_32_before_it_without_growing() {
+    let mut tracker = started();
+    for pass in 1..=100 {
+        let sessions: Vec<_> = (0..100)
+            .map(|i| waiting(&format!("s{pass}-{i}"), &[("card", "question")]))
+            .collect();
+        let out = tracker.update(&no_events(), &sessions, &on(), T + pass);
+        let items = out["items"].as_array().unwrap();
+        assert_eq!(items.len(), if pass == 1 { 100 } else { 132 });
+        for session in &sessions {
+            assert!(items.iter().any(|a| a["sessionId"] == session["id"]));
+        }
+    }
+    let out = tracker.update(&no_events(), &[], &on(), T + 101);
+    assert_eq!(out["items"].as_array().unwrap().len(), 32);
 }

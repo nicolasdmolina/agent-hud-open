@@ -8,11 +8,12 @@
 //! them is decided then, so none sounds on its own later.
 use super::*;
 
-/// A request a session waits on: its id, its kind, and when it opened.
+/// A request a session waits on, by every name it goes by: its own id, its
+/// tool call (`callId`), and the transcript sighting a card stands for
+/// (`sameAs`, see `presentation::requests`). Names are only ever joined on
+/// that evidence, never by kind or timing.
 struct Request {
-    id: String,
-    kind: String,
-    at: Option<i64>,
+    names: Vec<String>,
 }
 /// What a session was waiting on at the last look: its requests (none for a
 /// wait its hooks or process report without a card).
@@ -34,9 +35,7 @@ const KEPT_MS: i64 = 86_400_000;
 /// island keeps events; a look's own alerts are never dropped before a
 /// snapshot carries them.
 const KEPT_ITEMS: usize = 32;
-/// How close in time a transcript's sighting of a request and a card must
-/// open to be taken for the same call: a card has no call id of its own.
-const SAME_CALL_MS: i64 = 10_000;
+
 /// The sounds a settings file without its own choice plays.
 pub(crate) const NEEDS_YOU_SOUND: &str = "Glass";
 pub(crate) const FINISHED_SOUND: &str = "Hero";
@@ -56,29 +55,17 @@ fn requests(session: &Value) -> Vec<Request> {
         .into_iter()
         .flatten()
         .filter_map(|r| {
+            let id = r["id"].as_str()?;
+            let call = r["callId"].as_str().map(|call| format!("call:{call}"));
+            let same = r["sameAs"].as_str().map(str::to_owned);
             Some(Request {
-                id: r["id"].as_str()?.into(),
-                kind: r["kind"].as_str()?.into(),
-                at: r["at"].as_str().and_then(metering::date_ms),
+                names: [Some(id.to_owned()), call, same]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
             })
         })
         .collect()
-}
-/// A transcript's sighting of a call (`log:` id) and the card for that call
-/// are one wait, in either order: one of them just left, exactly one is the
-/// transcript's, they are of one kind, and they opened within
-/// `SAME_CALL_MS`. Two sightings, two cards, or a card opened later are
-/// different requests.
-fn taken_over(previous: &Wait, now: &[Request], new: &Request) -> bool {
-    previous.requests.iter().any(|old| {
-        old.kind == new.kind
-            && !now.iter().any(|r| r.id == old.id)
-            && old.id.starts_with("log:") != new.id.starts_with("log:")
-            && old
-                .at
-                .zip(new.at)
-                .is_some_and(|(a, b)| (a - b).abs() <= SAME_CALL_MS)
-    })
 }
 
 impl Tracker {
@@ -141,18 +128,20 @@ impl Tracker {
             let previous = self.waits.remove(&key);
             let mut told = None;
             for request in &now_requests {
-                let identity = format!("needs-you:{source}:{id}:{}", request.id);
-                if !self.first(&identity, now) {
-                    continue;
-                }
-                // A wait already told without a card, or the transcript's
-                // sighting of the same call, is the same wait once its card
-                // comes. The first new request of the look names the alert.
-                let same_wait = previous.as_ref().is_some_and(|p| {
-                    p.requests.is_empty() || taken_over(p, &now_requests, request)
-                });
-                if !same_wait {
-                    told.get_or_insert(identity);
+                let names: Vec<String> = request
+                    .names
+                    .iter()
+                    .map(|name| format!("needs-you:{source}:{id}:{name}"))
+                    .collect();
+                // New only if it goes by no name decided before; all its
+                // names are decided now.
+                let new = names
+                    .iter()
+                    .fold(true, |new, name| self.first(name, now) && new);
+                // A wait already told without a card is the same wait once
+                // its card comes. The look's first new request names the alert.
+                if new && !previous.as_ref().is_some_and(|p| p.requests.is_empty()) {
+                    told.get_or_insert(names[0].clone());
                 }
             }
             if now_requests.is_empty() {

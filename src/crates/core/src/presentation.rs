@@ -156,18 +156,11 @@ impl Presentation<'_> {
         if !session["liveFacts"].is_object() {
             session["liveFacts"] = json!({"turnId":null,"turnStartedAt":null,"outcome":null,"endedAt":null,"limitedUntil":null,"observedAt":session["updatedAt"],"lastEventAt":session["updatedAt"],"activity":null,"requests":[]});
         }
-        let mut requests = session["liveFacts"]["requests"]
+        let requests = session["liveFacts"]["requests"]
             .as_array()
             .cloned()
             .unwrap_or_default();
-        requests.retain(|existing| {
-            !existing["id"]
-                .as_str()
-                .is_some_and(|id| id.starts_with("log:"))
-                || !pending.iter().any(|p| p["kind"] == existing["kind"])
-        });
-        requests.extend(pending.iter().cloned());
-        session["liveFacts"]["requests"] = json!(requests);
+        session["liveFacts"]["requests"] = json!(requests::merge(requests, pending));
         if let Some(at) = at {
             let at = at.max(
                 session["updatedAt"]
@@ -295,5 +288,6 @@ pub(super) fn sort_sessions(sessions: &mut [Value]) {
     });
 }
 
+mod requests;
 #[cfg(test)]
 mod tests;
