@@ -27,7 +27,7 @@ Deliberate differences:
 - The HUD has no glass material: every look is solid, with a transparency (decided 2026-10-21, after the React Bits / Liquid Glass look proved out of reach in the WebView; c07 #57).
 - Next keeps its own settings and database, reads legacy preferences once and never writes Open's database. The one-time import of quota history reads `usage-ledger.sqlite` from the Application Support folder named by the `AgentHUDDataDirectory` key in the Info.plist of the installed `Agent HUD.app` (in `/Applications` or `~/Applications`); with no such key it reads Agent HUD Open's folder. An in-place update replaces that bundle with the app built on Next, so a product that updates an earlier app in place must declare the same key, or the import misses the earlier app's ledger.
 - Demo mode only through `--demo`.
-- The LAN token-usage and session service, which Open does not have.
+- The LAN token-usage and session service, which Open does not have. (Agent HUD Fork: hidden and never started, see FORK.md, ticket 08.)
 - The Windows and Linux adapters.
 - Decided 2026-10-20:
   - during the preview, client hooks default off and install only with a delegated fixed executable, so a preview build never rewrites existing client hooks;

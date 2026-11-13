@@ -136,7 +136,10 @@ type SidebarPage = {
 export function sidebarPages(
   extensionPages: AppExtensionPage[],
 ): SidebarPage[] {
-  const list: SidebarPage[] = pages.map((page) => {
+  // Agent HUD Fork (ticket 08, FORK.md): the phone pairing page is hidden;
+  // its pane and the LAN code stay.
+  const shown = pages.filter((page) => page.id !== "local-network");
+  const list: SidebarPage[] = shown.map((page) => {
     const replacement = extensionPages.find(
       (item) => item.replaces === page.id,
     );
