@@ -87,10 +87,6 @@ export interface SessionTurnBars {
 }
 export interface AttentionFact {
   id: string;
-  /** The tool call it holds, where the transcript or the hook names it. */
-  callId?: string | null;
-  /** On a card: the transcript sighting of the same request it stands for. */
-  sameAs?: string;
   sessionId: string;
   kind: "permission" | "question" | "plan";
   at: string;

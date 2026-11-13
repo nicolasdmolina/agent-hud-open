@@ -8,13 +8,10 @@
 //! them is decided then, so none sounds on its own later.
 use super::*;
 
-/// A request a session waits on, by every name it goes by: its own id, its
-/// tool call (`callId`), and the transcript sighting a card stands for
-/// (`sameAs`, see `presentation::requests`). Names are only ever joined on
-/// that evidence, never by kind or timing.
-struct Request {
-    names: Vec<String>,
-}
+mod requests;
+pub(crate) use requests::Heard;
+use requests::Request;
+
 /// What a session was waiting on at the last look: its requests (none for a
 /// wait its hooks or process report without a card).
 struct Wait {
@@ -49,25 +46,6 @@ struct Alert {
     id: String,
 }
 
-fn requests(session: &Value) -> Vec<Request> {
-    session["liveFacts"]["requests"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|r| {
-            let id = r["id"].as_str()?;
-            let call = r["callId"].as_str().map(|call| format!("call:{call}"));
-            let same = r["sameAs"].as_str().map(str::to_owned);
-            Some(Request {
-                names: [Some(id.to_owned()), call, same]
-                    .into_iter()
-                    .flatten()
-                    .collect(),
-            })
-        })
-        .collect()
-}
-
 impl Tracker {
     pub fn new() -> Self {
         Self {
@@ -89,6 +67,7 @@ impl Tracker {
         &mut self,
         island: &Value,
         sessions: &[Value],
+        heard: &Heard,
         settings: &Value,
         now: i64,
     ) -> Value {
@@ -120,7 +99,7 @@ impl Tracker {
             else {
                 continue;
             };
-            let now_requests = requests(session);
+            let now_requests = requests::requests(session, source, id, heard);
             if session["state"] != "waiting" && now_requests.is_empty() {
                 continue;
             }

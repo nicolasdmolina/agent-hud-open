@@ -116,7 +116,7 @@ impl LiveLog {
         let turn = self.turns.back();
         let observed = self.last_event().into_iter().chain(subagents_at).max()?;
         let child_working = subagents_at.is_some();
-        let requests = self.requests(now).map(|call| json!({"id":format!("log:{source}:{id}:{}",call.id),"callId":call.id,"sessionId":id,"kind":call.request,"at":crate::iso(call.at)})).collect::<Vec<_>>();
+        let requests = self.requests(now).map(|call| json!({"id":format!("log:{source}:{id}:{}",call.id),"sessionId":id,"kind":call.request,"at":crate::iso(call.at)})).collect::<Vec<_>>();
         let activity = self.activity.as_ref().map(|activity| {
             let open = activity.calls.iter().rev().find(|call| call.work.is_some_and(Work::shown)).or_else(|| activity.calls.last());
             json!({"work":activity.work,"openCall":open.map(|call| json!({"work":call.work,"at":crate::iso(call.at)})),"toolAt":activity.tool_at.and_then(crate::iso),"delegating":subagents_at.is_some() || activity.calls.iter().any(|call|call.work==Some(Work::Agents)),"awaitsModel":activity.awaits_model(),"retrying":activity.retrying,"compactingSince":null})

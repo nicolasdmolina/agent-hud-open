@@ -105,18 +105,31 @@ impl Requests {
             .native_waiting
             .clone()
     }
+    /// The tool call each waiting card holds, by card id, where its client
+    /// names it (`call_id`, a native card's `callId`).
+    pub fn calls(&self) -> HashMap<String, String> {
+        let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let call = |item: &super::Pending| match &item.content {
+            Content::Hook(request) => request.call_id.clone(),
+            Content::Native(view) => view["callId"].as_str().map(str::to_owned),
+        };
+        state
+            .pending
+            .iter()
+            .filter_map(|item| Some((item.id.clone(), call(item)?)))
+            .collect()
+    }
     /// Small per-snapshot index: presentation never locks this owner once for
     /// every historical transcript, or clones tool payloads just to sort sessions.
     pub fn session_attention(&self) -> HashMap<String, HashMap<String, Vec<Value>>> {
         let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut result: HashMap<String, HashMap<String, Vec<Value>>> = HashMap::new();
         for item in &state.pending {
-            let (source, session, kind, call) = match &item.content {
+            let (source, session, kind) = match &item.content {
                 Content::Hook(request) => (
                     request.source.as_str(),
                     request.session_id.as_str(),
                     request.kind.as_str(),
-                    request.call_id.as_deref(),
                 ),
                 Content::Native(view) => {
                     match (view["source"].as_str(), view["sessionId"].as_str()) {
@@ -124,14 +137,13 @@ impl Requests {
                             source,
                             session,
                             view["kind"].as_str().unwrap_or("permission"),
-                            view["callId"].as_str(),
                         ),
                         _ => continue,
                     }
                 }
             };
             result.entry(source.into()).or_default().entry(session.into()).or_default().push(
-                serde_json::json!({"id":item.id,"callId":call,"sessionId":session,"kind":kind,"at":chrono::DateTime::<chrono::Utc>::from_timestamp_millis(item.created_ms).map(|v|v.to_rfc3339())})
+                serde_json::json!({"id":item.id,"sessionId":session,"kind":kind,"at":chrono::DateTime::<chrono::Utc>::from_timestamp_millis(item.created_ms).map(|v|v.to_rfc3339())})
             );
         }
         result

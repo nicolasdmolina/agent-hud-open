@@ -11,6 +11,8 @@ pub(super) struct Presentation<'a> {
     discovery: &'a [ProviderDiscovery],
     pending: HashMap<String, HashMap<String, Vec<Value>>>,
     native_waiting: HashMap<String, HashSet<String>>,
+    /// Each carded session's transcript requests before cards hide them.
+    pub(super) heard: std::cell::RefCell<requests::Heard>,
     now: i64,
 }
 impl AgentHudCore {
@@ -24,6 +26,7 @@ impl AgentHudCore {
             discovery: &self.discovery,
             pending: self.requests.session_attention(),
             native_waiting: self.requests.native_waiting_sessions(),
+            heard: Default::default(),
             now,
         }
     }
@@ -142,6 +145,7 @@ impl Presentation<'_> {
         }
         let source = session["source"].as_str().unwrap_or("");
         let id = session["id"].as_str().unwrap_or("");
+        let key = format!("{source}:{id}");
         let Some(pending) = self.pending(source, id) else {
             if self.native_waiting(source, id) {
                 session["state"] = json!("waiting");
@@ -160,6 +164,7 @@ impl Presentation<'_> {
             .as_array()
             .cloned()
             .unwrap_or_default();
+        self.heard.borrow_mut().insert(key, requests.clone());
         session["liveFacts"]["requests"] = json!(requests::merge(requests, pending));
         if let Some(at) = at {
             let at = at.max(
@@ -288,6 +293,6 @@ pub(super) fn sort_sessions(sessions: &mut [Value]) {
     });
 }
 
-mod requests;
+pub(crate) mod requests;
 #[cfg(test)]
 mod tests;

@@ -27,10 +27,43 @@ fn running(id: &str) -> Value {
 fn completed(session: &str, turn: &str) -> Value {
     json!({"revision":1,"items":[{"id":format!("event:1:{turn}"),"kind":"completion","at":"2027-01-15T08:00:00Z","source":"codex","sessionId":session,"turnId":turn}]})
 }
+/// Test rows may carry what the snapshot hides beside them: `heard`, the
+/// transcript requests a card hid, and `calls`, each card's tool call.
+type Hidden = (
+    Vec<Value>,
+    crate::presentation::requests::Heard,
+    HashMap<String, String>,
+);
+fn heard(sessions: &[Value]) -> Hidden {
+    let (mut sightings, mut calls) = (HashMap::new(), HashMap::new());
+    let rows = sessions
+        .iter()
+        .map(|session| {
+            let mut session = session.clone();
+            let key = format!(
+                "{}:{}",
+                session["source"].as_str().unwrap(),
+                session["id"].as_str().unwrap()
+            );
+            let fields = session.as_object_mut().unwrap();
+            if let Some(Value::Array(rows)) = fields.remove("heard") {
+                sightings.insert(key, rows);
+            }
+            if let Some(Value::Object(map)) = fields.remove("calls") {
+                calls.extend(
+                    map.into_iter()
+                        .map(|(card, call)| (card, call.as_str().unwrap().to_owned())),
+                );
+            }
+            session
+        })
+        .collect();
+    (rows, sightings, calls)
+}
 /// A tracker past its first look, which only notes what already waits.
 fn started() -> Tracker {
     let mut tracker = Tracker::new();
-    tracker.update(&no_events(), &[], &on(), T);
+    tracker.update(&no_events(), &[], &Heard::default(), &on(), T);
     tracker
 }
 /// The alerts the look adds, as (kind, session, sound).
@@ -46,7 +79,12 @@ fn look(
         .iter()
         .map(|item| item["id"].as_str().unwrap().to_owned())
         .collect();
-    let out = tracker.update(island, sessions, settings, now);
+    let (sessions, sightings, calls) = heard(sessions);
+    let heard = Heard {
+        sightings: Some(&sightings),
+        calls,
+    };
+    let out = tracker.update(island, &sessions, &heard, settings, now);
     out["items"]
         .as_array()
         .unwrap()
@@ -113,8 +151,11 @@ fn the_same_request_across_refreshes_sounds_once() {
         assert!(look(&mut tracker, &no_events(), &sessions, &on(), T + at).is_empty());
     }
     // The same look given twice adds nothing either.
-    let first = tracker.update(&no_events(), &sessions, &on(), T + 6);
-    assert_eq!(tracker.update(&no_events(), &sessions, &on(), T + 6), first);
+    let first = tracker.update(&no_events(), &sessions, &Heard::default(), &on(), T + 6);
+    assert_eq!(
+        tracker.update(&no_events(), &sessions, &Heard::default(), &on(), T + 6),
+        first
+    );
 }
 
 #[test]
@@ -206,19 +247,38 @@ fn a_card_and_a_sighting_never_seen_together_are_two_requests() {
 #[test]
 fn a_card_and_a_sighting_naming_one_call_are_one_request() {
     let mut tracker = started();
-    let mut seen = waiting("s1", &[("log:droid:s1:toolu_1", "permission")]);
-    seen["liveFacts"]["requests"][0]["callId"] = json!("toolu_1");
-    let mut card = waiting("s1", &[("hook:droid:9:1", "permission")]);
-    card["liveFacts"]["requests"][0]["callId"] = json!("toolu_1");
+    let seen = waiting("s1", &[("log:claude:s1:toolu_1", "permission")]);
+    // Never there together: the call they both name makes them one.
+    let mut card = waiting("s1", &[("hook:claude:9:1", "permission")]);
+    card["calls"] = json!({"hook:claude:9:1":"toolu_1"});
     assert_eq!(
         look(&mut tracker, &no_events(), &[seen], &on(), T + 1).len(),
         1
     );
-    assert!(look(&mut tracker, &no_events(), &[card.clone()], &on(), T + 2).is_empty());
-    card["liveFacts"]["requests"][0]["id"] = json!("hook:droid:9:2");
-    card["liveFacts"]["requests"][0]["callId"] = json!("toolu_2");
+    assert!(look(&mut tracker, &no_events(), &[card], &on(), T + 2).is_empty());
+    let mut other = waiting("s1", &[("hook:claude:9:2", "permission")]);
+    other["calls"] = json!({"hook:claude:9:2":"toolu_2"});
     assert_eq!(
-        look(&mut tracker, &no_events(), &[card], &on(), T + 3),
+        look(&mut tracker, &no_events(), &[other], &on(), T + 3),
+        [needs_you("s1")]
+    );
+}
+
+#[test]
+fn a_card_naming_another_call_than_the_sighting_beside_it_sounds() {
+    let mut tracker = started();
+    let seen = waiting("s1", &[("log:claude:s1:toolu_1", "permission")]);
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[seen], &on(), T + 1).len(),
+        1
+    );
+    let mut card = same_as(
+        waiting("s1", &[("hook:claude:9:2", "permission")]),
+        "log:claude:s1:toolu_1",
+    );
+    card["calls"] = json!({"hook:claude:9:2":"toolu_2"});
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[card], &on(), T + 2),
         [needs_you("s1")]
     );
 }
@@ -242,13 +302,19 @@ fn with_sound_off_nothing_is_produced() {
     let mut tracker = started();
     let sessions = [waiting("s1", &[("card-1", "permission")])];
     let island = completed("s2", "turn-1");
-    let out = tracker.update(&island, &sessions, &off(), T + 1);
+    let out = tracker.update(&island, &sessions, &Heard::default(), &off(), T + 1);
     assert_eq!(out["items"], json!([]));
     // Turned on while that request still waits and the completion is still
     // in the island's history: neither sounds late.
     assert!(look(&mut tracker, &island, &sessions, &on(), T + 2).is_empty());
     // A setting with no switch at all is off.
-    let out = tracker.update(&completed("s3", "turn-2"), &[], &json!({}), T + 3);
+    let out = tracker.update(
+        &completed("s3", "turn-2"),
+        &[],
+        &Heard::default(),
+        &json!({}),
+        T + 3,
+    );
     assert_eq!(out["items"], json!([]));
 }
 
@@ -281,9 +347,11 @@ fn the_chosen_sound_names_ride_on_each_alert() {
     );
 }
 
-/// `session`, its one request a card standing for the sighting `log`.
+/// `session`, its one request a card, with the transcript sighting `log`
+/// of the same kind there beside it and hidden by it, as presentation does.
 fn same_as(mut session: Value, log: &str) -> Value {
-    session["liveFacts"]["requests"][0]["sameAs"] = json!(log);
+    let kind = session["liveFacts"]["requests"][0]["kind"].clone();
+    session["heard"] = json!([{"id":log,"sessionId":session["id"],"kind":kind}]);
     session
 }
 /// A session waiting on one request of `kind` opened at `at`.
@@ -359,7 +427,7 @@ fn every_alert_of_one_look_reaches_the_snapshot() {
     let sessions: Vec<_> = (0..17)
         .map(|i| waiting(&format!("s{i}"), &[("card", "permission")]))
         .collect();
-    let out = tracker.update(&no_events(), &sessions, &on(), T + 1);
+    let out = tracker.update(&no_events(), &sessions, &Heard::default(), &on(), T + 1);
     assert_eq!(out["revision"], 17);
     assert_eq!(out["items"].as_array().unwrap().len(), 17);
     // Forty in one look are all kept too; the next look keeps the island's
@@ -367,11 +435,12 @@ fn every_alert_of_one_look_reaches_the_snapshot() {
     let sessions: Vec<_> = (0..40)
         .map(|i| waiting(&format!("t{i}"), &[("card", "permission")]))
         .collect();
-    let out = tracker.update(&no_events(), &sessions, &on(), T + 2);
+    let out = tracker.update(&no_events(), &sessions, &Heard::default(), &on(), T + 2);
     assert_eq!(out["items"].as_array().unwrap().len(), 57);
     let out = tracker.update(
         &no_events(),
         &[waiting("u", &[("card", "question")])],
+        &Heard::default(),
         &on(),
         T + 3,
     );
@@ -439,17 +508,20 @@ fn the_real_island_ignores_completions_before_launch_and_off_then_on_replays_not
     session["liveFacts"]["endedAt"] = iso(now - 1000);
     let events = island.update(&[session.clone()], &[], &[], &[], now);
     assert_eq!(events["items"], json!([]));
-    assert_eq!(sound.update(&events, &[], &on(), now)["items"], json!([]));
+    assert_eq!(
+        sound.update(&events, &[], &Heard::default(), &on(), now)["items"],
+        json!([])
+    );
     session["liveFacts"]["turnId"] = json!("new");
     session["liveFacts"]["endedAt"] = iso(now + 1000);
     let events = island.update(&[session], &[], &[], &[], now + 1001);
     assert_eq!(events["items"].as_array().unwrap().len(), 1);
     assert_eq!(
-        sound.update(&events, &[], &off(), now + 1001)["items"],
+        sound.update(&events, &[], &Heard::default(), &off(), now + 1001)["items"],
         json!([])
     );
     assert_eq!(
-        sound.update(&events, &[], &on(), now + 1002)["items"],
+        sound.update(&events, &[], &Heard::default(), &on(), now + 1002)["items"],
         json!([])
     );
 }
@@ -460,10 +532,16 @@ fn decided_identities_are_forgotten_a_day_after_last_seen() {
     for i in 1..=100 {
         let mut session = waiting("s1", &[]);
         session["liveFacts"]["observedAt"] = iso(T + i);
-        tracker.update(&no_events(), &[session], &on(), T + i);
+        tracker.update(&no_events(), &[session], &Heard::default(), &on(), T + i);
     }
     assert_eq!(tracker.decided.len(), 100);
-    tracker.update(&no_events(), &[], &on(), T + 100 + 86_400_000);
+    tracker.update(
+        &no_events(),
+        &[],
+        &Heard::default(),
+        &on(),
+        T + 100 + 86_400_000,
+    );
     assert!(tracker.decided.is_empty());
 }
 
@@ -557,13 +635,65 @@ fn the_ring_keeps_each_look_and_32_before_it_without_growing() {
         let sessions: Vec<_> = (0..100)
             .map(|i| waiting(&format!("s{pass}-{i}"), &[("card", "question")]))
             .collect();
-        let out = tracker.update(&no_events(), &sessions, &on(), T + pass);
+        let out = tracker.update(&no_events(), &sessions, &Heard::default(), &on(), T + pass);
         let items = out["items"].as_array().unwrap();
         assert_eq!(items.len(), if pass == 1 { 100 } else { 132 });
         for session in &sessions {
             assert!(items.iter().any(|a| a["sessionId"] == session["id"]));
         }
     }
-    let out = tracker.update(&no_events(), &[], &on(), T + 101);
+    let out = tracker.update(&no_events(), &[], &Heard::default(), &on(), T + 101);
     assert_eq!(out["items"].as_array().unwrap().len(), 32);
+}
+
+#[test]
+fn a_new_sighting_beside_a_card_of_its_kind_sounds() {
+    // Verifier round 3, finding 1: card A waits, then a new question B shows
+    // in the transcript; presentation hides both sightings behind A's card.
+    let mut tracker = started();
+    let card = waiting("s1", &[("hook:1", "question")]);
+    let mut first = card.clone();
+    first["heard"] = json!([{"id":"log:claude:s1:a","kind":"question"}]);
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[first], &on(), T + 1).len(),
+        1
+    );
+    let mut both = card;
+    both["heard"] = json!([
+        {"id":"log:claude:s1:a","kind":"question"},
+        {"id":"log:claude:s1:b","kind":"question"}
+    ]);
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[both.clone()], &on(), T + 2),
+        [needs_you("s1")]
+    );
+    assert!(look(&mut tracker, &no_events(), &[both], &on(), T + 3).is_empty());
+}
+
+/// Accepted residual (verifier round 3, finding 3): a stale sighting of an
+/// answered question still there when a different card naming no call comes
+/// is taken for that card, so the card does not sound, nor once the
+/// transcript catches up.
+#[test]
+fn a_stale_sighting_beside_a_distinct_unnamed_card_silences_it() {
+    let mut tracker = started();
+    let a = waiting("s1", &[("log:claude:s1:a", "question")]);
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[a], &on(), T + 1).len(),
+        1
+    );
+    let card = || waiting("s1", &[("hook:claude:epoch:2", "question")]);
+    let b = same_as(card(), "log:claude:s1:a");
+    assert!(look(&mut tracker, &no_events(), &[b], &on(), T + 2).is_empty());
+    let caught_up = same_as(card(), "log:claude:s1:b");
+    assert!(look(&mut tracker, &no_events(), &[caught_up], &on(), T + 3).is_empty());
+}
+
+#[test]
+fn a_named_card_hides_every_sighting_of_its_kind_as_upstream() {
+    // Verifier round 3, finding 2: presentation shows what upstream shows.
+    use crate::presentation::requests::merge;
+    let log = |call: &str| json!({"id":format!("log:claude:s1:{call}"),"sessionId":"s1","kind":"question"});
+    let card = json!({"id":"hook:1","sessionId":"s1","kind":"question"});
+    assert_eq!(merge(vec![log("a"), log("b")], &[card.clone()]), [card]);
 }

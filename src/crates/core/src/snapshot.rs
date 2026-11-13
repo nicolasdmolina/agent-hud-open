@@ -43,6 +43,8 @@ pub(crate) struct Rendered {
 pub(crate) struct ListedRows {
     /// Each listed session's row with the log it came from.
     rows: Vec<(PathBuf, Value)>,
+    /// Carded sessions' requests before cards hid any (`sound_alerts`).
+    heard: presentation::requests::Heard,
 }
 
 impl crate::AgentHudCore {
@@ -253,9 +255,13 @@ impl crate::AgentHudCore {
         let island_events = self
             .island_events
             .update(&sessions, &quotas, &accounts, &providers, now);
-        let sound_alerts = self
-            .sound_alerts
-            .update(&island_events, &sessions, &self.settings, now);
+        let heard = sound_alerts::Heard {
+            sightings: self.listed_rows.as_ref().map(|(_, rows)| &rows.heard),
+            calls: self.requests.calls(),
+        };
+        let sound_alerts =
+            self.sound_alerts
+                .update(&island_events, &sessions, &heard, &self.settings, now);
         self.render.last = Some((self.render_key(), self.render_due(now)));
         let projection = self
             .usage_projection
