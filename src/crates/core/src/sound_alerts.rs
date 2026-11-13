@@ -2,12 +2,22 @@
 //! waiting on the user (`needs-you`) and a turn that ends (`finished`).
 //! Steps and tool calls make none. Core only decides; the host plays the
 //! named sound for each alert id it has not played yet.
+//!
+//! Several requests that newly wait in one session at the same look make one
+//! `needs-you`, not one each: one ping per session per look. Every one of
+//! them is decided then, so none sounds on its own later.
 use super::*;
 
-/// What a session was waiting on at the last look: its requests, by id and
-/// kind (none for a wait its hooks or process report without a card).
+/// A request a session waits on: its id, its kind, and when it opened.
+struct Request {
+    id: String,
+    kind: String,
+    at: Option<i64>,
+}
+/// What a session was waiting on at the last look: its requests (none for a
+/// wait its hooks or process report without a card).
 struct Wait {
-    requests: Vec<(String, String)>,
+    requests: Vec<Request>,
 }
 pub(crate) struct Tracker {
     primed: bool,
@@ -20,7 +30,13 @@ pub(crate) struct Tracker {
     items: VecDeque<Value>,
 }
 const KEPT_MS: i64 = 86_400_000;
-const KEPT_ITEMS: usize = 16;
+/// Alerts of earlier looks kept beside the newest look's, as many as the
+/// island keeps events; a look's own alerts are never dropped before a
+/// snapshot carries them.
+const KEPT_ITEMS: usize = 32;
+/// How close in time a transcript's sighting of a request and a card must
+/// open to be taken for the same call: a card has no call id of its own.
+const SAME_CALL_MS: i64 = 10_000;
 /// The sounds a settings file without its own choice plays.
 pub(crate) const NEEDS_YOU_SOUND: &str = "Glass";
 pub(crate) const FINISHED_SOUND: &str = "Hero";
@@ -34,22 +50,34 @@ struct Alert {
     id: String,
 }
 
-fn requests(session: &Value) -> Vec<(String, String)> {
+fn requests(session: &Value) -> Vec<Request> {
     session["liveFacts"]["requests"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|r| Some((r["id"].as_str()?.into(), r["kind"].as_str()?.into())))
+        .filter_map(|r| {
+            Some(Request {
+                id: r["id"].as_str()?.into(),
+                kind: r["kind"].as_str()?.into(),
+                at: r["at"].as_str().and_then(metering::date_ms),
+            })
+        })
         .collect()
 }
-/// A transcript's sighting of a request (`log:` id) and the card for it are
-/// one wait: a new id is that same wait passing between them when one of the
-/// same kind just left and either side is the transcript's.
-fn taken_over(previous: &Wait, now: &[(String, String)], id: &str, kind: &str) -> bool {
-    previous.requests.iter().any(|(old, old_kind)| {
-        old_kind == kind
-            && !now.iter().any(|(id, _)| id == old)
-            && (old.starts_with("log:") || id.starts_with("log:"))
+/// A transcript's sighting of a call (`log:` id) and the card for that call
+/// are one wait, in either order: one of them just left, exactly one is the
+/// transcript's, they are of one kind, and they opened within
+/// `SAME_CALL_MS`. Two sightings, two cards, or a card opened later are
+/// different requests.
+fn taken_over(previous: &Wait, now: &[Request], new: &Request) -> bool {
+    previous.requests.iter().any(|old| {
+        old.kind == new.kind
+            && !now.iter().any(|r| r.id == old.id)
+            && old.id.starts_with("log:") != new.id.starts_with("log:")
+            && old
+                .at
+                .zip(new.at)
+                .is_some_and(|(a, b)| (a - b).abs() <= SAME_CALL_MS)
     })
 }
 
@@ -112,15 +140,16 @@ impl Tracker {
             let key = format!("{source}:{id}");
             let previous = self.waits.remove(&key);
             let mut told = None;
-            for (request, kind) in &now_requests {
-                let identity = format!("needs-you:{source}:{id}:{request}");
+            for request in &now_requests {
+                let identity = format!("needs-you:{source}:{id}:{}", request.id);
                 if !self.first(&identity, now) {
                     continue;
                 }
                 // A wait already told without a card, or the transcript's
-                // sighting of it, is the same wait once its card comes.
+                // sighting of the same call, is the same wait once its card
+                // comes. The first new request of the look names the alert.
                 let same_wait = previous.as_ref().is_some_and(|p| {
-                    p.requests.is_empty() || taken_over(p, &now_requests, request, kind)
+                    p.requests.is_empty() || taken_over(p, &now_requests, request)
                 });
                 if !same_wait {
                     told.get_or_insert(identity);
@@ -160,6 +189,7 @@ impl Tracker {
         if settings["sound"] != true {
             self.items.clear();
         } else {
+            let mut added = 0;
             for alert in alerts {
                 if alert.kind == "needs-you" && !primed {
                     continue;
@@ -168,11 +198,12 @@ impl Tracker {
                     "needs-you" => ("soundNeedsYou", NEEDS_YOU_SOUND),
                     _ => ("soundFinished", FINISHED_SOUND),
                 };
-                if self.items.len() == KEPT_ITEMS {
-                    self.items.pop_front();
-                }
+                added += 1;
                 self.revision = self.revision.wrapping_add(1);
                 self.items.push_back(json!({"id":alert.id,"kind":alert.kind,"source":alert.source,"sessionId":alert.session,"sound":settings[key].as_str().unwrap_or(default),"at":iso(now)}));
+            }
+            while self.items.len() > KEPT_ITEMS + added {
+                self.items.pop_front();
             }
         }
         json!({"revision":self.revision,"items":self.items})

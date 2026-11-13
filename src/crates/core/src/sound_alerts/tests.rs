@@ -233,3 +233,184 @@ fn the_chosen_sound_names_ride_on_each_alert() {
         ]
     );
 }
+
+/// A session waiting on one request of `kind` opened at `at`.
+fn waiting_since(id: &str, request: &str, kind: &str, at: &str) -> Value {
+    let mut session = waiting(id, &[(request, kind)]);
+    session["liveFacts"]["requests"][0]["at"] = json!(at);
+    session
+}
+
+#[test]
+fn distinct_transcript_questions_between_refreshes_both_sound() {
+    let mut tracker = started();
+    let a = [waiting("s1", &[("log:claude:s1:call-a", "question")])];
+    let b = [waiting("s1", &[("log:claude:s1:call-b", "question")])];
+    assert_eq!(look(&mut tracker, &no_events(), &a, &on(), T + 1).len(), 1);
+    // A answered and a different question B asked between two looks.
+    assert_eq!(
+        look(&mut tracker, &no_events(), &b, &on(), T + 2),
+        [needs_you("s1")]
+    );
+}
+
+#[test]
+fn a_card_opened_well_after_an_answered_sighting_sounds() {
+    let mut tracker = started();
+    let seen = [waiting_since(
+        "s1",
+        "log:claude:s1:call-a",
+        "permission",
+        "2027-01-15T08:00:00Z",
+    )];
+    let card = [waiting_since(
+        "s1",
+        "card-b",
+        "permission",
+        "2027-01-15T08:01:00Z",
+    )];
+    assert_eq!(
+        look(&mut tracker, &no_events(), &seen, &on(), T + 1).len(),
+        1
+    );
+    assert_eq!(
+        look(&mut tracker, &no_events(), &card, &on(), T + 2),
+        [needs_you("s1")]
+    );
+    // The same, card first: a later sighting of another call sounds.
+    let mut tracker = started();
+    let card = [waiting_since(
+        "s1",
+        "card-a",
+        "permission",
+        "2027-01-15T08:00:00Z",
+    )];
+    let seen = [waiting_since(
+        "s1",
+        "log:claude:s1:call-b",
+        "permission",
+        "2027-01-15T08:01:00Z",
+    )];
+    assert_eq!(
+        look(&mut tracker, &no_events(), &card, &on(), T + 1).len(),
+        1
+    );
+    assert_eq!(
+        look(&mut tracker, &no_events(), &seen, &on(), T + 2),
+        [needs_you("s1")]
+    );
+}
+
+#[test]
+fn every_alert_of_one_look_reaches_the_snapshot() {
+    let mut tracker = started();
+    let sessions: Vec<_> = (0..17)
+        .map(|i| waiting(&format!("s{i}"), &[("card", "permission")]))
+        .collect();
+    let out = tracker.update(&no_events(), &sessions, &on(), T + 1);
+    assert_eq!(out["revision"], 17);
+    assert_eq!(out["items"].as_array().unwrap().len(), 17);
+    // Forty in one look are all kept too; the next look keeps the island's
+    // count of earlier ones beside its own.
+    let sessions: Vec<_> = (0..40)
+        .map(|i| waiting(&format!("t{i}"), &[("card", "permission")]))
+        .collect();
+    let out = tracker.update(&no_events(), &sessions, &on(), T + 2);
+    assert_eq!(out["items"].as_array().unwrap().len(), 57);
+    let out = tracker.update(
+        &no_events(),
+        &[waiting("u", &[("card", "question")])],
+        &on(),
+        T + 3,
+    );
+    let items = out["items"].as_array().unwrap();
+    assert_eq!(items.len(), 33);
+    assert_eq!(items.last().unwrap()["sessionId"], "u");
+}
+
+#[test]
+fn two_new_requests_in_one_session_at_one_look_make_one_sound() {
+    let mut tracker = started();
+    let both = [waiting(
+        "s1",
+        &[("card-a", "permission"), ("card-b", "question")],
+    )];
+    assert_eq!(
+        look(&mut tracker, &no_events(), &both, &on(), T + 1),
+        [needs_you("s1")]
+    );
+    // Neither sounds again, alone or together.
+    assert!(look(&mut tracker, &no_events(), &both, &on(), T + 2).is_empty());
+    let b = [waiting("s1", &[("card-b", "question")])];
+    assert!(look(&mut tracker, &no_events(), &b, &on(), T + 3).is_empty());
+}
+
+#[test]
+fn a_continuous_wait_whose_observed_time_moves_sounds_once() {
+    let mut tracker = started();
+    for i in 1..=10 {
+        let mut session = waiting("s1", &[]);
+        session["liveFacts"]["observedAt"] = iso(T + i);
+        let alerts = look(&mut tracker, &no_events(), &[session], &on(), T + i);
+        assert_eq!(alerts.len(), usize::from(i == 1), "look {i}");
+    }
+}
+
+/// Known limitation: a wait without a card has no identity of its own, so
+/// one that flaps through running and comes back with another observed
+/// time is told again.
+#[test]
+fn a_wait_without_a_card_that_flaps_through_running_is_told_again() {
+    let mut tracker = started();
+    let card = waiting("s1", &[("card-a", "permission")]);
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[card], &on(), T + 1).len(),
+        1
+    );
+    look(&mut tracker, &no_events(), &[running("s1")], &on(), T + 2);
+    let mut wait = waiting("s1", &[]);
+    wait["liveFacts"]["observedAt"] = iso(T + 3);
+    assert_eq!(
+        look(&mut tracker, &no_events(), &[wait], &on(), T + 3).len(),
+        1
+    );
+}
+
+#[test]
+fn the_real_island_ignores_completions_before_launch_and_off_then_on_replays_nothing() {
+    let now = Utc::now().timestamp_millis();
+    let mut island = crate::island_events::Tracker::new();
+    let mut sound = Tracker::new();
+    let mut session = running("s1");
+    session["liveFacts"]["outcome"] = json!("completed");
+    session["liveFacts"]["turnId"] = json!("old");
+    session["liveFacts"]["endedAt"] = iso(now - 1000);
+    let events = island.update(&[session.clone()], &[], &[], &[], now);
+    assert_eq!(events["items"], json!([]));
+    assert_eq!(sound.update(&events, &[], &on(), now)["items"], json!([]));
+    session["liveFacts"]["turnId"] = json!("new");
+    session["liveFacts"]["endedAt"] = iso(now + 1000);
+    let events = island.update(&[session], &[], &[], &[], now + 1001);
+    assert_eq!(events["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        sound.update(&events, &[], &off(), now + 1001)["items"],
+        json!([])
+    );
+    assert_eq!(
+        sound.update(&events, &[], &on(), now + 1002)["items"],
+        json!([])
+    );
+}
+
+#[test]
+fn decided_identities_are_forgotten_a_day_after_last_seen() {
+    let mut tracker = started();
+    for i in 1..=100 {
+        let mut session = waiting("s1", &[]);
+        session["liveFacts"]["observedAt"] = iso(T + i);
+        tracker.update(&no_events(), &[session], &on(), T + i);
+    }
+    assert_eq!(tracker.decided.len(), 100);
+    tracker.update(&no_events(), &[], &on(), T + 100 + 86_400_000);
+    assert!(tracker.decided.is_empty());
+}
