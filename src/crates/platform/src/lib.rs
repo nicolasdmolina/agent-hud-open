@@ -20,6 +20,9 @@ pub mod local_ipc;
 pub mod local_tools;
 mod navigation;
 mod os;
+#[cfg(target_os = "windows")]
+#[path = "windows/session.rs"]
+pub mod windows_session;
 pub use accounts::{AccountService, CollectionGate, WebSignInDesk};
 pub use navigation::session_url;
 #[cfg(target_os = "macos")]
@@ -182,6 +185,17 @@ impl NativePlatform {
         };
         os::open_session_url(&url)?;
         Ok(true)
+    }
+    /// A web page in the system's browser: only `https` addresses, so a
+    /// window's link can never start a program or open a file.
+    pub fn open_link(&self, url: &str) -> Result<bool, String> {
+        let web = url.strip_prefix("https://").is_some_and(|rest| {
+            !rest.is_empty() && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+        });
+        if !web {
+            return Err("Only https links open in the browser".into());
+        }
+        Ok(os::open_session_url(url).is_ok())
     }
     /// Brings a client's own app forward, starting it when it is closed, for
     /// a step only the user can take there (allowing Agent HUD's hooks in

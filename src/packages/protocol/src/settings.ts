@@ -129,4 +129,16 @@ export interface AppSettings {
   soundNeedsYou?: string;
   /** The system sound, by name, for a finished turn. */
   soundFinished?: string;
+  guide?: GuideRecord;
+}
+/** What the guide knows of this copy, kept by the Settings window and the HUD. */
+export interface GuideRecord {
+  /** When this copy first ran with the guide; 0 for a copy older than it. */
+  since: number;
+  /** The last version whose guide was finished or closed; "" for none. */
+  seen: string;
+  /** The first-run step on screen; "" when no tour is open. */
+  step: string;
+  /** "done" once the Star invitation was taken or closed. */
+  star: string;
 }
