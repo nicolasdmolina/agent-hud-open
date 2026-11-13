@@ -75,14 +75,23 @@ pub enum Reply {
 }
 
 impl Question {
+    /// Skipping the question: Hermes's contract reads an empty answer as
+    /// skipped, and the turn goes on with the question unanswered
+    /// (`question-skipped`).
+    pub fn skip(&self, session: &SessionRef, scope: Scope) -> Command {
+        self.call(session, "", scope)
+    }
     pub fn answer(&self, session: &SessionRef, answer: &Answer, scope: Scope) -> Command {
+        self.call(session, answer.as_str(), scope)
+    }
+    fn call(&self, session: &SessionRef, answer: &str, scope: Scope) -> Command {
         Command::routed(
             "clarify.respond",
             json!({
                 "session_id": session.id,
                 "prompt_id": self.prompt.id,
                 "execution_generation": self.prompt.generation,
-                "answer": answer.as_str(),
+                "answer": answer,
             }),
             &session.profile,
             scope,
@@ -143,11 +152,19 @@ impl Pending {
             return Ok(None);
         }
         let empty = || l10n::text("请选择或输入回答", "Choose an option or type an answer.");
+        // The card's Skip on every question it shows: no answer at all.
+        let skipped = decision["answers"].as_object().is_some_and(Map::is_empty);
         match &self.ask {
             Ask::Question(_) | Ask::Batch(_) if kind != "answer" => Err(l10n::text(
                 "Hermes 的提问只能回答，不能批准",
                 "Hermes's questions can only be answered, not approved.",
             )),
+            Ask::Question(question) if skipped => {
+                Ok(Some(Reply::Call(question.skip(&self.session, scope))))
+            }
+            // A result without answers would cancel the whole set for every
+            // viewer, so skipping all of it leaves it to them.
+            Ask::Batch(_) if skipped => Ok(None),
             Ask::Question(question) => {
                 let answer = written(decision, &question.prompt.id, question.multi_select)
                     .ok_or_else(empty)?;

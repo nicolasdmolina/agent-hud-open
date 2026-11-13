@@ -73,6 +73,9 @@ fn a_question_takes_words_and_nothing_else() {
             frame("blue (Recommended)"),
         ),
         (pick(key, &[], Some("teal")), frame("teal")),
+        // Skip: no answer at all is the empty answer Hermes reads as
+        // skipped, as recorded in `question-skipped`.
+        (json!({"kind": "answer", "answers": {}}), frame("")),
         (pick(key, &["green"], Some(" teal ")), frame("teal")),
         // An empty answer would be taken as no answer: it is never sent.
         (pick(key, &[], None), Err(EMPTY.into())),
@@ -262,6 +265,11 @@ fn a_set_of_questions_is_answered_by_a_result_frame_and_never_a_call() {
         sent(&batch, &pick("q0", &[], None), Scope::Profile),
         Err(EMPTY.into())
     );
+    // Skipping every question leaves the set to the other viewers.
+    assert_eq!(
+        sent(&batch, &json!({"kind": "answer", "answers": {}}), Scope::Profile),
+        Ok(None)
+    );
     assert_eq!(
         sent(&batch, &json!({"kind": "leave"}), Scope::Profile),
         Ok(None)
@@ -301,8 +309,12 @@ fn a_card_offers_only_what_hermes_offers() {
     );
     assert_eq!(
         (&question["source"], &question["vendor"]),
-        (&json!("hermes"), &json!("Hermes"))
+        (&json!("hermes"), &json!("Hermes Agent · hud-spike"))
     );
+    // The default profile's card has the plain label, as its sessions do.
+    let mut default = asked("question-answered-here", "clarify.request");
+    default.session.profile = Profile::Default;
+    assert_eq!(default.view(0)["vendor"], "Hermes Agent");
     assert_eq!(
         (&question["kind"], &question["answersQuestion"]),
         (&json!("question"), &json!(true))

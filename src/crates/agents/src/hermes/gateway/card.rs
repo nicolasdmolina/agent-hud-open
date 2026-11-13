@@ -2,8 +2,10 @@
 //! has (`Approval` in the protocol package). The card offers only what
 //! Hermes offers.
 use super::ask::{Approval, Ask, Choice, Locked, Pending};
+use super::identity::Profile;
 use crate::hermes::AGENT;
 use crate::l10n;
+use crate::naming::clients::client_name;
 use serde_json::{json, Value};
 
 impl Pending {
@@ -12,7 +14,8 @@ impl Pending {
         let mut view = json!({
             "id": self.id(),
             "source": AGENT.id,
-            "vendor": AGENT.name,
+            // Who asks, as its sessions are named: the profile's label.
+            "vendor": label(&self.session.profile),
             "sessionId": self.session.hud_id(),
             "createdAt": crate::iso(now_ms),
             "cwd": null,
@@ -44,6 +47,15 @@ impl Pending {
         }
         view
     }
+}
+
+/// The label the sessions of `profile` go by (`Hermes Agent · <profile>`).
+fn label(profile: &Profile) -> String {
+    let named = match profile {
+        Profile::Default => None,
+        Profile::Named(name) => Some(name.as_str()),
+    };
+    client_name(AGENT.id, named).unwrap_or_else(|| AGENT.name.to_owned())
 }
 
 fn question_item(key: &str, text: &str, choices: &[String], multi_select: bool) -> Value {

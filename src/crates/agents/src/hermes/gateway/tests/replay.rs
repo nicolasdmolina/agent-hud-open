@@ -96,6 +96,10 @@ pub fn describe(effect: &Effect) -> String {
 /// The decision a person would have made on the card to send what the
 /// recording sent as the answer to a question.
 fn answer_decision(key: &str, text: &str, choices: &[String], multi_select: bool) -> Value {
+    // An empty answer is the card's Skip: no answer for any question.
+    if text.is_empty() {
+        return json!({"kind": "answer", "answers": {}});
+    }
     let list: Option<Vec<String>> = serde_json::from_str(text).ok().filter(|_| multi_select);
     let answer = match list {
         Some(selected) => json!({"selected": selected}),
