@@ -32,6 +32,8 @@ mod reconnect;
 mod replies;
 #[path = "tests/stalled.rs"]
 mod stalled;
+#[path = "tests/states.rs"]
+mod states;
 #[path = "tests/verifier.rs"]
 mod verifier;
 #[path = "tests/verifier2.rs"]
