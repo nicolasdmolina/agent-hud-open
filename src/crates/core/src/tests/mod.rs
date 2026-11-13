@@ -8,6 +8,7 @@ mod forks;
 mod hermes_custom_roots;
 mod hermes_questions;
 mod ingestion;
+mod machines;
 mod native_card_handover;
 mod native_card_rows;
 mod plan_value;
