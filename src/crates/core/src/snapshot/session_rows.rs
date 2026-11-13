@@ -147,6 +147,9 @@ impl crate::AgentHudCore {
                 (log.path.clone(), session)
             })
             .collect();
-        ListedRows { rows }
+        ListedRows {
+            rows,
+            heard: presentation.heard.into_inner(),
+        }
     }
 }

@@ -11,6 +11,8 @@ pub(super) struct Presentation<'a> {
     discovery: &'a [ProviderDiscovery],
     pending: HashMap<String, HashMap<String, Vec<Value>>>,
     native_waiting: HashMap<String, HashSet<String>>,
+    /// Each carded session's transcript requests before cards hide them.
+    pub(super) heard: std::cell::RefCell<requests::Heard>,
     now: i64,
 }
 impl AgentHudCore {
@@ -24,6 +26,7 @@ impl AgentHudCore {
             discovery: &self.discovery,
             pending: self.requests.session_attention(),
             native_waiting: self.requests.native_waiting_sessions(),
+            heard: Default::default(),
             now,
         }
     }
@@ -142,6 +145,7 @@ impl Presentation<'_> {
         }
         let source = session["source"].as_str().unwrap_or("");
         let id = session["id"].as_str().unwrap_or("");
+        let key = format!("{source}:{id}");
         let Some(pending) = self.pending(source, id) else {
             if self.native_waiting(source, id) {
                 session["state"] = json!("waiting");
@@ -156,18 +160,12 @@ impl Presentation<'_> {
         if !session["liveFacts"].is_object() {
             session["liveFacts"] = json!({"turnId":null,"turnStartedAt":null,"outcome":null,"endedAt":null,"limitedUntil":null,"observedAt":session["updatedAt"],"lastEventAt":session["updatedAt"],"activity":null,"requests":[]});
         }
-        let mut requests = session["liveFacts"]["requests"]
+        let requests = session["liveFacts"]["requests"]
             .as_array()
             .cloned()
             .unwrap_or_default();
-        requests.retain(|existing| {
-            !existing["id"]
-                .as_str()
-                .is_some_and(|id| id.starts_with("log:"))
-                || !pending.iter().any(|p| p["kind"] == existing["kind"])
-        });
-        requests.extend(pending.iter().cloned());
-        session["liveFacts"]["requests"] = json!(requests);
+        self.heard.borrow_mut().insert(key, requests.clone());
+        session["liveFacts"]["requests"] = json!(requests::merge(requests, pending));
         if let Some(at) = at {
             let at = at.max(
                 session["updatedAt"]
@@ -295,5 +293,6 @@ pub(super) fn sort_sessions(sessions: &mut [Value]) {
     });
 }
 
+pub(crate) mod requests;
 #[cfg(test)]
 mod tests;

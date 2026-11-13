@@ -105,6 +105,20 @@ impl Requests {
             .native_waiting
             .clone()
     }
+    /// The tool call each waiting card holds, by card id, where its client
+    /// names it (`call_id`, a native card's `callId`).
+    pub fn calls(&self) -> HashMap<String, String> {
+        let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let call = |item: &super::Pending| match &item.content {
+            Content::Hook(request) => request.call_id.clone(),
+            Content::Native(view) => view["callId"].as_str().map(str::to_owned),
+        };
+        state
+            .pending
+            .iter()
+            .filter_map(|item| Some((item.id.clone(), call(item)?)))
+            .collect()
+    }
     /// Small per-snapshot index: presentation never locks this owner once for
     /// every historical transcript, or clones tool payloads just to sort sessions.
     pub fn session_attention(&self) -> HashMap<String, HashMap<String, Vec<Value>>> {

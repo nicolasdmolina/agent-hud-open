@@ -157,7 +157,19 @@ impl crate::AgentHudCore {
             | "clientHooks"
             | "launchAtLogin"
             | "hudVisible"
+            | "sound"
                 if value.is_boolean() => {}
+            // A sound by name, never a path: the host looks it up among the
+            // system's own sounds.
+            "soundNeedsYou" | "soundFinished"
+                if value.as_str().is_some_and(|name| {
+                    !name.is_empty()
+                        && name.trim() == name
+                        && name.len() <= 64
+                        && name
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || " -_".contains(c))
+                }) => {}
             // Passes in a row agents may message each other before the user
             // looks; null for no limit.
             "agentMessagesLimit"
@@ -373,6 +385,47 @@ mod tests {
         .unwrap();
         let core = AgentHudCore::new(vec![], home.path().to_owned());
         assert_eq!(core.opt_in_approvals(), ["copilot"]);
+    }
+
+    #[test]
+    fn a_settings_file_without_the_sound_keys_loads_unchanged_with_sound_off() {
+        let home = tempfile::tempdir().unwrap();
+        let stored = json!({"settings":{"language":"en","clientHooks":true,"approvalWaitMinutes":30},"providers":{}});
+        fs::write(home.path().join("settings.json"), stored.to_string()).unwrap();
+        let core = AgentHudCore::new(vec![], home.path().to_owned());
+        for (key, value) in stored["settings"].as_object().unwrap() {
+            assert_eq!(&core.settings[key], value, "{key}");
+        }
+        assert_eq!(core.settings["sound"], false);
+        assert_eq!(core.settings["soundNeedsYou"], "Glass");
+        assert_eq!(core.settings["soundFinished"], "Hero");
+    }
+
+    #[test]
+    fn sound_settings_persist_and_take_only_a_sound_name() {
+        let home = tempfile::tempdir().unwrap();
+        let mut core = AgentHudCore::new(vec![], home.path().to_owned());
+        core.apply_setting("sound", &json!(true)).unwrap();
+        core.apply_setting("soundNeedsYou", &json!("Ping")).unwrap();
+        core.apply_setting("soundFinished", &json!("Purr")).unwrap();
+        let reopened = AgentHudCore::new(vec![], home.path().to_owned());
+        assert_eq!(reopened.settings["sound"], true);
+        assert_eq!(reopened.settings["soundNeedsYou"], "Ping");
+        assert_eq!(reopened.settings["soundFinished"], "Purr");
+        assert!(core.apply_setting("sound", &json!("on")).is_err());
+        for invalid in [
+            json!(""),
+            json!(" Ping"),
+            json!("../x"),
+            json!("/System/Ping.aiff"),
+            json!(1),
+        ] {
+            assert!(
+                core.apply_setting("soundFinished", &invalid).is_err(),
+                "{invalid}"
+            );
+        }
+        assert_eq!(core.settings["soundFinished"], "Purr");
     }
 
     #[test]

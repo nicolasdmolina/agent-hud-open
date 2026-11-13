@@ -12,6 +12,10 @@ pub struct Request {
     pub session_id: String,
     pub kind: String,
     pub turn_id: Option<String>,
+    /// The tool call the request holds, where the hook names it
+    /// (`tool_use_id`); its transcript sighting carries the same id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
     /// Codex's policy is insufficient evidence: the host must independently
     /// confirm this exact turn has approvals_reviewer == user before holding it.
     pub requires_user_reviewer: bool,
@@ -263,6 +267,7 @@ pub fn parse_request(source_name: &str, payload: &Value) -> Result<Option<Reques
         }
         .into(),
         turn_id: payload["turn_id"].as_str().map(str::to_owned),
+        call_id: text(field("tool_use_id", "toolUseId")).map(str::to_owned),
         requires_user_reviewer: permission.reviewer_gate,
         tool_name: tool.map(str::to_owned),
         summary: questions
@@ -286,3 +291,6 @@ pub fn parse_request(source_name: &str, payload: &Value) -> Result<Option<Reques
         questions,
     }))
 }
+
+#[cfg(test)]
+mod tests;

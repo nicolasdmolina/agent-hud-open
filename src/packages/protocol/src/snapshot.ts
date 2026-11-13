@@ -6,6 +6,7 @@ import type {
   Approval,
   ClientHooksStatus,
   IslandEvent,
+  SoundAlert,
   RequestDelivery,
 } from "./requests.ts";
 import type { Session } from "./session.ts";
@@ -89,6 +90,7 @@ export interface Snapshot {
   status?: { paused?: boolean };
   sourcePreferences?: Record<string, SourcePreferences>;
   islandEvents?: { revision: number; items: IslandEvent[] };
+  soundAlerts?: { revision: number; items: SoundAlert[] };
   schemaVersion: 1;
   generatedAt: string;
   /** Changes when the persisted usage facts or canonical selection change. */

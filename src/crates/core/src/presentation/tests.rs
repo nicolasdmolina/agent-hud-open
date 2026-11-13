@@ -345,3 +345,50 @@ fn a_session_lists_where_its_first_and_latest_prompts_were_typed() {
         json!({"init":"cli:iterm","latest":"mobile:iphone"})
     );
 }
+
+/// Verifier round 4: a question a gone process left is not heard again.
+#[test]
+fn verifier_process_exit_does_not_resurrect_hidden_question_or_sound_twice() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join(".claude");
+    let roots = vec![(config.join("projects"), "claude")];
+    let id = "11111111-2222-4333-8444-555555555555";
+    let file = config.join("sessions/7.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &file,
+        json!({"pid":std::process::id(),"sessionId":id}).to_string(),
+    )
+    .unwrap();
+    let mut core = crate::AgentHudCore::new(vec![], temp.path().join("app"));
+    core.claude_desktop.processes.refresh(&roots, 0);
+    let mut sound = crate::sound_alerts::Tracker::new();
+    let events = json!({"items":[]});
+    let settings = json!({"sound":true});
+    sound.update(&events, &[], &Default::default(), &settings, 0);
+    // Hook card is seen first, before its transcript sighting is collected.
+    let card = json!({"id":"hook:1","kind":"question","at":"1970-01-01T00:16:00Z"});
+    let first = json!({"id":id,"source":"claude","state":"waiting","liveFacts":{"requests":[card.clone()]}});
+    assert_eq!(
+        sound.update(&events, &[first], &Default::default(), &settings, 1)["revision"],
+        1
+    );
+    // Process exits before the transcript's pending question is collected.
+    std::fs::remove_file(&file).unwrap();
+    core.claude_desktop.processes.refresh(&roots, 1_000_000);
+    let mut p = core.presentation(1_000_000);
+    p.pending
+        .entry("claude".into())
+        .or_default()
+        .insert(id.into(), vec![card]);
+    let mut row = json!({"id":id,"source":"claude","state":"waiting","updatedAt":"1970-01-01T00:16:00Z","liveFacts":{"lastEventAt":"1970-01-01T00:16:00Z","requests":[{"id":format!("log:claude:{id}:a"),"kind":"question"}]}});
+    p.overlay(&mut row, None, None, &Default::default());
+    assert_eq!(row["state"], "idle");
+    assert_eq!(row["liveFacts"]["requests"], json!([]));
+    let raw = p.heard.into_inner();
+    let heard = crate::sound_alerts::Heard {
+        sightings: Some(&raw),
+        calls: Default::default(),
+    };
+    assert_eq!(sound.update(&events,&[row],&heard,&settings,1_000_001)["revision"],1,"an exited process has no question to answer; its already-sounded question must not sound again");
+}

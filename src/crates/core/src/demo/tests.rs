@@ -194,6 +194,8 @@ fn the_demo_reads_through_the_real_parsers() {
         "{named:?}"
     );
 
+    // With sound on, the finished turn also reaches the snapshot as one alert.
+    core.apply_setting("sound", &json!(true)).unwrap();
     // A reply after the Core started raises the reply reminder.
     core.demo_reply(
         "s1",
@@ -209,6 +211,13 @@ fn the_demo_reads_through_the_real_parsers() {
             .iter()
             .any(|event| event["kind"] == "completion" && event["sessionId"] == "s1"),
         "{events:?}"
+    );
+    let alerts = snapshot["soundAlerts"]["items"].as_array().unwrap();
+    assert!(
+        alerts.iter().any(|alert| alert["kind"] == "finished"
+            && alert["sessionId"] == "s1"
+            && alert["sound"] == "Hero"),
+        "{alerts:?}"
     );
 }
 

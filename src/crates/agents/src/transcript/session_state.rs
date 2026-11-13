@@ -127,9 +127,14 @@ impl LiveLog {
                     .then(|| format!("completed-{}", turn.observed))
             })
         });
-        Some(
-            json!({"turnId":turn_id,"turnStartedAt":turn.and_then(|turn|turn.started).and_then(crate::iso),"outcome":turn.filter(|turn|!turn.running && !child_working).and_then(|turn|turn.outcome.as_ref()),"endedAt":turn.filter(|turn|!turn.running && !child_working).and_then(|turn|crate::iso(turn.observed)),"message":turn.and_then(|turn|turn.message.as_ref()),"limitedUntil":turn.and_then(|turn|turn.limited_until).and_then(crate::iso),"observedAt":crate::iso(observed),"lastEventAt":crate::iso(observed),"activity":activity,"requests":requests}),
-        )
+        let mut facts = json!({"turnId":turn_id,"turnStartedAt":turn.and_then(|turn|turn.started).and_then(crate::iso),"outcome":turn.filter(|turn|!turn.running && !child_working).and_then(|turn|turn.outcome.as_ref()),"endedAt":turn.filter(|turn|!turn.running && !child_working).and_then(|turn|crate::iso(turn.observed)),"message":turn.and_then(|turn|turn.message.as_ref()),"limitedUntil":turn.and_then(|turn|turn.limited_until).and_then(crate::iso),"observedAt":crate::iso(observed),"lastEventAt":crate::iso(observed),"activity":activity,"requests":requests});
+        // A session its client started under another (a subagent, or a
+        // review or compaction with no parent named) says so: its turn is a
+        // step of another's. Others carry nothing new.
+        if self.is_subagent {
+            facts["subagent"] = json!(true);
+        }
+        Some(facts)
     }
 
     pub fn activity_at(&self, fallback: Option<i64>, child: Option<i64>) -> Option<i64> {

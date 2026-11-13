@@ -43,6 +43,8 @@ pub(crate) struct Rendered {
 pub(crate) struct ListedRows {
     /// Each listed session's row with the log it came from.
     rows: Vec<(PathBuf, Value)>,
+    /// Carded sessions' requests before cards hid any (`sound_alerts`).
+    heard: presentation::requests::Heard,
 }
 
 impl crate::AgentHudCore {
@@ -253,13 +255,20 @@ impl crate::AgentHudCore {
         let island_events = self
             .island_events
             .update(&sessions, &quotas, &accounts, &providers, now);
+        let heard = sound_alerts::Heard {
+            sightings: self.listed_rows.as_ref().map(|(_, rows)| &rows.heard),
+            calls: self.requests.calls(),
+        };
+        let sound_alerts =
+            self.sound_alerts
+                .update(&island_events, &sessions, &heard, &self.settings, now);
         self.render.last = Some((self.render_key(), self.render_due(now)));
         let projection = self
             .usage_projection
             .as_ref()
             .expect("usage projection prepared");
         Ok(
-            json!({"islandEvents":island_events,"schemaVersion":1,"statisticsRevision":self.statistics.revision,"sessionsRevision":self.sessions_revision,"sessionScope":"recent","indexing":indexing,"generatedAt":Utc::now().to_rfc3339(),"mode":if self.demo{"demo"}else{"live"},"connection":{"status":"connected","platform":self.platform,"message":notice.unwrap_or_else(|| l10n::text("本机会话日志与客户端事件；回调连接状态另行显示", "Local transcripts and client events; hook connection status is reported separately."))},"totals":projection.totals.json(),"quotas":quotas,"accounts":accounts,"sessions":sessions,"timeline":projection.timeline,"providers":providers,"approvals":approvals,"requestDeliveries":deliveries,"settings":self.settings,"language":if crate::l10n::chinese(){"zh"}else{"en"},"capabilities":serde_json::from_str::<Value>(include_str!("../../../packages/protocol/capabilities.json")).expect("checked-in capability manifest"),"billing":billing,"relays":relays}),
+            json!({"islandEvents":island_events,"soundAlerts":sound_alerts,"schemaVersion":1,"statisticsRevision":self.statistics.revision,"sessionsRevision":self.sessions_revision,"sessionScope":"recent","indexing":indexing,"generatedAt":Utc::now().to_rfc3339(),"mode":if self.demo{"demo"}else{"live"},"connection":{"status":"connected","platform":self.platform,"message":notice.unwrap_or_else(|| l10n::text("本机会话日志与客户端事件；回调连接状态另行显示", "Local transcripts and client events; hook connection status is reported separately."))},"totals":projection.totals.json(),"quotas":quotas,"accounts":accounts,"sessions":sessions,"timeline":projection.timeline,"providers":providers,"approvals":approvals,"requestDeliveries":deliveries,"settings":self.settings,"language":if crate::l10n::chinese(){"zh"}else{"en"},"capabilities":serde_json::from_str::<Value>(include_str!("../../../packages/protocol/capabilities.json")).expect("checked-in capability manifest"),"billing":billing,"relays":relays}),
         )
     }
 
