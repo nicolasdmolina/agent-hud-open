@@ -7,12 +7,19 @@ use std::{
     sync::{Arc, Mutex, PoisonError, Weak},
 };
 
+/// Agent HUD Fork (ticket 08, FORK.md): phone sharing never starts, so no
+/// LAN port opens; the LAN and share code stay as upstream has them.
+const SHARES_WITH_PHONES: bool = false;
+
 /// `directory` is None for the demo, which shares nothing.
 pub(crate) fn start(
     directory: Option<PathBuf>,
     extension: Option<&dyn ProductExtension>,
     backend: Weak<Mutex<Backend>>,
 ) -> Option<Arc<PhoneShare>> {
+    if !SHARES_WITH_PHONES {
+        return None;
+    }
     let directory = directory?;
     if extension.is_some_and(|product| product.shares_with_phones()) {
         return None;
