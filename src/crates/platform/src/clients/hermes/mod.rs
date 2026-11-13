@@ -9,10 +9,10 @@
 //!
 //! It reads Hermes and never writes under a Hermes home. It takes no part
 //! in collection: it never holds the collection gate, and every wait on
-//! the gateway happens with nothing locked. The one thing done under the
-//! model's lock that touches a socket is the write of an answer's frame
-//! (`answer.rs`), so that an answer never leaves once the observer stopped
-//! or its card closed.
+//! the gateway, writes included, happens with nothing locked. An answer
+//! never leaves once the observer stopped or its card closed: a write is
+//! checked and marked under the model's lock, and stopping or closing cuts
+//! the socket of a write that is under way (`visit.rs`).
 use crate::hooks::Wake;
 use agent_hud_agents::hermes::{
     gateway::{Connection, Gateway, GatewayId, Input, Instance},
@@ -39,6 +39,7 @@ mod pace;
 mod polls;
 mod socket;
 mod visit;
+mod wire;
 
 pub(crate) use pace::Pace;
 
@@ -75,6 +76,11 @@ pub(super) struct Model {
     /// The cards answered here whose answer Hermes has yet to settle, and
     /// whether each is a set of questions.
     answered: HashMap<String, bool>,
+    /// Every short socket that is open now (`visit.rs`), so that stopping,
+    /// or closing a card, can cut the ones that are writing.
+    visits: HashMap<u64, visit::Held>,
+    /// Counts the visits begun, which numbers them.
+    visited: u64,
     stopped: bool,
 }
 
@@ -131,6 +137,8 @@ impl Observer {
                 waiters: HashMap::new(),
                 opened: HashMap::new(),
                 answered: HashMap::new(),
+                visits: HashMap::new(),
+                visited: 0,
                 stopped: false,
             }),
             stopping: (Mutex::new(()), Condvar::new()),
@@ -211,7 +219,9 @@ impl Shared {
         }
     }
 
-    /// Whether an answer to `request` may still go to `instance`.
+    /// Whether an answer to `request` may still go to `instance`, for the
+    /// tests that ask from outside a visit.
+    #[cfg(test)]
     pub(super) fn current(&self, request: &str, instance: &Instance) -> bool {
         self.model().current(request, instance)
     }
@@ -253,6 +263,9 @@ impl Shared {
             return;
         }
         model.stopped = true;
+        // Whatever is being written right now is cut before this returns:
+        // nothing leaves once the observer has stopped.
+        model.cut_writing(|_| true);
         let ids: Vec<String> = model.gateway.waiting().map(|card| card.id()).collect();
         for id in ids {
             self.requests.settle_native(&id);

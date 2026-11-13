@@ -26,8 +26,12 @@ mod handshake;
 mod live;
 #[path = "tests/reconnect.rs"]
 mod reconnect;
+#[path = "tests/stalled.rs"]
+mod stalled;
 #[path = "tests/verifier.rs"]
 mod verifier;
+#[path = "tests/verifier2.rs"]
+mod verifier2;
 
 /// The pace of the tests: everything the app waits seconds for, in
 /// hundredths of them.
@@ -41,6 +45,9 @@ fn quick() -> Pace {
         warm: Duration::from_millis(300),
         // Long enough for a machine busy with other builds to answer.
         answer: Duration::from_secs(2),
+        // Longer than in the app, so that a test can stop the observer
+        // or close a card while a write still waits on the gateway.
+        write: Duration::from_secs(3),
         trace: false,
     }
 }

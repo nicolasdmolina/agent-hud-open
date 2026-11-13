@@ -2,6 +2,7 @@
 //! that is used once and dropped. JSON-RPC frames go out and come back;
 //! every wait has an end. The ticket rides the subprotocol header and is
 //! never written anywhere.
+use super::wire::{Line, Wire};
 use agent_hud_agents::hermes::gateway::{
     frame, refusal, Command, Failure, Frame, Instance, Refusal, Ticket, SOCKET_PATH, SUBPROTOCOL,
 };
@@ -9,6 +10,7 @@ use serde_json::Value;
 use std::{
     io::ErrorKind,
     net::{TcpStream, ToSocketAddrs},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tungstenite::{
@@ -30,7 +32,11 @@ const FRAME_LIMIT: usize = 64 * 1024 * 1024;
 const ABNORMAL: u16 = 1006;
 
 pub(super) struct Socket {
-    ws: WebSocket<TcpStream>,
+    ws: WebSocket<Wire>,
+    /// The stream under it, which another thread may cut.
+    line: Arc<Line>,
+    /// How long one frame may take to write, all of it.
+    budget: Duration,
     calls: u64,
 }
 
@@ -66,6 +72,7 @@ impl Socket {
         let _ = tcp.set_nodelay(true);
         let _ = tcp.set_read_timeout(Some(HANDSHAKE));
         let _ = tcp.set_write_timeout(Some(WRITE));
+        let line = Line::new(tcp);
         let mut request = format!("ws://{authority}{SOCKET_PATH}")
             .into_client_request()
             .map_err(|_| Failure::Invalid("invalid_api_origin"))?;
@@ -78,17 +85,20 @@ impl Socket {
         let config = WebSocketConfig::default()
             .max_message_size(Some(FRAME_LIMIT))
             .max_frame_size(Some(FRAME_LIMIT));
-        let (ws, response) =
-            match tungstenite::client::client_with_config(request, tcp, Some(config)) {
-                Ok(opened) => opened,
-                // A ticket opens one socket within 30 s; any other gets 403.
-                Err(HandshakeError::Failure(Error::Http(response)))
-                    if response.status() == StatusCode::FORBIDDEN =>
-                {
-                    return Err(Failure::TicketRefused)
-                }
-                Err(_) => return Err(Failure::Unreachable),
-            };
+        let (ws, response) = match tungstenite::client::client_with_config(
+            request,
+            Wire(line.clone()),
+            Some(config),
+        ) {
+            Ok(opened) => opened,
+            // A ticket opens one socket within 30 s; any other gets 403.
+            Err(HandshakeError::Failure(Error::Http(response)))
+                if response.status() == StatusCode::FORBIDDEN =>
+            {
+                return Err(Failure::TicketRefused)
+            }
+            Err(_) => return Err(Failure::Unreachable),
+        };
         let spoken = response
             .headers()
             .get(SEC_WEBSOCKET_PROTOCOL)
@@ -98,7 +108,22 @@ impl Socket {
                 "the gateway speaks another protocol".into(),
             ));
         }
-        Ok(Self { ws, calls: 0 })
+        Ok(Self {
+            ws,
+            line,
+            budget: WRITE,
+            calls: 0,
+        })
+    }
+
+    /// The stream under the socket, for whoever may have to cut it.
+    pub(super) fn line(&self) -> Arc<Line> {
+        self.line.clone()
+    }
+
+    /// Sets how long one frame may take to write.
+    pub(super) fn write_within(&mut self, budget: Duration) {
+        self.budget = budget;
     }
 
     /// Sends a call and returns the id its reply will carry.
@@ -108,11 +133,18 @@ impl Socket {
         Ok(self.calls)
     }
 
-    /// Writes a frame as it is.
+    /// Writes a frame as it is, all of it within the socket's budget. A
+    /// write that fails leaves part of the frame unsent inside the
+    /// WebSocket, which would send it with whatever is written next: the
+    /// stream is cut, so that nothing ever is.
     pub(super) fn write(&mut self, frame: &Value) -> Result<(), Failure> {
-        self.ws
-            .send(Message::Text(frame.to_string().into()))
-            .map_err(|_| Failure::Closed(ABNORMAL))
+        self.line.out_within(Some(self.budget));
+        let sent = self.ws.send(Message::Text(frame.to_string().into()));
+        self.line.out_within(None);
+        sent.map_err(|_| {
+            self.line.cut();
+            Failure::Closed(ABNORMAL)
+        })
     }
 
     /// The next frame the gateway sends, or None when `until` comes first.
@@ -122,7 +154,7 @@ impl Socket {
             if left.is_zero() {
                 return Ok(None);
             }
-            let _ = self.ws.get_ref().set_read_timeout(Some(left));
+            self.line.wait_to_read(left);
             let text = match self.ws.read() {
                 Ok(Message::Text(text)) => serde_json::from_str::<Value>(text.as_ref()),
                 Ok(Message::Binary(bytes)) => serde_json::from_slice::<Value>(&bytes),
@@ -167,10 +199,13 @@ impl Socket {
     }
 
     /// Closes the socket, which ends whatever it subscribed to. The gateway
-    /// is told, not waited for.
-    pub(super) fn close(mut self) {
-        let _ = self.ws.close(None);
-        let _ = self.ws.flush();
+    /// is told, not waited for. A socket that was cut says nothing more.
+    pub(super) fn close(&mut self) {
+        if !self.line.is_cut() {
+            self.line.out_within(Some(self.budget));
+            let _ = self.ws.close(None);
+            let _ = self.ws.flush();
+        }
     }
 }
 

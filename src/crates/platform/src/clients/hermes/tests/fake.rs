@@ -103,6 +103,12 @@ pub struct Hold {
 
 #[derive(Default)]
 pub struct World {
+    /// The socket that next subscribes stops reading after its resume is
+    /// answered, until released: a peer that takes nothing more in.
+    pub stall_after_resume: Option<Arc<Hold>>,
+    /// The sockets the gateway is done with, by number: closed, cut or
+    /// reset.
+    pub ended: Vec<usize>,
     pub hint_on_resume: bool,
     pub hold_next: Option<(&'static str, Arc<Hold>)>,
     /// What `identify` answers; None closes the socket without a word.
@@ -141,6 +147,14 @@ impl World {
         self.streams
             .entry((PROFILE.to_owned(), session.to_owned()))
             .or_default()
+    }
+    /// Whether the gateway is done with the socket that subscribed last:
+    /// the one an answer or a snapshot went on.
+    pub fn visit_over(&self) -> bool {
+        let subscribed = self.calls("session.resume");
+        subscribed
+            .last()
+            .is_some_and(|(socket, _)| self.ended.contains(socket))
     }
     /// Every call of `method` received, with the socket it came on.
     pub fn calls(&self, method: &str) -> Vec<(usize, Value)> {
@@ -387,6 +401,14 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
         return;
     };
     let number = world.lock().unwrap().sockets;
+    // Counted when this socket is over, however it ends.
+    struct Over(Arc<Mutex<World>>, usize);
+    impl Drop for Over {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().ended.push(self.1);
+        }
+    }
+    let _over = Over(world.clone(), number);
     let ready =
         fixture("gateway-self-description")["websocket"]["first_frame_gateway_ready"].clone();
     let _ = ws.send(Message::Text(ready.to_string().into()));
@@ -469,6 +491,16 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
         }
         if let Some(reply) = reply {
             let _ = ws.send(Message::Text(reply.to_string().into()));
+        }
+        if frame["method"] == "session.resume" {
+            let hold = world.lock().unwrap().stall_after_resume.take();
+            if let Some(hold) = hold {
+                hold.entered.store(true, Ordering::Release);
+                let limit = std::time::Instant::now() + Duration::from_secs(70);
+                while !hold.released.load(Ordering::Acquire) && std::time::Instant::now() < limit {
+                    thread::sleep(Duration::from_millis(2));
+                }
+            }
         }
     }
     // Killed: the socket is cut with no closing handshake.

@@ -27,6 +27,10 @@ pub(crate) struct Pace {
     pub warm: Duration,
     /// How long the control socket and one call may take.
     pub answer: Duration,
+    /// How long one frame on a short socket (a resume, an answer) may take
+    /// to write, all of it. A frame is small and the gateway is on this
+    /// machine: one that does not take it in this long is not going to.
+    pub write: Duration,
     /// Whether the log says every poll and every hint, for looking at what
     /// a real gateway does. Never on in the app.
     pub trace: bool,
@@ -42,6 +46,7 @@ impl Default for Pace {
             watch: Duration::from_millis(800),
             warm: Duration::from_secs(5),
             answer: Duration::from_secs(5),
+            write: Duration::from_millis(500),
             trace: false,
         }
     }

@@ -227,6 +227,8 @@ fn verifier_hint_on_short_socket_must_request_poll() {
             waiters: HashMap::new(),
             opened: HashMap::new(),
             answered: HashMap::new(),
+            visits: HashMap::new(),
+            visited: 0,
             stopped: false,
         }),
         stopping: (Mutex::new(()), Condvar::new()),

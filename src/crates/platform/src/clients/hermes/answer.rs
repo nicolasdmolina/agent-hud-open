@@ -10,7 +10,7 @@ use super::{
     Shared,
 };
 use agent_hud_agents::hermes::gateway::{
-    refusal, resume, Ask, Command, Failure, Input, Instance, Pending, Refusal, Reply, Scope,
+    refusal, Ask, Command, Failure, Input, Pending, Refusal, Reply, Scope,
 };
 use agent_hud_core::l10n;
 use serde_json::{json, Value};
@@ -85,16 +85,14 @@ fn deliver(shared: &Shared, pending: Pending, decision: &Value) {
         return shared.undelivered(&pending, unreachable());
     };
     let wait = shared.pace.answer * 2;
-    let still = || shared.current(&id, &instance);
     // An answer from a socket that is not subscribed is refused.
-    let visit = Visit::begin_while(shared, &instance, &pending.session, wait, &still);
+    let visit = Visit::begin_for(shared, &instance, &pending.session, &id, wait);
     let Some((mut visit, _)) = visit else {
         return shared.undelivered(&pending, unreachable());
     };
     let going = Going {
         shared,
         pending: &pending,
-        instance: &instance,
     };
     let told = match reply {
         // Nothing replies to the answer to a set of questions: a poll
@@ -117,38 +115,35 @@ fn deliver(shared: &Shared, pending: Pending, decision: &Value) {
     visit.end();
 }
 
-/// One answer on its way: what it answers, and the instance that asked.
+/// One answer on its way, and what it answers.
 struct Going<'a> {
     shared: &'a Shared,
     pending: &'a Pending,
-    instance: &'a Instance,
 }
 
 impl Going<'_> {
     /// Writes one frame of the answer, if the answer may still go: the
     /// observer runs, the request still has its card, the gateway is still
-    /// the instance that asked. The check and the write are one step under
-    /// the model's lock, so stopping the observer, or closing the card,
-    /// comes wholly before it, and nothing is written, or wholly after.
-    /// Then the model hears the answer was written, and the card is
-    /// remembered as answered here for its receipt. The frame is a few
-    /// hundred bytes to a socket on this machine: writing it does not wait
-    /// on the gateway. None where nothing was written.
+    /// the instance that asked (`Visit::write`, which checks under the
+    /// model's lock and writes outside it; a stop, or the card closing,
+    /// cuts the socket of a write under way). Then the model hears the
+    /// answer was written, and the card is remembered as answered here for
+    /// its receipt. None where it was not written, or not all of it.
     fn written<T>(
         &self,
         visit: &mut Visit,
         write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
     ) -> Option<T> {
+        let done = visit.write(write)?;
         let id = self.pending.id();
         let mut model = self.shared.model();
-        if !model.current(&id, self.instance) {
-            return None;
+        // A card that closed while the frame went out has nothing to hear.
+        if !model.stopped && model.gateway.pending(&id).is_some() {
+            self.shared.log.line(&format!("answer sent id={id}"));
+            let batch = matches!(self.pending.ask, Ask::Batch(_));
+            model.answered.insert(id.clone(), batch);
+            self.shared.take(&mut model, Input::Sent { request: &id });
         }
-        let done = write(&mut visit.socket).ok()?;
-        self.shared.log.line(&format!("answer sent id={id}"));
-        let batch = matches!(self.pending.ask, Ask::Batch(_));
-        model.answered.insert(id.clone(), batch);
-        self.shared.take(&mut model, Input::Sent { request: &id });
         Some(done)
     }
 
@@ -161,13 +156,9 @@ impl Going<'_> {
             return Some(told);
         }
         self.shared.pause(AGAIN);
-        let id = self.pending.id();
         if refusal(&told) == Some(Refusal::PermissionDenied) {
             // Not subscribed after all: subscribe again, if it still matters.
-            if !self.shared.current(&id, self.instance) {
-                return Some(told);
-            }
-            let _ = visit.call(&resume(&self.pending.session, Scope::Host), wait);
+            visit.resume_again(wait);
         }
         // What the first try was told stands where the second never left.
         Some(self.heard(visit, command, wait).unwrap_or(told))

@@ -39,6 +39,8 @@ impl Shared {
                     self.log.line(&format!("close id={id} why={why:?}"));
                     model.waiters.remove(&id);
                     model.opened.remove(&id);
+                    // An answer to it that is being written is cut.
+                    model.cut_writing(|request| request == Some(id.as_str()));
                     self.requests.settle_native(&id);
                     if let Some(batch) = model.answered.remove(&id) {
                         self.receipt(&id, &session.hud_id(), &why, batch, now);
