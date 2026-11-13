@@ -1,11 +1,11 @@
 //! Hermes's native channel (`agents::hermes::GATEWAY`): the local gateway
-//! its desktop app talks to. This is the half with the sockets. It finds
-//! the gateway's control socket in a Hermes home, gets a ticket as the
-//! same user, opens the WebSocket, and runs the polls that
-//! `agents::hermes::gateway` begins. What that model says to do is done
-//! here and nothing else is decided: a card opens, changes or closes in
-//! core's requests, and an answer given on a card goes back on a socket of
-//! its own.
+//! its desktop app talks to. This is the half with the sockets. It asks
+//! its route (`route.rs`) for the gateway's home, gets a ticket from the
+//! control socket there, opens the WebSocket on a stream the route gives,
+//! and runs the polls that `agents::hermes::gateway` begins. What that
+//! model says to do is done here and nothing else is decided: a card
+//! opens, changes or closes in core's requests, and an answer given on a
+//! card goes back on a socket of its own.
 //!
 //! It reads Hermes and never writes under a Hermes home. It takes no part
 //! in collection: it never holds the collection gate, and every wait on
@@ -14,14 +14,11 @@
 //! checked and marked under the model's lock, and stopping or closing cuts
 //! the socket of a write that is under way (`visit.rs`).
 use crate::hooks::Wake;
-use agent_hud_agents::hermes::{
-    gateway::{Connection, Gateway, GatewayId, Input, Instance},
-    AGENT,
-};
+use agent_hud_agents::hermes::gateway::{Connection, Gateway, GatewayId, Input, Instance};
 use agent_hud_core::requests::{Requests, Ticket as Waiter};
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Condvar, Mutex, MutexGuard, PoisonError,
@@ -38,11 +35,13 @@ mod log;
 mod out;
 mod pace;
 mod polls;
+mod route;
 mod socket;
 mod visit;
 mod wire;
 
 pub(crate) use pace::Pace;
+pub(crate) use route::Route;
 
 /// The one gateway phase 1 follows: the one on this machine.
 const LOCAL: &str = "local";
@@ -52,8 +51,8 @@ pub struct Observer {
 }
 
 pub(super) struct Shared {
-    /// The Hermes home whose gateway is followed.
-    home: PathBuf,
+    /// The way to the gateway that is followed.
+    route: Arc<dyn Route>,
     requests: Requests,
     wake: Wake,
     log: log::Log,
@@ -99,34 +98,23 @@ impl Model {
     }
 }
 
-/// The Hermes home on this machine: `HERMES_HOME`, or `~/.hermes`.
-pub fn home() -> Result<PathBuf, String> {
-    let user = crate::os::home_dir()?;
-    let environment = std::env::vars().collect();
-    let sources = AGENT.sources.on(crate::os::OS).value().copied();
-    sources
-        .unwrap_or_default()
-        .iter()
-        .flat_map(|source| crate::os::resolve(&user, &environment, &source.location))
-        .next()
-        .ok_or_else(|| "Hermes has no home on this system".to_owned())
-}
-
 impl Observer {
     /// Follows the gateway of this machine's Hermes home, logging into `data`.
     pub fn start(data: &Path, requests: Requests, wake: Wake) -> Result<Self, String> {
-        Self::start_at(home()?, data, requests, wake, Pace::default())
+        let route = Arc::new(route::local::Local::new()?);
+        Self::start_on(route, data, requests, wake, Pace::default())
     }
 
-    pub(crate) fn start_at(
-        home: PathBuf,
+    /// Follows the gateway `route` leads to.
+    pub(crate) fn start_on(
+        route: Arc<dyn Route>,
         data: &Path,
         requests: Requests,
         wake: Wake,
         pace: Pace,
     ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
-            home,
+            route,
             requests,
             wake,
             log: log::Log::new(data),

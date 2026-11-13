@@ -1,11 +1,13 @@
 //! The connection to one gateway over its life: ask the control socket who
 //! is there, get a ticket, open the socket, run polls until it is lost,
-//! then begin again. A gateway that restarts comes back as another
-//! instance, usually on another port, so nothing is kept from one dial to
-//! the next but the model.
+//! then begin again. Where the gateway is, the route knows (`route.rs`):
+//! nothing here names a path or an address. A gateway that restarts comes
+//! back as another instance, usually on another port, so nothing is kept
+//! from one dial to the next but the model.
 use super::{
     control::{self, Silent},
     polls,
+    route::Home,
     socket::Socket,
     Shared,
 };
@@ -65,14 +67,24 @@ pub(super) fn work(shared: Arc<Shared>) {
     }
 }
 
-/// Asks the control socket one question, once more where it only was slow:
-/// identify can stall on a busy gateway and answer at once the next time.
-fn asked(shared: &Shared, line: &Value) -> Result<Value, Silent> {
-    let home = std::fs::canonicalize(&shared.home).map_err(|_| Silent::Absent)?;
-    match control::ask(&home, line, shared.pace.answer) {
-        Err(Silent::TimedOut) => control::ask(&home, line, shared.pace.answer),
+/// The home whose gateway is followed: the first the route tells of, as
+/// it is now.
+fn home(shared: &Shared) -> Result<Home, Silent> {
+    let homes = shared.route.homes()?;
+    homes.into_iter().next().ok_or(Silent::Absent)
+}
+
+/// Asks the control socket of that home one question, once more where it
+/// only was slow: identify can stall on a busy gateway and answer at once
+/// the next time. The answer comes with the home that was asked.
+fn asked(shared: &Shared, line: &Value) -> Result<(Value, Home), Silent> {
+    let home = home(shared)?;
+    let ask = || control::ask(&*shared.route, &home, line, shared.pace.answer);
+    let answer = match ask() {
+        Err(Silent::TimedOut) => ask(),
         answer => answer,
-    }
+    }?;
+    Ok((answer, home))
 }
 
 fn silent(silent: Silent) -> Failure {
@@ -86,18 +98,17 @@ fn silent(silent: Silent) -> Failure {
 /// Identifies the gateway and tells the model, which says whether it is
 /// one to connect to.
 fn identified(shared: &Shared) -> Result<Instance, Next> {
-    let answer = match asked(shared, &identify_line()) {
-        Ok(answer) => answer,
+    let (answer, home) = match asked(shared, &identify_line()) {
+        Ok(answered) => answered,
         Err(why) => {
             shared.apply(Input::Lost(silent(why)));
             return Err(Next::Later);
         }
     };
     // The home is compared as the gateway wrote it, links resolved.
-    let home = std::fs::canonicalize(&shared.home).unwrap_or_else(|_| shared.home.clone());
     shared.apply(Input::Identified {
         answer: &answer,
-        home: &home.to_string_lossy(),
+        home: &home.name(),
     });
     let model = shared.model();
     match model.gateway.connection() {
@@ -119,11 +130,11 @@ pub(super) enum Shut {
 /// socket for one answer or one snapshot failing says nothing of the
 /// connection the polls run on.
 pub(super) fn opened(shared: &Shared, instance: &Instance) -> Result<Socket, Shut> {
-    let grant = asked(shared, &ticket_line(instance, Scope::Host))
+    let (grant, _) = asked(shared, &ticket_line(instance, Scope::Host))
         .map_err(|why| Shut::Failed(silent(why)))?;
     let ticket = granted(&grant, instance).map_err(Shut::Denied)?;
     drop(grant);
-    Socket::open(instance, ticket).map_err(Shut::Failed)
+    Socket::open(&*shared.route, instance, ticket).map_err(Shut::Failed)
 }
 
 fn dial(shared: &Shared) -> Result<Socket, Next> {

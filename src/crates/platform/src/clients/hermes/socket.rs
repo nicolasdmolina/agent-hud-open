@@ -2,14 +2,16 @@
 //! that is used once and dropped. JSON-RPC frames go out and come back;
 //! every wait has an end. The ticket rides the subprotocol header and is
 //! never written anywhere.
-use super::wire::{Line, Wire};
+use super::{
+    route::Route,
+    wire::{Line, Wire},
+};
 use agent_hud_agents::hermes::gateway::{
     frame, refusal, Command, Failure, Frame, Instance, Refusal, Ticket, SOCKET_PATH, SUBPROTOCOL,
 };
 use serde_json::Value;
 use std::{
     io::ErrorKind,
-    net::{TcpStream, ToSocketAddrs},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -21,7 +23,6 @@ use tungstenite::{
     Error, Message, WebSocket,
 };
 
-const DIAL: Duration = Duration::from_secs(3);
 const HANDSHAKE: Duration = Duration::from_secs(5);
 const WRITE: Duration = Duration::from_secs(5);
 /// The largest frame taken. `session.resume` answers with a session's whole
@@ -49,26 +50,25 @@ pub(super) enum Reply {
 }
 
 impl Socket {
-    /// Dials the instance and upgrades with the ticket. No `Origin` header
-    /// and no proxy: the address is this machine's, dialled as it is.
-    pub(super) fn open(instance: &Instance, ticket: Ticket) -> Result<Self, Failure> {
+    /// Upgrades a stream to the instance with the ticket. The stream is
+    /// the route's to give: nothing is dialled here. No `Origin` header.
+    pub(super) fn open(
+        route: &dyn Route,
+        instance: &Instance,
+        ticket: Ticket,
+    ) -> Result<Self, Failure> {
         let (scheme, authority) = instance
             .origin
             .split_once("://")
             .ok_or(Failure::Invalid("invalid_api_origin"))?;
         if scheme != "http" {
             // A gateway on this machine serves plain HTTP; this build has
-            // no TLS to dial another kind with.
+            // no TLS to speak another kind with.
             return Err(Failure::Refused(
                 "the gateway's origin is not plain HTTP".into(),
             ));
         }
-        let address = authority
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut found| found.find(|address| address.ip().is_loopback()))
-            .ok_or(Failure::Invalid("invalid_api_origin"))?;
-        let tcp = TcpStream::connect_timeout(&address, DIAL).map_err(|_| Failure::Unreachable)?;
+        let tcp = route.dial(instance)?;
         let _ = tcp.set_nodelay(true);
         let _ = tcp.set_read_timeout(Some(HANDSHAKE));
         let _ = tcp.set_write_timeout(Some(WRITE));

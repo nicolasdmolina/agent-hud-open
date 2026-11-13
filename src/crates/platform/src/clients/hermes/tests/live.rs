@@ -8,7 +8,7 @@
 //!   AGENT_HUD_HERMES_LAB_DATA=/folder/to/keep/the/log/in \
 //!   cargo test -p agent-hud-platform --lib hermes::tests_unix::live -- --ignored --nocapture
 //! ```
-use super::super::{Observer, Pace};
+use super::super::{route::local::Local, Observer, Pace};
 use agent_hud_core::requests::Requests;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -29,8 +29,8 @@ fn follows_a_real_gateway() {
     let scratch = tempfile::tempdir().unwrap();
     let data = kept.as_deref().unwrap_or(scratch.path());
     let requests = Requests::default();
-    let observer = Observer::start_at(
-        PathBuf::from(home),
+    let observer = Observer::start_on(
+        Arc::new(Local::at(home)),
         data,
         requests.clone(),
         Arc::new(|| {}),

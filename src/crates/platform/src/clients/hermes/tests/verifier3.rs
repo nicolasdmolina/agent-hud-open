@@ -294,8 +294,8 @@ fn verifier3_default_write_budget_stops_a_stalled_frame_without_later_flush() {
     let mut lab = lab();
     let gateway = Fake::start(&lab.home, "instance-1");
     lab.observer = Some(
-        super::super::Observer::start_at(
-            lab.home.clone(),
+        super::super::Observer::start_on(
+            lab.route.clone(),
             &lab.data,
             lab.requests.clone(),
             Arc::new(|| {}),
