@@ -1,6 +1,6 @@
 pub(crate) use super::unix::{
     environment_value, hook_configuration, hook_text, is_shell, owned_by_user, owner_only,
-    private_append, private_directory, private_file, read_stdin,
+    private_append, private_directory, private_file, read_stdin, user_transcript,
 };
 use super::{config_home, data_home, joined_path, path_entries, Environment, ProcessInfo};
 use std::{
@@ -109,6 +109,9 @@ pub(crate) fn engine_executable(path: &Path) -> bool {
     super::unix::executable(path)
 }
 pub(crate) fn configure_command(_command: &mut Command) {}
+pub(crate) fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
+    command.spawn()
+}
 pub(crate) fn engine_candidates(home: &Path, env: &Environment, name: &str) -> Vec<PathBuf> {
     let mut paths = vec![
         home.join(".local/bin").join(name),

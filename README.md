@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="https://agenthud.app">Website</a> · <a href="https://discord.gg/cpTPDgWwXR">Discord</a> · <a href="#supported-agents">Supported agents</a> · <a href="#documentation">Documentation</a>
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="https://agenthud.app">Website</a> · <a href="https://discord.gg/cpTPDgWwXR">Discord</a> · <a href="#community">WeChat group</a> · <a href="#supported-agents">Supported agents</a> · <a href="#documentation">Documentation</a>
 </p>
 
 <p align="center">
@@ -69,6 +69,8 @@ The details are close at hand, and what needs your approval is answered right th
 | **Notch** | At the notch, with the glow around it. |
 | **Simple** | A small floating panel on any screen edge: each agent's logo in a ring of its most used quota, with the percentage beside it. A logo becomes its bot while its agent works. |
 
+A display can also leave out its HUD, or only its messages, requests or paper planes: Settings → Display.
+
 ## On your phone.
 
 **Keep moving when decisions are needed.** Leave your computer and the work still goes with you. On iPhone, check progress, read replies and continue the conversation.
@@ -106,8 +108,9 @@ When Claude Code finishes a change, it can ask a Codex session to review it and 
 You can watch who is talking to whom: the sender folds its message into a paper plane and flies it to the receiver's mark, and the answer flies back the same way.
 
 - **A message, not the conversation**: only what the agent writes goes across; its session stays where it is. On one project, the project itself becomes the shared context, and the other agent reads the code for itself.
-- **Claude Code, Codex, Antigravity and DeepSeek Harness**: each can message the others, or start a new Claude Code, Codex or Antigravity session.
-- **Never in the way**: a message waits until its session is idle; it never interrupts a turn.
+- **Twelve agents**: Claude Code, Codex, Antigravity, DeepSeek Harness, Cursor, TRAE, WorkBuddy, ZCode, Qoder, Kimi Code, Pi and OpenCode can message each other, or start a new Claude Code, Codex or Antigravity session.
+- **Never in the way**: a message never interrupts a turn. It waits until its session is idle.
+- **Six are limited**: Cursor, TRAE, WorkBuddy, ZCode, Qoder and Kimi Code take a message only when one of their turns ends, so an idle session gets it after you start another turn there. All but WorkBuddy also cap how many they take in a row.
 
 How to turn it on and use it: [Agents messaging each other](https://agenthud.app/docs/en/mcp/messaging/).
 
@@ -183,8 +186,8 @@ Agent HUD is built with Tauri 2: a Rust core, a React interface, and a thin nati
 
 - **One core.** Reading your agents' records, counting tokens and working out quotas, prices and sessions happen once, in Rust, the same way on every system. The windows only display what the core computes.
 - **Each system in its own files.** Paths, processes, credentials, hooks and windows are written once per system, so work on Windows or Linux never touches shared code.
-- **macOS today; Windows and Linux in preview.** Both build from this source, but neither has been verified on real machines yet; what is still missing is under [Coming soon](#coming-soon).
-- **iPhone and Apple Watch pair with a Mac.** Agent HUD Remote syncs through iCloud, so it is available on macOS only.
+- **macOS today; Windows and Linux in preview.** Both build from this source, and each release carries unsigned test packages for them. The Linux build has not been tried on a real desktop yet; what is still missing is under [Coming soon](#coming-soon).
+- **iPhone and Apple Watch pair with a Mac or a Windows PC.** Agent HUD Remote syncs through iCloud, so for now it is available on macOS only; with Windows, the phone connects on the same network.
 
 ## Agent HUD Remote.
 
@@ -219,7 +222,7 @@ When your iPhone and the release share a network, iPhone and Apple Watch show yo
 
 ## Coming soon
 
-- **Windows and Linux out of preview**, with client hooks on Windows. [Contributions are welcome](CONTRIBUTING.md).
+- **Windows and Linux out of preview.** [Contributions are welcome](CONTRIBUTING.md).
 - **More agents**, beyond the 27 in the table below.
 - **API keys billed by the token**: their usage, spend and balance, next to your plans' quotas.
 - **UI prompt templates.** Ready-made prompts that reshape your HUD in one go.
@@ -239,37 +242,37 @@ When your iPhone and the release share a network, iPhone and Apple Watch show yo
 
 Install and sign in to the agents you want to follow; Agent HUD finds them by itself.
 
-| Agent | Tokens and sessions | Quota | Live status | Approvals | Questions | Replies | One click back | Turns and calls |
-| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Claude&nbsp;Code** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Codex** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **DeepSeek&nbsp;Harness** | ✓ | Balance | ✓ | ✓ | ✓ | ✓ |  | ✓ |
-| **Antigravity** | ✓ | ✓ |  | ✓ | ✓ | ✓ | ✓ |  |
-| **Cursor** | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  |
-| **Grok&nbsp;CLI** | ✓ | ✓ | ✓ |  |  | ✓ |  |  |
-| **Grok&nbsp;Bot** | ✓ | ✓ |  |  |  |  | ✓ |  |
-| **GitHub&nbsp;Copilot&nbsp;CLI** | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
-| **OpenCode** | ✓ | ✓ |  |  |  | ✓ | ✓ |  |
-| **Kilo&nbsp;Code** | ✓ |  |  |  |  | ✓ | ✓ |  |
-| **MiMo&nbsp;Code** | ✓ |  |  |  |  | ✓ | ✓ |  |
-| **Kimi** | ✓ | ✓ | ✓ |  |  | ✓ |  |  |
-| **Pi** | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  |
-| **Oh&nbsp;My&nbsp;Pi** | ✓ |  | ✓ |  |  | ✓ | ✓ |  |
-| **OpenClaw** | ✓ |  |  |  |  |  |  |  |
-| **Hermes&nbsp;Agent** | ✓ | ✓ | ✓ |  |  | ✓ |  |  |
-| **Factory&nbsp;Droid** | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |
-| **TRAE** | Sessions | ✓ | ✓ |  |  | ✓ |  |  |
-| **Qoder** | ✓ | ✓ |  | ✓ |  |  |  |  |
-| **ZCode** | ✓ |  |  | ✓ | ✓ |  |  |  |
-| **CodeBuddy** | ✓ |  |  | ✓ |  | ✓ |  |  |
-| **WorkBuddy** | ✓ | ✓ |  | ✓ |  |  |  |  |
-| **Qwen&nbsp;Code** | ✓ |  |  | ✓ |  | ✓ |  |  |
-| **Devin** | ✓ | ✓ |  | ✓ |  | ✓ |  |  |
-| **Cline** | ✓ | ✓ |  |  |  |  |  |  |
-| **Roo&nbsp;Code** | ✓ |  |  |  |  |  |  |  |
-| **Goose** | ✓ |  |  |  |  |  |  |  |
+| Agent | Tokens and sessions | Quota | Live status | Approvals | Questions | Replies | One click back | Turns and calls | Agent messages |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Claude&nbsp;Code** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Codex** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **DeepSeek&nbsp;Harness** | ✓ | Balance | ✓ | ✓ | ✓ | ✓ |  | ✓ | ✓ |
+| **Antigravity** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Cursor** | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  | Limited |
+| **Grok&nbsp;CLI** | ✓ | ✓ | ✓ |  |  | ✓ |  |  |  |
+| **Grok&nbsp;Bot** | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  |  |
+| **GitHub&nbsp;Copilot&nbsp;CLI** | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |  |
+| **OpenCode** | ✓ | ✓ |  |  |  | ✓ | ✓ |  | ✓ |
+| **Kilo&nbsp;Code** | ✓ |  |  |  |  | ✓ | ✓ |  |  |
+| **MiMo&nbsp;Code** | ✓ |  |  |  |  | ✓ | ✓ |  |  |
+| **Kimi** | ✓ | ✓ | ✓ |  |  | ✓ |  |  | Limited |
+| **Pi** | ✓ | ✓ | ✓ |  |  | ✓ | ✓ |  | ✓ |
+| **Oh&nbsp;My&nbsp;Pi** | ✓ |  | ✓ |  |  | ✓ | ✓ |  |  |
+| **OpenClaw** | ✓ |  |  |  |  |  |  |  |  |
+| **Hermes&nbsp;Agent** | ✓ | ✓ | ✓ |  |  | ✓ |  |  |  |
+| **Factory&nbsp;Droid** | ✓ | ✓ | ✓ | ✓ |  | ✓ |  |  |  |
+| **TRAE** | Sessions | ✓ | ✓ |  |  | ✓ |  |  | Limited |
+| **Qoder** | ✓ | ✓ | ✓ | ✓ |  | ✓ |  | ✓ | Limited |
+| **ZCode** | ✓ |  | ✓ | ✓ | ✓ | ✓ |  |  | Limited |
+| **CodeBuddy** | ✓ |  |  | ✓ |  | ✓ |  |  |  |
+| **WorkBuddy** | ✓ | ✓ |  | ✓ |  | ✓ |  |  | Limited |
+| **Qwen&nbsp;Code** | ✓ |  |  | ✓ |  | ✓ |  |  |  |
+| **Devin** | ✓ | ✓ |  | ✓ |  | ✓ | ✓ |  |  |
+| **Cline** | ✓ | ✓ |  |  |  |  |  |  |  |
+| **Roo&nbsp;Code** | ✓ |  |  |  |  |  |  |  |  |
+| **Goose** | ✓ |  |  |  |  |  |  |  |  |
 
-Also: the **GLM Coding Plan**, **MiniMax** and **Volcengine Ark** plan quotas. Qoder includes Qoder CN and QoderWork, TRAE includes TRAE CN, and Devin includes the CLI and Devin Desktop. Codex approvals need its hook trusted in Codex, DeepSeek Harness approvals and questions need Agent HUD's plugin (Settings → Agent plugins), and Copilot's approvals and quota are each turned on in Settings. Qoder's, WorkBuddy's and TRAE's quotas show once you sign in to the vendor's site in Agent HUD's own window. TRAE reports no tokens, so only its sessions show, and it runs Agent HUD's hooks once you turn on its global hooks. Factory Droid's quota needs a Factory API key, and Devin's quotas come from its CLI's local cache. Cursor's tokens come from Cursor 3.27 or later. Grok Bot's bots run on Cursor's servers, which report each bot's daily tokens; an account merged into SuperGrok reports none, so only its sessions show. Grok Bot's weekly quota comes from the same servers when Cursor is signed in to the Bot's account, otherwise from the Bot's own cache, which it refreshes only while in use. An account merged into SuperGrok has one weekly limit for Cursor and Grok Bot, and Cursor's block shows it as Cursor does.
+Also: the **GLM Coding Plan**, **OpenCode Go**, **MiniMax** and **Volcengine Ark** plan quotas. Qoder includes Qoder CN and QoderWork, TRAE includes TRAE CN, and Devin includes the CLI and Devin Desktop. Codex CLI approvals need its hook trusted in Codex (the Codex app's need nothing), DeepSeek Harness approvals and questions need Agent HUD's plugin (Settings → Agent plugins), and Copilot's approvals and quota are each turned on in Settings. Qoder's, WorkBuddy's and TRAE's quotas show once you sign in to the vendor's site in Agent HUD's own window. TRAE reports no tokens, so only its sessions show, and it runs Agent HUD's hooks once you turn on its global hooks. Qoder records tokens, and so its turns, only for a model on your own key or with `QODER_EXPOSE_TOKEN_USAGE` set. A jump back to a terminal pane needs iTerm2, and Cursor opens a cloud agent's chat but only a local chat's folder. An agent marked Limited under [Agent messages](https://agenthud.app/docs/en/mcp/messaging/) takes a message only when one of its turns ends, not while idle, and cannot be started in a new session; only an interactive Qoder CLI session takes one while idle. Agent messages work with OpenCode 1, and Qoder CN and QoderWork take them without sending. Factory Droid's quota needs a Factory API key, and Devin's quotas come from its CLI's local cache. Cursor's tokens come from Cursor 3.27 or later. Grok Bot's bots run on Cursor's servers, which report each bot's daily tokens; an account merged into SuperGrok reports none, so only its sessions show. Grok Bot's weekly quota comes from the same servers when Cursor is signed in to the Bot's account, otherwise from the Bot's own cache, which it refreshes only while in use. An account merged into SuperGrok has one weekly limit for Cursor and Grok Bot, and Cursor's block shows it as Cursor does.
 
 ## Keep your data safe.
 
@@ -281,6 +284,16 @@ Also: the **GLM Coding Plan**, **MiniMax** and **Volcengine Ark** plan quotas. Q
   - **On the same network**, over HTTPS, with the Mac's certificate pinned when the phone pairs.
   - **Anywhere, with Agent HUD Remote**, through your own iCloud. Record contents are end-to-end encrypted with keys in your iCloud Keychain; only the text an alert shows stays outside that encryption, so iOS can display it.
   - **Live Activities of running sessions**, also with Remote, pass through Agent HUD's relay to Apple's push service. The relay keeps only what forwarding needs, each Mac's latest sessions and each phone's card, with no account identity, and deletes an account it hasn't heard from in 30 days.
+
+## Community
+
+Questions, ideas and bug reports are welcome on [Discord](https://discord.gg/cpTPDgWwXR), in the WeChat group, or in [issues](https://github.com/jazzenchen/agent-hud-open/issues).
+
+<details>
+<summary><strong>WeChat group</strong>: scan the code with WeChat</summary>
+<p><img src="https://agenthud.app/assets/community/wechat-group.png" alt="QR code to join the Agent HUD WeChat group" width="220"></p>
+<p>A group code lasts a week, and I replace it on agenthud.app each week; this picture follows it. If it has expired, find me on Discord.</p>
+</details>
 
 ## Build from source
 

@@ -157,6 +157,7 @@ export type NativeMethod =
   | "session_detail"
   | "open_session"
   | "open_client"
+  | "open_link"
   | "open_native"
   | "toggle_hud"
   | "extension"

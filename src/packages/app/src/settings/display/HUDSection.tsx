@@ -1,10 +1,12 @@
 /* The resting HUD on the selected screen: a preview, its mode and that mode's
  * own rows, then its look. */
+import { modePatch } from "../../lib/mode-patch";
 import type { Snapshot } from "@agent-hud/protocol";
 import type { HUDConfig } from "@agent-hud/hud/model";
 import { Row, Section } from "../SettingsPrimitives";
 import { Segments } from "../SettingsControls";
 import { SmallHUDPreview } from "../SmallHUDPreview";
+import { AgentSelection } from "./AgentSelection";
 import { displayControls, type DisplayProps } from "./controls";
 
 /** What a Simple mark draws, in a sentence. */
@@ -73,7 +75,7 @@ export function HUDSection({
   return (
     <Section title="HUD" footer={dragHint}>
       <SmallHUDPreview snapshot={snapshot} config={config} active={active} />
-      <Row title={t("Mode", "形态")} subtitle={modeSubtitle}>
+      <Row anchor="hud-mode" title={t("Mode", "形态")} subtitle={modeSubtitle}>
         <Segments
           label={t("Mode", "形态")}
           value={config.mode}
@@ -82,16 +84,7 @@ export function HUDSection({
             ["simple", t("Simple", "简约")],
           ]}
           change={(value) =>
-            update({
-              mode: value as HUDConfig["mode"],
-              ...(config.mode === "notch" &&
-              value !== "notch" &&
-              config.hasNotch &&
-              config.edge === "top" &&
-              config.offset === 0.5
-                ? { offset: 0 }
-                : {}),
-            })
+            update(modePatch(config, value as HUDConfig["mode"]))
           }
         />
       </Row>
@@ -155,6 +148,12 @@ export function HUDSection({
           )}
         </>
       )}
+      <AgentSelection
+        snapshot={snapshot}
+        config={config}
+        update={update}
+        t={t}
+      />
       <Row
         title={t("Appearance", "外观")}
         subtitle={

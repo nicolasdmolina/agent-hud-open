@@ -2,12 +2,15 @@ use super::{joined_path, path_entries, variable, Environment, ProcessInfo};
 mod acl;
 mod antigravity;
 mod apps;
+mod claude;
 mod codex;
 mod files;
 pub(crate) mod pipe;
 mod process;
 mod secrets;
-pub(crate) use apps::{activate_app, app_running, launch_app};
+mod shortcut;
+pub(crate) use crate::windows_session::spawn;
+pub(crate) use apps::{activate_app, app_running, launch_app, registered_bundle};
 pub(crate) use process::{
     codex_cli_on_port, parent_processes, process_runs, process_start, terminal_io,
 };
@@ -23,7 +26,7 @@ pub(crate) const MOVES_CLAUDE_JOBS: bool = false;
 pub(crate) const OPENS_CLAUDE_PROJECTS: bool = false;
 pub(crate) use files::{
     hook_configuration, hook_text, owned_by_user, owner_only, private_append, private_directory,
-    private_file, read_stdin,
+    private_file, read_stdin, user_transcript,
 };
 use std::{
     path::{Path, PathBuf},
@@ -93,15 +96,15 @@ pub(crate) fn application_installed(home: &Path, env: &Environment, name: &str) 
     if matches!(name, "Codex" | "ChatGPT") {
         return codex::installation(home, env).installed;
     }
+    if name == "Claude" && registered_bundle("com.anthropic.claudefordesktop") {
+        return true;
+    }
     [
         local_app(home, env).join("Programs"),
         variable(env, "ProgramFiles").unwrap_or_else(|| PathBuf::from("C:/Program Files")),
     ]
     .iter()
     .any(|dir| dir.join(name).is_dir())
-}
-pub(crate) fn registered_bundle(_id: &str) -> bool {
-    false
 }
 /// URL-handler lookup through Windows associations is not implemented.
 pub(crate) fn registered_url(_url: &str) -> bool {
@@ -168,42 +171,12 @@ pub(crate) fn engine_candidates(home: &Path, env: &Environment, name: &str) -> V
     paths.extend(dirs.into_iter().map(|dir| dir.join(format!("{name}.exe"))));
     // Fallbacks for desktop apps that keep their CLI off PATH.
     match name {
-        // The Claude desktop app: %APPDATA%\Claude\claude-code\<version>\<hash>\claude.exe
-        "claude" => paths.extend(newest_nested(
-            &app_support(home, env).join("Claude/claude-code"),
-            "claude.exe",
-        )),
+        "claude" => paths.extend(claude::engines(home, env)),
         // The Codex desktop app's own copy of its CLI.
         "codex" => paths.push(home.join(".codex/.sandbox-bin/codex.exe")),
         _ => {}
     }
     paths
-}
-/// `<root>\*\*\<file>`, most recently modified first.
-fn newest_nested(root: &Path, file: &str) -> Vec<PathBuf> {
-    let children = |dir: &Path| -> Vec<PathBuf> {
-        std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .collect()
-    };
-    let mut found: Vec<_> = children(root)
-        .iter()
-        .flat_map(|version| children(version))
-        .map(|dir| dir.join(file))
-        .filter(|path| path.is_file())
-        .map(|path| {
-            let modified = std::fs::metadata(&path)
-                .and_then(|meta| meta.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            (modified, path)
-        })
-        .collect();
-    found.sort_by_key(|entry| std::cmp::Reverse(entry.0));
-    found.into_iter().map(|(_, path)| path).collect()
 }
 pub(crate) fn engine_path(home: &Path, env: &Environment) -> String {
     joined_path(executable_dirs(home, env))
@@ -217,8 +190,8 @@ pub(crate) fn reveal_transcript(path: &Path) -> Result<(), String> {
         .arg(format!("/select,{}", path.display()))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    spawn(&mut command)
         .map(|_| ())
         .map_err(|_| "Could not reveal transcript".into())
 }
@@ -247,6 +220,9 @@ pub(crate) fn open_url_in_app(_bundle_id: &str, _url: &str) -> bool {
 }
 
 pub(crate) fn open_session_url(url: &str) -> Result<(), String> {
+    if let Some(opened) = apps::open_unregistered_link(url) {
+        return opened;
+    }
     use std::{
         ffi::{c_void, OsStr},
         os::windows::ffi::OsStrExt,

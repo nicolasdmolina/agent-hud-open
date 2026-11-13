@@ -188,7 +188,7 @@ impl Log {
         let model = format!(
             "{}#{}",
             self.model,
-            self.source_state["provider"].as_str().unwrap_or("Unknown")
+            route(self.source_state["provider"].as_str().unwrap_or("Unknown"))
         );
         let duration_ms = self.call_timing.since_request(0, at);
         self.count_timed_source(
@@ -205,6 +205,18 @@ impl Log {
             false,
             duration_ms,
         );
+    }
+}
+
+/// The route a DeepSeek Harness provider id names in HUD's terminology. The
+/// Harness calls its platform account provider `deepseek-account`; HUD's
+/// balance reader, billing queries and price catalog call that route
+/// `deepseek-official`, so usage recorded under either name prices and bills
+/// as DeepSeek's own API.
+fn route(provider: &str) -> &str {
+    match provider {
+        "deepseek-account" => "deepseek-official",
+        other => other,
     }
 }
 
@@ -323,6 +335,12 @@ mod tests {
             Some("收到了你的消息；我是 DeepSeek Harness 中的 deepseek-flash 模型。")
         );
         assert!(!reply[0].is_prompt);
+    }
+
+    #[test]
+    fn harness_platform_account_calls_are_deepseeks_own_api() {
+        assert_eq!(route("deepseek-account"), "deepseek-official");
+        assert_eq!(route("openrouter"), "openrouter");
     }
 
     #[test]
