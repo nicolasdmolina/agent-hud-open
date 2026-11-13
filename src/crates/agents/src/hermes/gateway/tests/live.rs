@@ -144,3 +144,59 @@ fn only_a_poll_that_counts_renews_what_is_told() {
     g.apply(Input::Polled(hung), 70_000);
     assert_eq!(g.live_states().read_ms, 60_000);
 }
+
+/// Against ticket 12's snapshots as merged: a session waiting on requests
+/// whose event Hermes dropped is told waiting from its list alone, whether
+/// or not the snapshot that finds its requests worked, and is told nothing
+/// while the socket is gone, though its card stays.
+#[test]
+fn what_is_told_follows_the_list_whatever_the_snapshots_do() {
+    let (mut g, mut h) = start();
+    let s = "local-long";
+    let approval = |id: &str| {
+        json!({"kind": "approval", "prompt_id": id, "execution_generation": 1,
+            "command": "synthetic command", "description": "synthetic approval",
+            "choices": ["once", "deny"], "timeout_s": 20})
+    };
+    h.publish(&verify(), s, "approval.request", 1, approval("older"));
+    for _ in 0..600 {
+        h.publish(&verify(), s, "session.info", 1, json!({}));
+    }
+    h.keep_what_hermes_keeps(&verify(), s);
+    h.publish(&verify(), s, "approval.request", 1, approval("newer"));
+    let waiting = [("hermes:verify:local-long".to_owned(), Waiting)];
+
+    // The snapshot fails: no card, but the list says it waits.
+    h.failing.push(Step::Snapshot(g.session(&verify(), s)));
+    poll(&mut g, &mut h, 0);
+    assert_eq!(g.waiting().count(), 0);
+    assert_eq!(told(&g), waiting);
+    // The next one finds both requests; the one after needs no snapshot.
+    poll(&mut g, &mut h, 1_000);
+    assert_eq!((h.snapshots(), g.waiting().count()), (1, 2));
+    poll(&mut g, &mut h, 2_000);
+    assert_eq!(h.snapshots(), 0);
+    assert_eq!(told(&g), waiting);
+    assert_eq!(g.live_states().read_ms, 2_000);
+
+    // The socket drops: the cards stay, nothing is told.
+    g.apply(Input::Lost(Failure::Closed(1006)), 3_000);
+    assert_eq!(g.waiting().count(), 2);
+    assert_eq!(told(&g), []);
+    identified(&mut g, "one");
+    assert_eq!(told(&g), []);
+    // Back: the poll snapshots again, as ticket 12 does after a loss.
+    poll(&mut g, &mut h, 10_000);
+    assert_eq!(h.snapshots(), 1);
+    assert_eq!(told(&g), waiting);
+    assert_eq!(g.live_states().read_ms, 10_000);
+
+    // Both settle elsewhere: the session idles and the cards close.
+    for id in ["older", "newer"] {
+        let body = json!({"prompt_id": id, "execution_generation": 1});
+        h.publish(&verify(), s, "approval.settled", 1, body);
+    }
+    poll(&mut g, &mut h, 11_000);
+    assert_eq!(g.waiting().count(), 0);
+    assert_eq!(told(&g), [("hermes:verify:local-long".to_owned(), Idle)]);
+}

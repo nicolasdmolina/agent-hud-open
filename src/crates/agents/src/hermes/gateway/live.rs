@@ -11,9 +11,36 @@
 //! when the poll that read it came back, and nothing else renews it: core
 //! stops believing it once that is too long ago, so a channel that hangs
 //! without a word gives the sessions back to the hooks all the same.
+use super::poll::Poll;
 use super::state::Gateway;
-use super::Connection;
+use super::{Connection, Profile};
 use crate::LiveStates;
+use std::collections::BTreeSet;
+
+/// What the HUD can be told rests on: the profiles the newest poll that
+/// counted listed since the gateway was last ready, whose sessions in
+/// `listed` are current, and when that poll came back.
+#[derive(Debug, Default)]
+pub(super) struct Told {
+    fresh: BTreeSet<Profile>,
+    read_ms: i64,
+}
+
+impl Told {
+    /// A gateway that is not ready lists nothing current.
+    pub(super) fn follow(&mut self, next: &Connection) {
+        if !matches!(next, Connection::Ready(_)) {
+            self.fresh.clear();
+        }
+    }
+    /// A poll that counted came back at `now_ms`: the profiles it listed
+    /// are current, and no others.
+    pub(super) fn read(&mut self, poll: &Poll, now_ms: i64) {
+        let listed = poll.profiles.iter().filter(|(_, l)| **l == Some(true));
+        self.fresh = listed.map(|(profile, _)| profile.clone()).collect();
+        self.read_ms = now_ms;
+    }
+}
 
 impl Gateway {
     /// Every live session the HUD can trust a status for, by its HUD
@@ -28,12 +55,12 @@ impl Gateway {
         let sessions = self
             .statuses()
             .into_iter()
-            .filter(|(at, _)| self.fresh.contains(&at.profile))
+            .filter(|(at, _)| self.told.fresh.contains(&at.profile))
             .map(|(at, status)| (at.hud_id(), status.live()))
             .collect();
         LiveStates {
             sessions,
-            read_ms: self.read_ms,
+            read_ms: self.told.read_ms,
         }
     }
 }
