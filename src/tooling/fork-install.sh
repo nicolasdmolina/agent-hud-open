@@ -1,5 +1,6 @@
 #!/bin/sh
-# Builds the fork's app bundle and puts it in /Applications (FORK.md).
+# Builds the fork's app bundle, owning client hooks from /Applications, and
+# puts it there (FORK.md).
 # Usage: sh src/tooling/fork-install.sh [--no-open]
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -9,6 +10,8 @@ app="/Applications/$name.app"
 # worktree's crates, and that would be what gets installed.
 export CARGO_TARGET_DIR="$root/target"
 built="$CARGO_TARGET_DIR/release/bundle/macos/$name.app"
+# Client hooks belong to the installed copy's executable (FORK.md).
+export AGENT_HUD_HOOK_OWNER="$app/Contents/MacOS/$name"
 pnpm --dir "$root" --filter @agent-hud/desktop exec tauri build --bundles app \
   --config "$root/src/apps/desktop/src-tauri/tauri.fork.conf.json"
 # Copy next to the installed app first, so a failed copy leaves it in place.

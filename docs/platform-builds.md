@@ -73,6 +73,8 @@ qualify desktop focus, display, client, or network behavior.
 - Read real Claude/Codex logs. In the public `agent-hud-open` app, verify that
   hook installation remains unavailable and client settings stay unchanged:
   its default host does not delegate a canonical hook-owner executable.
+  A build with `AGENT_HUD_HOOK_OWNER` set (the fork's `src/tooling/fork-install.sh`)
+  delegates that path and can install hooks once run from it.
 - In the private `agent-hud` app installed at its approved Windows path, enable
   supported client hooks from Settings, then check running/permission/completed
   states and CLI session attribution. A copied executable or a build output
