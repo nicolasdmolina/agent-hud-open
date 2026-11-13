@@ -1,9 +1,9 @@
 //! One ephemeral owner for requests waiting on the user. Client adapters own
 //! decoding/encoding; transports own connections. No request body is persisted.
-use agent_hud_agents::Request;
+use agent_hud_agents::{Machines, Request};
 use serde_json::Value;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::{mpsc, Arc, Mutex, PoisonError},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -35,6 +35,8 @@ struct State {
     deliveries: VecDeque<Value>,
     /// What each native channel's readers say of their sessions.
     native: native::Readers,
+    /// What each source's native channel last said of its machines.
+    machines: BTreeMap<String, Machines>,
 }
 pub use native::{NativeReadings, NativeStates, LIVE_STATES_MS};
 struct Reviewer {
@@ -76,6 +78,7 @@ impl Default for Requests {
                 reviewers: HashMap::new(),
                 deliveries: VecDeque::new(),
                 native: native::Readers::default(),
+                machines: BTreeMap::new(),
             }),
             wake: Mutex::new(None),
         }))
@@ -233,11 +236,13 @@ impl Requests {
     pub fn clear(&self) {
         let (pending, changed) = {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-            let changed = !state.pending.is_empty() || !state.native.is_empty();
+            let changed =
+                !state.pending.is_empty() || !state.native.is_empty() || !state.machines.is_empty();
             if changed {
                 state.revision = state.revision.wrapping_add(1);
             }
             state.native.clear();
+            state.machines.clear();
             state.dismissed.clear();
             (std::mem::take(&mut state.pending), changed)
         };

@@ -7,6 +7,7 @@ mod conversation_feed;
 mod forks;
 mod hermes_questions;
 mod ingestion;
+mod machines;
 mod plan_value;
 mod quota_history;
 mod sessions;
