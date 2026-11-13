@@ -157,7 +157,7 @@ impl Hermes {
             Step::Snapshot(session) => {
                 let stream = self.held(session)?;
                 Some(json!({
-                    "session_id": session.id, "replay_epoch": stream.epoch,
+                    "session_id": session.id(), "replay_epoch": stream.epoch,
                     "last_sequence": stream.latest, "subscription_id": "synthetic-sub",
                     "prompts": stream.prompts, "open_requests": stream.open,
                 }))
@@ -168,7 +168,7 @@ impl Hermes {
     fn held(&self, session: &SessionRef) -> Option<&Stream> {
         let stream = self
             .streams
-            .get(&(session.profile.clone(), session.id.clone()))?;
+            .get(&(session.profile.clone(), session.id().to_owned()))?;
         (!stream.epoch.is_empty()).then_some(stream)
     }
     /// Where the last poll read the session's events from, in order.

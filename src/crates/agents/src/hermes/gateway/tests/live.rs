@@ -7,11 +7,11 @@ use crate::LiveState::{self, Idle, Running, Waiting};
 use serde_json::json;
 
 fn verify() -> Profile {
-    Profile::named("verify")
+    Profile::named("verify").unwrap()
 }
 
 fn start() -> (Gateway, Hermes) {
-    let mut gateway = Gateway::new(GatewayId::new("local"));
+    let mut gateway = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     identified(&mut gateway, "one");
     (gateway, Hermes::default())
 }
@@ -78,7 +78,7 @@ fn a_waiting_session_stays_waiting_however_long_it_waits() {
 
 #[test]
 fn nothing_is_told_but_what_a_poll_read_since_the_gateway_was_last_ready() {
-    let mut g = Gateway::new(GatewayId::new("local"));
+    let mut g = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     let mut h = Hermes::default();
     lists(&mut h, &Profile::Default, "local-long", "working");
     let running = [("hermes:local-long".to_owned(), Running)];
@@ -167,7 +167,8 @@ fn what_is_told_follows_the_list_whatever_the_snapshots_do() {
     let waiting = [("hermes:verify:local-long".to_owned(), Waiting)];
 
     // The snapshot fails: no card, but the list says it waits.
-    h.failing.push(Step::Snapshot(g.session(&verify(), s)));
+    h.failing
+        .push(Step::Snapshot(g.session(&verify(), s).unwrap()));
     poll(&mut g, &mut h, 0);
     assert_eq!(g.waiting().count(), 0);
     assert_eq!(told(&g), waiting);

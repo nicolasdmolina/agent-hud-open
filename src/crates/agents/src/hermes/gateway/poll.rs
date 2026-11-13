@@ -136,7 +136,7 @@ impl Poll {
                 };
                 let named = result["session_id"]
                     .as_str()
-                    .is_none_or(|id| id == session.id);
+                    .is_none_or(|id| id == session.id());
                 let Some(mut asks) = prompts(&result["prompts"]).filter(|_| named) else {
                     return self.set(session, Read::Failed);
                 };
@@ -185,10 +185,9 @@ impl Poll {
             else {
                 continue;
             };
-            let session = SessionRef {
-                gateway: self.gateway.clone(),
-                profile: profile.clone(),
-                id: id.to_owned(),
+            // A row whose id can be no session's is not followed.
+            let Some(session) = SessionRef::new(self.gateway.clone(), profile.clone(), id) else {
+                continue;
             };
             // A word Hermes adds later is taken as working: the session is read.
             let status = row["status"]

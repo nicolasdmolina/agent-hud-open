@@ -20,14 +20,38 @@ use serde_json::{json, Value};
 const S: &str = "synthetic-session";
 
 fn profile() -> Profile {
-    Profile::named("verify")
+    Profile::named("verify").unwrap()
 }
 
 /// A model that is ready, and a Hermes with nothing in it.
 fn start() -> (Gateway, Hermes) {
-    let mut gateway = Gateway::new(GatewayId::new("synthetic-gateway"));
+    started(GatewayId::new(Machine::This, Profile::Default))
+}
+
+fn started(id: GatewayId) -> (Gateway, Hermes) {
+    let mut gateway = Gateway::new(id);
     identified(&mut gateway, "instance-1");
     (gateway, Hermes::default())
+}
+
+/// Pairs of gateways that can hold the same profile and session id: two
+/// on this machine, this machine's and a far one's, two on one far
+/// machine, and one on each of two far machines.
+fn pairs() -> Vec<(GatewayId, GatewayId)> {
+    let (mini, studio) = (super::far(super::INSTALL), super::far(super::OTHER_INSTALL));
+    let id = |machine: &Machine, anchor: Profile| GatewayId::new(machine.clone(), anchor);
+    vec![
+        (
+            id(&Machine::This, Profile::Default),
+            id(&Machine::This, profile()),
+        ),
+        (
+            id(&Machine::This, Profile::Default),
+            id(&mini, Profile::Default),
+        ),
+        (id(&mini, Profile::Default), id(&mini, profile())),
+        (id(&mini, Profile::Default), id(&studio, Profile::Default)),
+    ]
 }
 
 fn payload(id: &str, turn: u64) -> Value {
@@ -64,7 +88,7 @@ fn late(gateway: &mut Gateway, poll: Poll) -> Vec<Effect> {
 }
 
 fn at(gateway: &Gateway) -> SessionRef {
-    gateway.session(&profile(), S)
+    gateway.session(&profile(), S).unwrap()
 }
 
 // ---- Round 1 ----
@@ -570,9 +594,16 @@ fn late_snapshot_must_not_recreate_a_session_removed_by_newer_list() {
 
 #[test]
 fn session_selectors_must_not_resolve_another_gateway_session() {
-    let (mut local, mut h) = start();
-    let mut remote = Gateway::new(GatewayId::new("remote"));
-    identified(&mut remote, "instance-1");
+    // Each of a pair in turn is the one that holds the request.
+    for (one, other) in pairs() {
+        selectors_resolve_only_their_own(one.clone(), other.clone());
+        selectors_resolve_only_their_own(other, one);
+    }
+}
+
+fn selectors_resolve_only_their_own(holds: GatewayId, other: GatewayId) {
+    let (mut local, mut h) = started(holds);
+    let (mut remote, _) = started(other);
     asks(&mut h, "local-only", 1);
     poll(&mut local, &mut h, 0);
     let (own, foreign) = (at(&local), at(&remote));
@@ -589,9 +620,28 @@ fn session_selectors_must_not_resolve_another_gateway_session() {
         Some(&own)
     );
     assert_eq!(local.pending(&foreign.request_id("local-only")), None);
+    assert_ne!(
+        own.request_id("local-only"),
+        foreign.request_id("local-only")
+    );
+    // The other gateway neither lists the session nor shows its card.
+    assert_eq!(remote.status(&own), None);
+    assert_eq!(remote.pending(&own.request_id("local-only")), None);
+    assert!(remote.statuses().is_empty() && names(&remote).is_empty());
     // What another gateway's poll found is never this gateway's.
     let theirs = taken(&mut remote, &mut h);
     assert_eq!(late(&mut local, theirs), []);
+    assert_eq!(names(&local), ["local-only"]);
+    // An answer to the other gateway's request is not this one's.
+    let (theirs, reply) = (
+        foreign.request_id("local-only"),
+        json!({"result": {"status": "resolved"}}),
+    );
+    let answered = Input::Responded {
+        request: &theirs,
+        reply: &reply,
+    };
+    assert_eq!(local.apply(answered, 2), []);
     assert_eq!(names(&local), ["local-only"]);
     // Every effect names the gateway its session is on.
     let effects = identified(&mut local, "instance-2");
@@ -602,22 +652,30 @@ fn session_selectors_must_not_resolve_another_gateway_session() {
 
 #[test]
 fn gateway_owned_state_and_restart_are_isolated() {
-    let mut a = Gateway::new(GatewayId::new("a"));
-    let mut b = Gateway::new(GatewayId::new("b"));
-    let mut h = Hermes::default();
-    asks(&mut h, "same", 1);
-    for g in [&mut a, &mut b] {
-        identified(g, "instance-1");
-        poll(g, &mut h, 0);
+    for (one, other) in pairs() {
+        let (mut a, mut b) = (Gateway::new(one), Gateway::new(other));
+        let mut h = Hermes::default();
+        asks(&mut h, "same", 1);
+        for g in [&mut a, &mut b] {
+            identified(g, "instance-1");
+            poll(g, &mut h, 0);
+        }
+        assert_ne!(
+            a.waiting().next().unwrap().id(),
+            b.waiting().next().unwrap().id()
+        );
+        // Each lists the session as its own, and only its own.
+        for (g, not) in [(&a, &b), (&b, &a)] {
+            assert_eq!(g.statuses(), [(at(g), Status::Waiting)]);
+            assert_eq!(g.status(&at(not)), None);
+        }
+        identified(&mut a, "instance-2");
+        assert!(names(&a).is_empty());
+        assert!(a.statuses().is_empty());
+        assert_eq!(names(&b), ["same"]);
+        assert_eq!(b.statuses(), [(at(&b), Status::Waiting)]);
+        assert_eq!(poll(&mut b, &mut h, 1), []);
     }
-    assert_ne!(
-        a.waiting().next().unwrap().id(),
-        b.waiting().next().unwrap().id()
-    );
-    identified(&mut a, "instance-2");
-    assert!(names(&a).is_empty());
-    assert_eq!(names(&b), ["same"]);
-    assert_eq!(poll(&mut b, &mut h, 1), []);
 }
 
 #[test]

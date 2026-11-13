@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 /// The first request of `kind` in a recording, as the model holds it.
 fn asked(name: &str, kind: &str) -> Pending {
     let doc = fixture(name);
-    let session = |id: &Value| local().session(&spike(), id.as_str().unwrap());
+    let session = |id: &Value| local().session(&spike(), id.as_str().unwrap()).unwrap();
     for entry in doc["clients"]["hud"].as_array().unwrap() {
         let sent = &entry["frame"];
         let found = match frame(sent) {
@@ -126,7 +126,7 @@ fn several_picks_go_as_a_list_in_the_answer() {
         };
         if let Some((ask, wait_ms)) = Ask::prompt(event.payload) {
             if matches!(&ask, Ask::Question(q) if q.multi_select) {
-                let session = local().session(&spike(), event.session);
+                let session = local().session(&spike(), event.session).unwrap();
                 several = Some(Pending {
                     session,
                     ask,
@@ -165,7 +165,7 @@ fn several_picks_go_as_a_list_in_the_answer() {
 #[test]
 fn an_approval_takes_one_of_the_choices_it_offered() {
     let approval = asked("approval-answered-once", "approval.request");
-    let session = approval.session.id.clone();
+    let session = approval.session.id().to_owned();
     assert!(session.starts_with("local-e36d3be5"));
     let frame = |choice: &str| {
         Ok(Some(

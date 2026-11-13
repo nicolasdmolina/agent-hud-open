@@ -186,7 +186,7 @@ impl Replay {
         fake::ask(&mut poll, &mut self.world.hermes);
         for step in self.world.hermes.asked.clone() {
             if let Step::Snapshot(session) = step {
-                self.say(format!("snapshot {}", short(&session.id)));
+                self.say(format!("snapshot {}", short(session.id())));
             }
         }
         self.apply(Input::Polled(poll));
@@ -231,14 +231,16 @@ impl Replay {
     fn compare(&mut self, sent: &Value, scope: Scope, profile: &Profile) {
         let params = &sent["params"];
         let method = sent["method"].as_str().unwrap_or("result");
-        let at = self
+        // Named only where the answer names its session.
+        let named = self
             .gateway
             .session(profile, params["session_id"].as_str().unwrap_or(""));
+        let at = || named.clone().expect("the answer names its session");
         let (asked, said, decision) = match method {
             "clarify.respond" => {
                 let prompt = params["prompt_id"].as_str().unwrap();
                 let text = params["answer"].as_str().unwrap();
-                let id = at.request_id(prompt);
+                let id = at().request_id(prompt);
                 let decision = match self.gateway.pending(&id).map(|p| &p.ask) {
                     Some(Ask::Question(q)) => {
                         answer_decision(prompt, text, &q.choices, q.multi_select)
@@ -251,7 +253,7 @@ impl Replay {
                 let prompt = params["prompt_id"].as_str().unwrap();
                 let word = params["choice"].as_str().unwrap();
                 (
-                    at.request_id(prompt),
+                    at().request_id(prompt),
                     format!("choice {word}"),
                     choice_decision(word),
                 )
@@ -332,21 +334,23 @@ fn clients(doc: &Value) -> Vec<(&String, &Vec<Value>, Scope)> {
 /// Checks that the model's own encoder writes a recorded reading call.
 fn check_call(gateway: &Gateway, sent: &Value, scope: Scope, profile: &Profile) {
     let params = &sent["params"];
-    let at = gateway.session(profile, params["session_id"].as_str().unwrap_or(""));
+    // Named only where the call names its session.
+    let named = gateway.session(profile, params["session_id"].as_str().unwrap_or(""));
+    let at = || named.clone().expect("the call names its session");
     let ours = match sent["method"].as_str().unwrap() {
         "session.active_list" => Step::List(profile.clone()).command(scope),
-        "session.resume" => Step::Snapshot(at).command(scope),
+        "session.resume" => Step::Snapshot(at()).command(scope),
         "session.events.since" => {
             let cursor = params["replay_epoch"].as_str().map(|epoch| Cursor {
                 epoch: epoch.to_owned(),
                 seq: params["last_sequence"].as_u64().unwrap(),
             });
-            let session = at;
+            let session = at();
             Step::Since { session, cursor }.command(scope)
         }
         // The spike closed its own sessions with `end_reason`; the model never does.
         "session.detach" if params.get("end_reason").is_none() => {
-            detach(&at, params["subscription_id"].as_str().unwrap(), scope)
+            detach(&at(), params["subscription_id"].as_str().unwrap(), scope)
         }
         _ => return,
     };
@@ -437,7 +441,7 @@ pub fn replay(name: &str) -> Vec<String> {
             run.now_ms = base + (entry["t"].as_f64().unwrap() * 1000.0) as i64;
             // The socket's own profile, or the one a host's socket names.
             let profile = match (scope, sent["params"]["profile"].as_str()) {
-                (Scope::Host, named) => Profile::named(named.unwrap_or("")),
+                (Scope::Host, named) => Profile::named(named.unwrap_or("")).unwrap(),
                 _ => spike(),
             };
             if entry["dir"] == "out" {
@@ -458,7 +462,7 @@ pub fn replay(name: &str) -> Vec<String> {
                 match frame(sent) {
                     Frame::Request { params, .. } => {
                         let session = params["session_id"].as_str().unwrap();
-                        asked_in = Some(run.gateway.session(&profile, session));
+                        asked_in = Some(run.gateway.session(&profile, session).unwrap());
                         run.world.request(&profile, sent);
                     }
                     Frame::Event(_) => run.world.event(&profile, &sent["params"]),
@@ -468,7 +472,7 @@ pub fn replay(name: &str) -> Vec<String> {
                 continue;
             };
             let profile = match (scope, call["params"]["profile"].as_str()) {
-                (Scope::Host, named) => Profile::named(named.unwrap_or("")),
+                (Scope::Host, named) => Profile::named(named.unwrap_or("")).unwrap(),
                 _ => spike(),
             };
             let result = &sent["result"];
@@ -477,13 +481,17 @@ pub fn replay(name: &str) -> Vec<String> {
                 "session.active_list" if result.is_object() => run.world.listed(&profile, result),
                 "session.events.since" if result.is_object() => {
                     run.world.replayed(&profile, session, result);
-                    let at = run.gateway.session(&profile, session);
+                    let at = run.gateway.session(&profile, session).unwrap();
                     check_replay(&mut run.world, &at, &call, result);
                 }
                 "session.resume" if result.is_object() => run.world.resumed(&profile, result),
                 "clarify.respond" | "approval.respond" => {
                     let prompt = call["params"]["prompt_id"].as_str().unwrap();
-                    let request = run.gateway.session(&profile, session).request_id(prompt);
+                    let request = run
+                        .gateway
+                        .session(&profile, session)
+                        .unwrap()
+                        .request_id(prompt);
                     let outcome = match answered(sent) {
                         Answered::Resolved => "resolved".to_owned(),
                         Answered::AlreadyResolved => "already resolved".to_owned(),
