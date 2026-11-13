@@ -2,7 +2,7 @@
 //! goes through `tell()`, which hands the model's `live_states()` to
 //! `Requests::set_native_states`, and an observer that stops clears them.
 use super::{fake::Fake, fake::PROFILE, lab, until, Lab};
-use agent_hud_agents::{hermes::AGENT, LiveState};
+use agent_hud_agents::{hermes::AGENT, LiveState, SOLE_READER};
 
 const SESSION: &str = "local-states";
 
@@ -10,7 +10,7 @@ const SESSION: &str = "local-states";
 fn told(lab: &Lab) -> Vec<(String, LiveState)> {
     let all = lab.requests.native_states();
     let mut sessions: Vec<_> = all
-        .get(AGENT.id)
+        .of(AGENT.id, SOLE_READER)
         .into_iter()
         .flat_map(|states| states.sessions.clone())
         .collect();
@@ -20,7 +20,8 @@ fn told(lab: &Lab) -> Vec<(String, LiveState)> {
 
 fn read_ms(lab: &Lab) -> i64 {
     let all = lab.requests.native_states();
-    all.get(AGENT.id).map_or(0, |states| states.read_ms)
+    let reading = all.of(AGENT.id, SOLE_READER);
+    reading.map_or(0, |states| states.read_ms)
 }
 
 /// The session as Hermes lists it: a turn under way or not.

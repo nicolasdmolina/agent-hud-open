@@ -8,6 +8,7 @@ use agent_hud_agents::hermes::{
     gateway::{Ask, Closed, Connection, Effect, Gateway, Pending, Refusal},
     AGENT,
 };
+use agent_hud_agents::SOLE_READER;
 use agent_hud_core::l10n;
 
 impl Shared {
@@ -129,7 +130,8 @@ impl Shared {
     /// listed it (`live_states`, ticket 16). It is called after everything
     /// the model takes in, changed or not, since core ignores what it
     /// already knows; and with no gateway when the observer stops, which
-    /// clears both.
+    /// clears both. One connection follows Hermes, so it is the only
+    /// reader.
     pub(super) fn tell(&self, gateway: Option<&Gateway>, now: i64) {
         let mut waiting: Vec<String> = gateway
             .into_iter()
@@ -138,9 +140,10 @@ impl Shared {
             .collect();
         waiting.sort();
         waiting.dedup();
-        self.requests.set_native_waiting(AGENT.id, &waiting, now);
+        let requests = &self.requests;
+        requests.set_native_waiting(AGENT.id, SOLE_READER, &waiting, now);
         let states = gateway.map(Gateway::live_states).unwrap_or_default();
-        self.requests.set_native_states(AGENT.id, &states);
+        requests.set_native_states(AGENT.id, SOLE_READER, &states);
     }
 }
 

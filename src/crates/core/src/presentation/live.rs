@@ -8,9 +8,11 @@
 //! better; but a turn end or start the hooks push after the reading is
 //! newer news than the reading, until the channel reads again. A session
 //! the channel leaves out, a channel that said nothing, went away or
-//! stopped reading keeps what the hooks and the log say.
+//! stopped reading keeps what the hooks and the log say. Where a source
+//! has several readers, each session follows the reading that lists it
+//! (the newest, if two do), with that reading's own time.
 use crate::hook_events::HookEvidence;
-use crate::requests::{NativeStates, Requests};
+use crate::requests::{NativeReadings, Requests};
 use agent_hud_agents::LiveState;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -18,8 +20,8 @@ use std::collections::{HashMap, HashSet};
 pub(super) struct Native<'a> {
     /// The sessions a native card waits in, by source.
     waiting: HashMap<String, HashSet<String>>,
-    /// What each source's channel read its live sessions doing, and when.
-    states: HashMap<String, NativeStates>,
+    /// What each reader of a source read its live sessions doing, and when.
+    states: NativeReadings,
     hooks: &'a HookEvidence,
     now: i64,
 }
@@ -38,11 +40,12 @@ impl<'a> Native<'a> {
             .get(source)
             .is_some_and(|sessions| sessions.contains(id))
     }
+    /// The reading that lists the session is the one its hooks are set
+    /// against: a later reading by another reader says nothing of it.
     fn told(&self, source: &str, id: &str) -> Option<LiveState> {
-        let states = self.states.get(source).filter(|s| s.fresh(self.now))?;
-        let state = *states.sessions.get(id)?;
+        let (state, read_ms) = self.states.told(source, id, self.now)?;
         let reported = self.hooks.reported_at(source, id, self.now);
-        let newer = reported.is_some_and(|at| at > states.read_ms);
+        let newer = reported.is_some_and(|at| at > read_ms);
         (!newer).then_some(state)
     }
     /// The state the channel gives a session, where it gives one.

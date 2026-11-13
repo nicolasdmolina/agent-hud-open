@@ -3,6 +3,7 @@
 //! confirms hosts via `POST /api/host.describe`, and delivers answers via `POST /api/respond`.
 use crate::hooks::Wake;
 use agent_hud_agents::deepseek::AGENT;
+use agent_hud_agents::SOLE_READER;
 use agent_hud_core::l10n;
 use agent_hud_core::requests::Requests;
 use reqwest::blocking::Client;
@@ -236,7 +237,7 @@ impl Shared {
             set
         };
         self.requests
-            .set_native_waiting(AGENT.id, &sessions, crate::hooks::now_ms());
+            .set_native_waiting(AGENT.id, SOLE_READER, &sessions, crate::hooks::now_ms());
         (self.wake)();
     }
 

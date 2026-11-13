@@ -8,7 +8,7 @@
 use super::DeepSeekChannel;
 use crate::claude_plugin::{file_age, millis, valid_name, write_private};
 use crate::hooks::Wake;
-use agent_hud_agents::deepseek::AGENT;
+use agent_hud_agents::{deepseek::AGENT, SOLE_READER};
 use agent_hud_core::l10n;
 use agent_hud_core::requests::{Requests, Ticket};
 use serde_json::{json, Value};
@@ -100,7 +100,7 @@ impl Drop for Observer {
         }
         self.shared
             .requests
-            .set_native_waiting(AGENT.id, &[], crate::hooks::now_ms());
+            .set_native_waiting(AGENT.id, SOLE_READER, &[], crate::hooks::now_ms());
         let _ = fs::remove_file(self.shared.channel.directory().join("app.json"));
     }
 }
@@ -236,7 +236,7 @@ fn publish(shared: &Shared) {
     sessions.sort();
     shared
         .requests
-        .set_native_waiting(AGENT.id, &sessions, crate::hooks::now_ms());
+        .set_native_waiting(AGENT.id, SOLE_READER, &sessions, crate::hooks::now_ms());
     (shared.wake)();
 }
 

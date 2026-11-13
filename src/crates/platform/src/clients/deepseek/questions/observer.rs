@@ -3,6 +3,7 @@
 use super::{describe_envelope, is_valid_describe, stream::stream_port, Shared, State};
 use crate::hooks::Wake;
 use agent_hud_agents::deepseek::AGENT;
+use agent_hud_agents::SOLE_READER;
 use agent_hud_core::requests::Requests;
 use reqwest::blocking::Client;
 use serde_json::Value;
@@ -122,7 +123,7 @@ impl Drop for Observer {
         }
         self.shared
             .requests
-            .set_native_waiting(AGENT.id, &[], crate::hooks::now_ms());
+            .set_native_waiting(AGENT.id, SOLE_READER, &[], crate::hooks::now_ms());
     }
 }
 
