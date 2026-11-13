@@ -1,7 +1,8 @@
 //! What waits on the user, as the HUD and the hosts read it: the cards, the
 //! sessions they belong to, and when they next change.
 use super::{Content, Requests};
-use serde_json::Value;
+use agent_hud_agents::{MachineStatus, Machines};
+use serde_json::{Map, Value};
 use std::{collections::HashMap, sync::PoisonError};
 
 impl Requests {
@@ -122,4 +123,75 @@ impl Requests {
             })
             .collect()
     }
+    /// What `source`'s native channel says of its machines, whole: it
+    /// replaces what the source said before. The very same list and note
+    /// told again change nothing; an empty list with no note is the same
+    /// as never telling one. Core carries both and decides nothing from
+    /// them.
+    pub fn set_machines(&self, source: &str, machines: &Machines) {
+        let changed = {
+            let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let empty = Machines::default();
+            if state.machines.get(source).unwrap_or(&empty) == machines {
+                false
+            } else {
+                if *machines == empty {
+                    state.machines.remove(source);
+                } else {
+                    state.machines.insert(source.into(), machines.clone());
+                }
+                state.revision = state.revision.wrapping_add(1);
+                true
+            }
+        };
+        if changed {
+            self.wake();
+        }
+    }
+    /// Puts what the sources told of their machines into `snapshot`:
+    /// `machines` holds each source's non-empty list, `machinesNote` each
+    /// source's note that its list could not be read. Neither is there
+    /// while no source has anything in it.
+    pub(crate) fn machines_into(&self, snapshot: &mut Value) {
+        let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let (mut lists, mut notes) = (Map::new(), Map::new());
+        for (source, told) in &state.machines {
+            if !told.list.is_empty() {
+                let list = told.list.iter().map(machine_view).collect();
+                lists.insert(source.clone(), Value::Array(list));
+            }
+            if let Some(note) = &told.list_note {
+                notes.insert(source.clone(), Value::String(note.clone()));
+            }
+        }
+        for (key, found) in [("machines", lists), ("machinesNote", notes)] {
+            if !found.is_empty() {
+                snapshot[key] = Value::Object(found);
+            }
+        }
+    }
+}
+
+/// One machine as the snapshot shows it; a field the channel did not give
+/// is left out.
+fn machine_view(machine: &MachineStatus) -> Value {
+    let mut view = serde_json::json!({
+        "id": machine.id,
+        "label": machine.label,
+        "state": machine.state.word(),
+    });
+    let optional = [
+        ("note", machine.note.clone().map(Value::String)),
+        ("lastContactAt", machine.contact_ms.map(crate::iso)),
+        (
+            "historyCheckedAt",
+            machine.history_checked_ms.map(crate::iso),
+        ),
+    ];
+    for (key, value) in optional {
+        if let Some(value) = value.filter(|value| !value.is_null()) {
+            view[key] = value;
+        }
+    }
+    view
 }

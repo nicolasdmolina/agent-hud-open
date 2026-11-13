@@ -8,6 +8,7 @@ mod forks;
 mod hermes_custom_roots;
 mod hermes_questions;
 mod ingestion;
+mod machines;
 mod plan_value;
 mod quota_history;
 mod sessions;
