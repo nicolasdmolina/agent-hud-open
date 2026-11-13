@@ -35,6 +35,7 @@ pub fn bundle_app(bundle: &str) -> Option<&'static str> {
         (crate::trae::process::BUNDLES[1], "trae"),
         ("app.agenthud", AGENT_HUD),
         ("com.agenthud", AGENT_HUD),
+        ("com.nickymolina.agenthud", AGENT_HUD),
     ];
     let within = |id: &str| {
         bundle == id
