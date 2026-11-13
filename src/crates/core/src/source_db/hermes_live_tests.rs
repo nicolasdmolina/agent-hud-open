@@ -4,7 +4,7 @@
 //! gateway says nothing.
 use super::*;
 use crate::SourceRoot;
-use agent_hud_agents::{parse_event, LiveState, LiveStates};
+use agent_hud_agents::{parse_event, LiveState, LiveStates, SOLE_READER};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::fs;
@@ -58,7 +58,13 @@ fn read(core: &AgentHudCore, sessions: &[(&str, LiveState)], ago: i64) {
         .collect();
     let read_ms = now() - ago;
     core.requests()
-        .set_native_states("hermes", &LiveStates { sessions, read_ms });
+        .set_native_states("hermes", SOLE_READER, &LiveStates { sessions, read_ms });
+}
+
+/// What core holds of the channel's one reader.
+fn reading(requests: &crate::requests::Requests) -> crate::requests::NativeStates {
+    let all = requests.native_states();
+    all.of("hermes", SOLE_READER).cloned().expect("a reading")
 }
 
 /// The channel tells what it has just read.
@@ -126,7 +132,7 @@ fn a_session_with_a_card_waits_whatever_the_gateway_lists() {
     hook(&mut core, "pre_tool_call", 10_000);
     live(&core, &[(ID, LiveState::Running)]);
     core.requests()
-        .set_native_waiting("hermes", &[ID.to_owned()], now());
+        .set_native_waiting("hermes", SOLE_READER, &[ID.to_owned()], now());
     assert_eq!(state(&mut core), "waiting");
 }
 
@@ -167,7 +173,7 @@ fn telling_the_same_states_again_changes_nothing() {
     let requests = crate::requests::Requests::default();
     let revision = requests.revision();
     let told = |sessions: Vec<(String, LiveState)>, read_ms| LiveStates { sessions, read_ms };
-    requests.set_native_states("hermes", &told(vec![], now()));
+    requests.set_native_states("hermes", SOLE_READER, &told(vec![], now()));
     assert_eq!(
         requests.revision(),
         revision,
@@ -175,19 +181,19 @@ fn telling_the_same_states_again_changes_nothing() {
     );
     let running = vec![(ID.to_owned(), LiveState::Running)];
     let first = now();
-    requests.set_native_states("hermes", &told(running.clone(), first));
+    requests.set_native_states("hermes", SOLE_READER, &told(running.clone(), first));
     let after = requests.revision();
     assert_ne!(after, revision);
     // The same sessions told again from the same reading change nothing.
-    requests.set_native_states("hermes", &told(running.clone(), first));
+    requests.set_native_states("hermes", SOLE_READER, &told(running.clone(), first));
     assert_eq!(requests.revision(), after);
     // A newer reading of the same sessions renews it, and the views are
     // made again (it decides anew against hooks that reported since).
-    requests.set_native_states("hermes", &told(running.clone(), first + 1_000));
+    requests.set_native_states("hermes", SOLE_READER, &told(running.clone(), first + 1_000));
     let renewed = requests.revision();
     assert_ne!(renewed, after);
-    assert_eq!(requests.native_states()["hermes"].read_ms, first + 1_000);
-    requests.set_native_states("hermes", &told(vec![], first + 2_000));
+    assert_eq!(reading(&requests).read_ms, first + 1_000);
+    requests.set_native_states("hermes", SOLE_READER, &told(vec![], first + 2_000));
     assert_ne!(requests.revision(), renewed);
     assert!(requests.native_states().is_empty());
 }
@@ -197,7 +203,7 @@ fn a_reading_lapses_on_its_own_and_wakes_the_hud() {
     let requests = crate::requests::Requests::default();
     let read_ms = now();
     let sessions = vec![(ID.to_owned(), LiveState::Running)];
-    requests.set_native_states("hermes", &LiveStates { sessions, read_ms });
+    requests.set_native_states("hermes", SOLE_READER, &LiveStates { sessions, read_ms });
     let lapses = read_ms + crate::requests::LIVE_STATES_MS;
     assert_eq!(requests.next_deadline(), Some(lapses));
     let revision = requests.revision();
@@ -254,6 +260,7 @@ fn a_reading_is_believed_for_thirty_seconds_and_no_longer() {
     let sessions = vec![(ID.to_owned(), LiveState::Running)];
     core.requests().set_native_states(
         "hermes",
+        SOLE_READER,
         &LiveStates {
             sessions,
             read_ms: at,
@@ -334,9 +341,9 @@ fn verifier2_regaining_control_over_a_hook_must_wake_the_display() {
 
     // The very same reading told again wakes nothing.
     let sessions = vec![(ID.to_owned(), LiveState::Idle)];
-    let read_ms = core.requests().native_states()["hermes"].read_ms;
+    let read_ms = reading(&core.requests()).read_ms;
     let before = woken();
     core.requests()
-        .set_native_states("hermes", &LiveStates { sessions, read_ms });
+        .set_native_states("hermes", SOLE_READER, &LiveStates { sessions, read_ms });
     assert_eq!(woken(), before);
 }

@@ -34,6 +34,12 @@ pub struct LiveStates {
     pub read_ms: i64,
 }
 
+/// The reader name a channel gives core when it alone reads its client's
+/// sessions. Core keeps what a channel tells (states, waiting flags) by
+/// source and reader, so a client several channels read at once names each
+/// of them instead, and none replaces or outlives what another told.
+pub const SOLE_READER: &str = "channel";
+
 impl LiveState {
     /// The word a session row's `state` uses.
     pub fn word(self) -> &'static str {

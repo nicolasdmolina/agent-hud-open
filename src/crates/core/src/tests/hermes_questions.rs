@@ -8,6 +8,7 @@ use super::*;
 use agent_hud_agents::hermes::gateway::{
     frame, Ask, Frame, Gateway, GatewayId, Pending, Profile, Reply, Scope,
 };
+use agent_hud_agents::SOLE_READER;
 
 fn recorded(name: &str) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -86,7 +87,7 @@ fn open(core: &AgentHudCore, pending: &Pending) -> requests::Ticket {
         .register_native(pending.id(), pending.view(now), now)
         .expect("a new card");
     core.requests()
-        .set_native_waiting("hermes", &[pending.session.hud_id()], now);
+        .set_native_waiting("hermes", SOLE_READER, &[pending.session.hud_id()], now);
     ticket
 }
 
@@ -160,7 +161,8 @@ fn a_hermes_question_shows_under_its_profile_and_sounds_once() {
     // Answered in Hermes's own window: the connection settles it, the card
     // goes, and nothing sounds.
     core.requests().settle_native(&question.id());
-    core.requests().set_native_waiting("hermes", &[], 0);
+    core.requests()
+        .set_native_waiting("hermes", SOLE_READER, &[], 0);
     let after = core.request("snapshot", json!({})).unwrap();
     assert!(!after["approvals"]
         .as_array()
