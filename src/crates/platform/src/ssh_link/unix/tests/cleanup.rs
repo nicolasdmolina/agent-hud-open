@@ -302,3 +302,79 @@ fn a_percent_in_the_folders_path_is_plain_text_to_ssh() {
     assert!(link.close().gone);
     assert_eq!(entries(folder.path()), Vec::<String>::new());
 }
+
+/// The window between starting a master and writing its record, with a
+/// master that does not answer: it has no record and says nothing when
+/// asked, and it is alive. Its socket stays until its process is found by
+/// the process list, ended and confirmed gone. (The first PR verifier's
+/// probe, kept as it was written but for its layout.)
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn v_cleanup_must_not_unlink_a_live_unresponsive_master_without_record() {
+    let Some(lab) = Lab::start() else { return };
+    let folder = lab.folder();
+    let settings = Settings {
+        control_limit: Duration::from_millis(150),
+        ..lab.settings()
+    };
+    let link = Link::open(&folder, &lab.target(), &settings).unwrap();
+    let pid = link.master_pid().unwrap();
+    let name = entries(folder.path())
+        .into_iter()
+        .find(|name| folder.is_socket(name))
+        .unwrap();
+    fs::remove_file(folder.path().join(format!("{name}.pid"))).unwrap();
+    // SAFETY: a signal to the master this test just started.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGSTOP) };
+    assert!(process::master_runs(pid, &folder.control(&name)));
+
+    // Watches for the socket to go, and says whether the master was still
+    // alive (stopped, not a process that has ended) at that moment.
+    let socket = folder.path().join(&name);
+    let watch = std::thread::spawn(move || {
+        let end = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < end {
+            if !socket.exists() {
+                let listed = Command::new("/bin/ps")
+                    .args(["-ww", "-o", "pid=,state=,args=", "-p", &pid.to_string()])
+                    .output()
+                    .unwrap();
+                let listed = String::from_utf8_lossy(&listed.stdout).into_owned();
+                println!("at socket removal: {}", listed.trim());
+                let stopped = listed
+                    .split_whitespace()
+                    .nth(1)
+                    .is_some_and(|state| state.contains('T'));
+                return runs(pid) && stopped;
+            }
+            std::thread::sleep(Duration::from_micros(100));
+        }
+        false
+    });
+    let swept = folder.sweep(&settings);
+    let removed_while_alive = watch.join().unwrap();
+    // SAFETY: as above; it does nothing to a master that has ended.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGCONT) };
+    let closed = link.close();
+    println!(
+        "sweep={swept:?}; socket removed while pid {pid} was alive={removed_while_alive}; \
+         close={closed:?}"
+    );
+    assert!(
+        !removed_while_alive,
+        "sweep unlinked a live master's socket before confirming its process gone"
+    );
+    // The process list found it: it was ended, and only then did its
+    // socket go.
+    assert_eq!(
+        swept,
+        Swept {
+            closed: 1,
+            removed: 1,
+            left: 0
+        }
+    );
+    assert!(closed.gone);
+    assert_eq!(entries(folder.path()), Vec::<String>::new());
+    assert_eq!(lab.link_processes(&folder), Vec::<String>::new());
+}

@@ -103,9 +103,13 @@ pub(super) fn master(settings: &Settings, target: &Target, control: &str) -> Vec
         args.push(port.to_string().into());
     }
     if let Some(key) = target.key() {
-        // The path as written: `ssh` would read a `%` in it as a token.
-        args.push("-i".into());
-        args.push(key.to_string_lossy().replace('%', "%%").into());
+        // As an option and not with `-i`: `ssh` looks for a file named by
+        // `-i` as written and reads `%` tokens in it afterwards, so no one
+        // spelling of a path that holds a `%` survives both.
+        option(
+            &mut args,
+            format!("IdentityFile={}", word(&key.to_string_lossy())),
+        );
     }
     args.push("--".into());
     args.push(target.destination().into());
@@ -147,6 +151,26 @@ pub(super) fn client(control: &str, ask: Ask) -> Vec<OsString> {
         args.push(line.into());
     }
     args
+}
+
+/// One word as `ssh` reads the value of an option: in double quotes, so a
+/// space or a `#` does not end it, with `"` and `\` escaped, and `%`
+/// doubled so no token is read. (`${` cannot be written so that `ssh`
+/// leaves it alone; a key path that holds it makes no target.)
+pub(super) fn word(text: &str) -> String {
+    let mut word = String::from("\"");
+    for character in text.chars() {
+        match character {
+            '"' | '\\' => {
+                word.push('\\');
+                word.push(character);
+            }
+            '%' => word.push_str("%%"),
+            other => word.push(other),
+        }
+    }
+    word.push('"');
+    word
 }
 
 /// Both ends are 127.0.0.1, written out: a bare port would listen on

@@ -7,6 +7,7 @@
 //! what each prints:
 //! `cargo test -p agent-hud-platform --lib ssh_link::unix::tests -- --ignored --nocapture`.
 mod cleanup;
+mod isolation;
 pub(crate) mod lab;
 mod limits;
 mod link;

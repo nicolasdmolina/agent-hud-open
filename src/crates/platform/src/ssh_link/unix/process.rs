@@ -192,21 +192,25 @@ pub(super) fn master_runs(pid: u32, control: &str) -> bool {
 
 /// Every process of this user whose arguments name a control path that
 /// starts with `start`: its pid, and the socket's name in the folder.
-pub(super) fn naming(start: &str) -> Vec<(u32, String)> {
+/// None where the list could not be read whole: then nothing is known of
+/// who runs, and the caller confirms nothing from it.
+pub(super) fn naming(start: &str) -> Option<Vec<(u32, String)>> {
     let mut ps = Command::new("/bin/ps");
     ps.args(["-xww", "-o", "pid=,args="]);
-    let Ok(listed) = run(ps, None, Duration::from_secs(5), 4 * 1024 * 1024) else {
-        return Vec::new();
-    };
+    let listed = run(ps, None, Duration::from_secs(5), 4 * 1024 * 1024).ok()?;
+    if !listed.ok() {
+        return None;
+    }
     let start = format!("ControlPath={start}");
-    String::from_utf8_lossy(&listed.stdout)
+    let named = String::from_utf8_lossy(&listed.stdout)
         .lines()
         .filter_map(|line| {
             let (pid, args) = line.trim_start().split_once(' ')?;
             let name = args.split_once(&start)?.1.split('"').next()?;
             Some((pid.parse().ok()?, name.to_owned()))
         })
-        .collect()
+        .collect();
+    Some(named)
 }
 
 /// Whether the master on `pid` is gone within `wait`.

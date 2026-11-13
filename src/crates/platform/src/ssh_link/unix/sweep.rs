@@ -9,6 +9,12 @@
 //! socket. Anything that is not this user's socket, record or log is left
 //! exactly as it is. A master with no socket yet is found by its record,
 //! and one with no record either by the process list.
+//!
+//! A socket's master is every process that could be it: the one its
+//! record names, the one that answers on it, and each whose arguments
+//! name it. The last finds a master that left no record and does not
+//! answer. Where the process list cannot be read, nothing says the master
+//! is gone, and its socket stays.
 use super::{
     super::{Settings, Swept},
     args::Ask,
@@ -67,7 +73,7 @@ impl Folder {
         }
         // Last, by the process list: a master with neither socket nor
         // record, whose owner died in the moment it was started.
-        for (pid, name) in process::naming(&self.control_start()) {
+        for (pid, name) in process::naming(&self.control_start()).unwrap_or_default() {
             if !entry(&name) {
                 continue;
             }
@@ -83,19 +89,37 @@ impl Folder {
 
     /// Closes the master of one socket and removes the socket once its
     /// process is confirmed gone. Some(whether a master was running), or
-    /// None where one would not end and everything of it was left.
+    /// None where one would not end, or could not be looked for, and
+    /// everything of it was left.
     fn close_master(&self, name: &str, settings: &Settings) -> Option<bool> {
-        let control = self.control(name);
-        let reported = super::ask(settings, &control, Ask::Check).and_then(|answer| {
+        // While it binds, `ssh` keeps a master's socket under a longer
+        // name, `<name>.<random>`: that socket is the same master's.
+        let owner = name.split('.').next().unwrap_or(name);
+        let control = self.control(owner);
+        let asked = self.control(name);
+        let reported = super::ask(settings, &asked, Ask::Check).and_then(|answer| {
             let said = [answer.stdout, answer.stderr].concat();
             reported_pid(&String::from_utf8_lossy(&said))
         });
         if reported.is_some() {
-            super::ask(settings, &control, Ask::Exit);
+            super::ask(settings, &asked, Ask::Exit);
         }
-        let mut pids: Vec<u32> = self.recorded(name).into_iter().chain(reported).collect();
+        let named = process::naming(&self.control_start())?;
+        let named = named.iter().filter(|(_, socket)| socket == owner);
+        let mut pids: Vec<u32> = self
+            .recorded(owner)
+            .into_iter()
+            .chain(reported)
+            .chain(named.map(|(pid, _)| *pid))
+            .collect();
+        pids.sort_unstable();
         pids.dedup();
+        let mut ran = reported.is_some();
         for pid in pids {
+            if !process::master_runs(pid, &control) {
+                continue;
+            }
+            ran = true;
             if !process::gone_within(pid, &control, settings.control_limit)
                 && !process::end(pid, &control)
             {
@@ -103,7 +127,7 @@ impl Folder {
             }
         }
         self.forget(name);
-        Some(reported.is_some())
+        Some(ran)
     }
 }
 

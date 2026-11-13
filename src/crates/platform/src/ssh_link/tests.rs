@@ -72,13 +72,17 @@ fn a_target_is_made_only_from_plain_parts() {
         Target::new("mini", None, Some(0), None),
         Err(Refused::Address)
     );
-    for key in ["", "-oProxyCommand=x", "a\nb"] {
+    // `ssh` would read `${HOME}` in a key path as a variable, and there
+    // is no way to write it plainly.
+    for key in ["", "-oProxyCommand=x", "a\nb", "key${HOME}"] {
         assert_eq!(
             Target::new("mini", None, None, Some(key.as_ref())),
             Err(Refused::KeyPath),
             "key {key:?}"
         );
     }
+    // A `$` that opens no variable is a character like any other.
+    assert!(Target::new("mini", None, None, Some("my $key (1)".as_ref())).is_ok());
     assert_eq!(Refused::Address.reason(), "unusable address");
 }
 

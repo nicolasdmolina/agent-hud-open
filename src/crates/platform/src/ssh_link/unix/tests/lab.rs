@@ -1,11 +1,28 @@
 //! A throwaway `sshd` on loopback for tests: its own host key, user keys,
 //! `known_hosts` and client configuration, all in one temporary folder.
-//! Nothing of the user's is read or written: the client configuration
-//! names the lab's own files and turns the agent off unless a test starts
-//! the lab's own.
 //!
-//! "Far" is this same machine, reached through that `sshd`. A test can
-//! therefore look at what a far command left behind.
+//! "Far" is this same machine, reached through that `sshd`, signed in as
+//! the user who runs the tests. A test can therefore look at what a far
+//! command left behind. It also means a lab login is a login to the real
+//! account, so what such a login would read of the user's is turned off:
+//!
+//! - The client side names the lab's own key, `known_hosts` and "no agent"
+//!   for every host name, and no client reads a configuration file but
+//!   the lab's (`config_text`).
+//! - The server side accepts only the lab's `authorized_keys`, and never
+//!   runs `~/.ssh/rc` or reads `~/.ssh/environment` (`PermitUserRC no`,
+//!   `PermitUserEnvironment no`). Host-based sign-in and X11 are off, so
+//!   `~/.rhosts`, `~/.shosts` and `~/.Xauthority` are never opened.
+//! - `sshd` runs each command with the account's login shell, which would
+//!   read the user's startup file (`~/.zshenv` for zsh, `config.fish` for
+//!   fish). The lab's `sshd` sets `ZDOTDIR` and `XDG_CONFIG_HOME` to a
+//!   folder of its own, and `BASH_ENV` and `ENV` to nothing, so the shell
+//!   reads the lab's startup file there instead, which only sets a marker
+//!   a test looks for.
+//!
+//! What a lab login still reads: the system's own files (the account
+//! database, `/etc/zshenv` where one exists), and whatever the far command
+//! itself opens.
 use crate::ssh_link::{FarCommand, Folder, Settings, Target};
 use std::{
     fs,
@@ -14,6 +31,11 @@ use std::{
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+
+/// The folder, in the lab, the login shell reads its startup file from.
+pub(crate) const SHELL: &str = "shell";
+/// What the lab's startup file sets, naming the shell that read it.
+pub(crate) const MARKER: &str = "AGENT_HUD_LAB_STARTUP";
 
 pub(crate) struct Lab {
     dir: tempfile::TempDir,
@@ -152,6 +174,15 @@ impl Lab {
             |name: &str| fs::read_to_string(at(&format!("{name}.pub"))).unwrap_or_default();
         fs::write(at("authorized_keys"), public("id") + &public("agentkey"))
             .map_err(|error| error.to_string())?;
+        // The login shell's startup files, in place of the user's own.
+        fs::create_dir_all(at(SHELL).join("fish")).map_err(|error| error.to_string())?;
+        fs::write(at(SHELL).join(".zshenv"), format!("export {MARKER}=zsh\n"))
+            .map_err(|error| error.to_string())?;
+        fs::write(
+            at(SHELL).join("fish").join("config.fish"),
+            format!("set -gx {MARKER} fish\n"),
+        )
+        .map_err(|error| error.to_string())?;
         // A port found free can be taken before `sshd` binds it, by another
         // test's lab. So `sshd` itself says when it listens, and one that
         // could not bind is started again on another port.
@@ -164,9 +195,13 @@ impl Lab {
                     "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nAuthorizedKeysFile {}\n\
                      PidFile none\nUsePAM no\nStrictModes no\nPasswordAuthentication no\n\
                      KbdInteractiveAuthentication no\nAllowTcpForwarding yes\n\
-                     AllowAgentForwarding yes\nMaxStartups 100\n",
+                     AllowAgentForwarding yes\nMaxStartups 100\n\
+                     PermitUserRC no\nPermitUserEnvironment no\nHostbasedAuthentication no\n\
+                     IgnoreRhosts yes\nX11Forwarding no\n\
+                     SetEnv ZDOTDIR={shell} XDG_CONFIG_HOME={shell} BASH_ENV=/dev/null ENV=/dev/null\n",
                     text("hostkey"),
                     text("authorized_keys"),
+                    shell = text(SHELL),
                 ),
             )
             .map_err(|error| error.to_string())?;

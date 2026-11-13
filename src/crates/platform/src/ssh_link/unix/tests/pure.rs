@@ -7,7 +7,6 @@ use super::super::{
 use crate::ssh_link::{
     windows_stub, Failure, Forward, Lost, Refused, Settings, Target, LONGEST_SOCKET_PATH,
 };
-use std::path::Path;
 
 fn strings(args: Vec<std::ffi::OsString>) -> Vec<String> {
     args.into_iter()
@@ -52,17 +51,15 @@ fn the_masters_argument_list_holds_every_option_of_the_design() {
     assert_eq!(&args[args.len() - 2..], ["--", "nicky@mini"]);
     let before: Vec<&str> = args[..args.len() - 2].iter().map(String::as_str).collect();
     assert!(before.windows(2).any(|pair| pair == ["-p", "2222"]));
-    assert!(before
-        .windows(2)
-        .any(|pair| pair[0] == "-i" && Path::new(pair[1]) == key));
-    let odd = std::env::temp_dir().join("50%off");
-    let target = Target::new("mini", None, None, Some(&odd)).unwrap();
-    let with_key = strings(args::master(&Settings::system(), &target, "\"/s\""));
-    let key_at = with_key.iter().position(|arg| arg == "-i").unwrap();
-    assert!(with_key[key_at + 1].ends_with("50%%off"));
+    // The key is an option's value, in quotes. That it is the file that
+    // signs in, whatever its name holds, is shown against a real `sshd`
+    // (`trust::v_percent_key_is_the_selected_identity` and its neighbour).
+    assert!(sets(&args, &format!("IdentityFile=\"{}\"", key.display())));
     // The user's own configuration is read: no file is named, and no
     // command, forward or background run is asked for.
-    for absent in ["-F", "-f", "-L", "-R", "-D", "-A", "-X", "-Y", "-t", "-W"] {
+    for absent in [
+        "-F", "-f", "-i", "-L", "-R", "-D", "-A", "-X", "-Y", "-t", "-W",
+    ] {
         assert!(!before.contains(&absent), "{absent} in {args:?}");
     }
     assert!(before.contains(&"-N"));

@@ -69,8 +69,13 @@ fn name(text: &str, host: bool) -> bool {
         })
 }
 
+/// `ssh` reads `${NAME}` in a key path as an environment variable and
+/// offers no way to write it plainly, so such a path is refused.
 fn key_path(path: &Path) -> bool {
     path.to_str().is_some_and(|text| {
-        !text.is_empty() && !text.starts_with('-') && !text.chars().any(char::is_control)
+        !text.is_empty()
+            && !text.starts_with('-')
+            && !text.contains("${")
+            && !text.chars().any(char::is_control)
     })
 }
