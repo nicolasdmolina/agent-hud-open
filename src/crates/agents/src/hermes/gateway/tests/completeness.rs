@@ -13,11 +13,11 @@ use serde_json::{json, Value};
 const S: &str = "local-long";
 
 fn work() -> Profile {
-    Profile::named("verify")
+    Profile::named("verify").unwrap()
 }
 
 fn start() -> (Gateway, Hermes) {
-    let mut gateway = Gateway::new(GatewayId::new("local"));
+    let mut gateway = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
     identified(&mut gateway, "one");
     (gateway, Hermes::default())
 }
@@ -195,7 +195,8 @@ fn a_snapshot_that_failed_does_not_count_for_the_stretch() {
     asks(&mut h, "older", "approval");
     noise(&mut h, 600, 0);
     asks(&mut h, "newer", "approval");
-    h.failing.push(Step::Snapshot(g.session(&work(), S)));
+    h.failing
+        .push(Step::Snapshot(g.session(&work(), S).unwrap()));
     // The session could not be read whole this time: no card is opened on
     // half of what waits, and the next poll asks again.
     assert_eq!(poll(&mut g, &mut h, 0), []);

@@ -14,7 +14,9 @@
 //! checked and marked under the model's lock, and stopping or closing cuts
 //! the socket of a write that is under way (`visit.rs`).
 use crate::hooks::Wake;
-use agent_hud_agents::hermes::gateway::{Connection, Gateway, GatewayId, Input, Instance};
+use agent_hud_agents::hermes::gateway::{
+    Connection, Gateway, GatewayId, Input, Instance, Machine, Profile,
+};
 use agent_hud_core::requests::{Requests, Ticket as Waiter};
 use std::{
     collections::HashMap,
@@ -42,9 +44,6 @@ mod wire;
 
 pub(crate) use pace::Pace;
 pub(crate) use route::Route;
-
-/// The one gateway phase 1 follows: the one on this machine.
-const LOCAL: &str = "local";
 
 pub struct Observer {
     shared: Arc<Shared>,
@@ -122,7 +121,8 @@ impl Observer {
             active: AtomicBool::new(true),
             wanted: AtomicBool::new(false),
             model: Mutex::new(Model {
-                gateway: Gateway::new(GatewayId::new(LOCAL)),
+                // The one gateway phase 1 follows: this machine's.
+                gateway: Gateway::new(GatewayId::new(Machine::This, Profile::Default)),
                 waiters: HashMap::new(),
                 opened: HashMap::new(),
                 answered: HashMap::new(),
