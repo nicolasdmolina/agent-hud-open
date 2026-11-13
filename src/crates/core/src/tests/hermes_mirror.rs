@@ -96,6 +96,17 @@ fn refresh(core: &mut AgentHudCore) -> Value {
     snapshot["totals"]["total"].clone()
 }
 
+/// The Hermes events in the ledger itself: how many, and their tokens.
+fn ledger(core: &AgentHudCore) -> (i64, i64) {
+    let sql = "SELECT COUNT(*), TOTAL(input+output+cache_read+cache_write) FROM usage_meter_event WHERE source='hermes'";
+    let read = |row: &rusqlite::Row| Ok((row.get(0)?, row.get::<_, f64>(1)? as i64));
+    core.database
+        .as_ref()
+        .unwrap()
+        .query_row(sql, [], read)
+        .unwrap()
+}
+
 /// Each listed Hermes session: its id, machine and tokens, sorted.
 fn rows(core: &mut AgentHudCore, search: &str) -> Vec<(String, Value, Value)> {
     let found = core
@@ -148,6 +159,9 @@ fn far_rows_carry_their_machine_and_a_new_label_counts_nothing_twice() {
     let mut core = fixture.open();
     assert_eq!(refresh(&mut core), json!(162));
     assert_eq!(rows(&mut core, ""), listed("Mac mini"));
+    // The ledger itself: its Hermes events and their tokens.
+    let events = ledger(&core);
+    assert_eq!(events.1, 162);
     // Search finds the label; this machine's row has none.
     assert_eq!(
         rows(&mut core, "mac mini")
@@ -165,6 +179,7 @@ fn far_rows_carry_their_machine_and_a_new_label_counts_nothing_twice() {
         .unwrap();
     assert_eq!(refresh(&mut core), json!(162));
     assert_eq!(rows(&mut core, ""), listed("Studio"));
+    assert_eq!(ledger(&core), events);
     assert!(rows(&mut core, "mac mini").is_empty());
     drop(core);
 
@@ -180,6 +195,7 @@ fn far_rows_carry_their_machine_and_a_new_label_counts_nothing_twice() {
     );
     assert_eq!(rows(&mut core, ""), listed("Studio"));
     assert_eq!(refresh(&mut core), json!(162));
+    assert_eq!(ledger(&core), events);
     // The persisted cursor still sees a new label after the relaunch.
     fixture
         .far
@@ -187,6 +203,7 @@ fn far_rows_carry_their_machine_and_a_new_label_counts_nothing_twice() {
         .unwrap();
     assert_eq!(refresh(&mut core), json!(162));
     assert_eq!(rows(&mut core, ""), listed("Lab"));
+    assert_eq!(ledger(&core), events);
 }
 
 #[test]
