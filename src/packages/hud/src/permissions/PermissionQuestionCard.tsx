@@ -1,22 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, ChevronLeft, LoaderCircle } from "lucide-react";
-import type {
-  Approval,
-  RequestAnswer,
-  RequestDecision,
-} from "@agent-hud/protocol";
+import type { Approval, RequestDecision } from "@agent-hud/protocol";
 import { alertText, permissionColors } from "../tokens";
 import { useGround } from "../ground";
 import { cardColumn } from "../card-column";
 import { CardButton } from "./CardButton";
 import { QuestionAnswerElsewhere } from "./QuestionAnswerElsewhere";
 import { QuestionOptions } from "./QuestionOptions";
+import { QuestionLockNote } from "./QuestionLockNote";
+import {
+  canGoOn,
+  isAnswered as answered,
+  writtenAnswers,
+  type Draft,
+} from "./question-answers";
 
-/** A question's draft: the offered answers picked, the words typed, and
- * whether those words are the answer (`own`). Skipping or picking a single
- * option sets the words aside without erasing them, as Open's
- * QuestionDraft does. */
-export type Draft = RequestAnswer & { own?: boolean };
+export type { Draft };
 
 const drafts = new Map<
   string,
@@ -94,28 +93,11 @@ export function PermissionQuestionCard({
     });
 
   const submitAllAnswers = (omitKey?: string) => {
-    // Several picks are filed in the order they were offered; the typed
-    // words only when they are the chosen answer.
-    const written = Object.fromEntries(
-      Object.entries(answers)
-        .map(([key, value]) => {
-          const offered =
-            questions
-              .find((q) => q.answerKey === key)
-              ?.options.map((o) => o.label) ?? value.selected;
-          const selected = offered.filter((label) =>
-            value.selected.includes(label),
-          );
-          const custom = value.own ? value.custom?.trim() : undefined;
-          return [key, { selected, ...(custom ? { custom } : {}) }] as const;
-        })
-        .filter(
-          ([key, value]) =>
-            key !== omitKey && (value.selected.length > 0 || "custom" in value),
-        ),
-    );
     drafts.delete(request.id);
-    void answer({ kind: "answer", answers: written });
+    void answer({
+      kind: "answer",
+      answers: writtenAnswers(questions, answers, omitKey),
+    });
   };
 
   const safePage = Math.min(page, Math.max(0, questions.length - 1));
@@ -147,7 +129,8 @@ export function PermissionQuestionCard({
 
   const value = answers[key] ?? { selected: [] };
   const hasCustom = Boolean(value.own && value.custom?.trim());
-  const isAnswered = value.selected.length > 0 || hasCustom;
+  // A question another viewer settled may be left as it is.
+  const isAnswered = canGoOn(q, value);
   const advanceOrSubmit = () => {
     if (!isAnswered || disabled) return;
     setEditingCustomKey(null);
@@ -217,6 +200,14 @@ export function PermissionQuestionCard({
           <div style={{ fontSize: 10, color: tertiary }}>
             {t("Choose any", "可多选")}
           </div>
+        )}
+        {q.lock && (
+          <QuestionLockNote
+            lock={q.lock}
+            replaced={answered(value)}
+            light={light}
+            zh={zh}
+          />
         )}
       </div>
       <QuestionOptions
