@@ -5,6 +5,7 @@ use super::*;
 mod claude_desktop;
 mod conversation_feed;
 mod forks;
+mod hermes_custom_roots;
 mod hermes_questions;
 mod ingestion;
 mod native_card_handover;

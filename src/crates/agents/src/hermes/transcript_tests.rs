@@ -66,6 +66,50 @@ fn sessions_are_labelled_by_their_profile() {
     );
 }
 
+/// What the reviews of the machine identity found at the reader
+/// (`evidence/22/verifier-report.md`, finding 3, and `verifier-report-2.md`,
+/// finding 1): a folder or a row could name a far machine's session, and
+/// then a root in a folder that is no profile's was not read at all.
+#[test]
+fn a_folder_or_a_row_that_hermes_would_not_write_names_no_far_session() {
+    let home = tempfile::tempdir().unwrap();
+    let home = home.path();
+    // A folder under `profiles` that is no profile's is a root of its own:
+    // read, as its default profile, and named by nothing in its path.
+    for folder in [
+        "Work",
+        "a:b",
+        "default",
+        ".deleted",
+        "19dc3a759af7f225:default",
+    ] {
+        let path = home.join("profiles").join(folder).join("state.db");
+        assert_eq!(
+            labels(&path, None),
+            [("hermes:s1".to_owned(), Some("Hermes Agent".to_owned()))],
+            "{folder}"
+        );
+    }
+    // A row named as a far session is left out; the rows beside it stay.
+    let path = home.join("state.db");
+    let db = state_db(&path, None);
+    for id in ["19dc3a759af7f225/default:s1", "a/b", "agent:main:x/y"] {
+        db.execute(
+            "INSERT INTO sessions (id, source, started_at) VALUES (?1, 'cli', 1760000000)",
+            [id],
+        )
+        .unwrap();
+    }
+    let page = read(&db, &path, &Value::Null).unwrap();
+    let mut ids: Vec<&str> = page
+        .records
+        .iter()
+        .map(|record| record.id.as_str())
+        .collect();
+    ids.dedup();
+    assert_eq!(ids, ["hermes:s1", "hermes:agent:main:x/y"]);
+}
+
 const SCHEMA: &str = include_str!("../../tests/fixtures/hermes/macos/state.schema.sql");
 
 /// A real-schema `state.db` in memory with `count` sessions, one usage row

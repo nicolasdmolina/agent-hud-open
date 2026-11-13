@@ -6,7 +6,7 @@
 //! recorded ones in the agents crate's gateway fixtures.
 use super::*;
 use agent_hud_agents::hermes::gateway::{
-    frame, Ask, Frame, Gateway, GatewayId, Pending, Profile, Reply, Scope,
+    frame, Ask, Frame, Gateway, GatewayId, Machine, Pending, Profile, Reply, Scope,
 };
 use agent_hud_agents::SOLE_READER;
 
@@ -20,8 +20,8 @@ fn recorded(name: &str) -> Value {
 /// The first question (or set of questions) the recording `name` asks, as
 /// the gateway model holds it, in the throwaway profile it was recorded in.
 pub(super) fn asked(name: &str) -> Pending {
-    let gateway = Gateway::new(GatewayId::new("local"));
-    let profile = Profile::named("hud-spike");
+    let gateway = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
+    let profile = Profile::named("hud-spike").unwrap();
     let doc = recorded(name);
     for entry in doc["clients"]["hud"].as_array().unwrap() {
         if entry["dir"] != "in" {
@@ -35,7 +35,7 @@ pub(super) fn asked(name: &str) -> Pending {
             _ => None,
         };
         if let Some((session, ask, wait_ms)) = found {
-            let session = gateway.session(&profile, &session);
+            let session = gateway.session(&profile, &session).unwrap();
             return Pending {
                 session,
                 ask,
@@ -131,7 +131,7 @@ pub(super) fn alert_ids(snapshot: &Value) -> Vec<Value> {
 fn a_hermes_question_shows_under_its_profile_and_sounds_once() {
     let temp = tempfile::tempdir().unwrap();
     let question = asked("question-answered-here");
-    let mut core = hermes_core(temp.path(), &[&question.session.id]);
+    let mut core = hermes_core(temp.path(), &[question.session.id()]);
     // What waits at the first look is never told.
     core.request("snapshot", json!({})).unwrap();
 
@@ -180,11 +180,11 @@ fn a_decision_on_the_card_becomes_the_exact_frame_hermes_gets() {
     let set = asked("question-batch-answered-here");
     let mut core = hermes_core(
         temp.path(),
-        &[&picked.session.id, &typed.session.id, &set.session.id],
+        &[picked.session.id(), typed.session.id(), set.session.id()],
     );
     let call = |pending: &Pending, prompt: &str, answer: &str| {
         json!({"jsonrpc": "2.0", "id": 7, "method": "clarify.respond", "params": {
-            "session_id": pending.session.id, "prompt_id": prompt,
+            "session_id": pending.session.id(), "prompt_id": prompt,
             "execution_generation": 1, "answer": answer, "profile": "hud-spike",
         }})
     };

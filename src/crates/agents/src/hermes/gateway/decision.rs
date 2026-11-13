@@ -79,7 +79,7 @@ impl Question {
         Command::routed(
             "clarify.respond",
             json!({
-                "session_id": session.id,
+                "session_id": session.id(),
                 "prompt_id": self.prompt.id,
                 "execution_generation": self.prompt.generation,
                 "answer": answer.as_str(),
@@ -103,7 +103,7 @@ impl Approval {
         Ok(Command::routed(
             "approval.respond",
             json!({
-                "session_id": session.id,
+                "session_id": session.id(),
                 "prompt_id": self.prompt.id,
                 "execution_generation": self.prompt.generation,
                 "choice": choice.word(),
