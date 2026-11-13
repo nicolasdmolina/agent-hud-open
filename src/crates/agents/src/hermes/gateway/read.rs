@@ -13,12 +13,14 @@
 //!
 //! What was dropped cannot be read. Hermes lists a session as `waiting`
 //! exactly while a question or an approval waits in it. A request asked
-//! before the oldest event kept can be found only by a snapshot,
+//! before the oldest event read can be found only by a snapshot,
 //! `session.resume`, which subscribes, so it is taken on a socket of its
-//! own that is closed after the reply. One is taken the first time a
-//! session is seen waiting with events dropped, or waiting with nothing
-//! in its events to wait on, and again for as long as a card showing is
-//! not accounted for by the events.
+//! own that is closed after the reply. One is wanted of a waiting session
+//! whose stream has dropped events, whose search did not finish, whose
+//! events hold nothing to wait on, or which shows a card its events do
+//! not account for. It is taken unless one was taken of that session a
+//! short while ago (`SNAPSHOT_EVERY_MS`); until the next, the cards the
+//! events do not speak for stay as they are.
 use super::effect::{Closed, Status};
 use super::fold::{batches, fold, Reading};
 use super::frame::Cursor;
@@ -32,6 +34,8 @@ use std::collections::BTreeMap;
 const RING: u64 = 512;
 /// The most `session.events.since` calls one session gets in one poll:
 /// one to learn where its stream is, and a search that halves 512 places.
+/// A stream that stands still needs at most 12; one that keeps moving can
+/// use them all up, and the read is then known not to be whole.
 const MAX_READS: u8 = 16;
 /// How often the search tries again where the oldest event would be if
 /// only the count made Hermes drop any, after the stream moved on.
@@ -53,30 +57,44 @@ pub(super) struct Search {
     pub(super) over: BTreeMap<String, Closed>,
 }
 
+/// What the search does next.
+enum Next {
+    /// Read from here.
+    Read(u64),
+    /// The oldest event kept is found, or nothing is kept: what was read
+    /// is everything Hermes keeps.
+    Found,
+    /// The session has had its calls and the oldest event kept is not
+    /// found: Hermes may keep events older than any read.
+    Spent,
+}
+
 impl Search {
     /// Where to read from next, in a stream whose latest event is `latest`.
-    /// None when the oldest event kept is found, when nothing is kept, or
-    /// when the session has had its calls.
-    fn next(&mut self, latest: u64) -> Option<u64> {
-        if self.reads >= MAX_READS {
-            return None;
-        }
+    fn next(&mut self, latest: u64) -> Next {
         // Where the oldest event kept is if only the count of events made
         // Hermes drop any, and the earliest it can be by what was refused.
         let counted = latest.saturating_sub(RING);
         let floor = self.refused.map_or(counted, |at| counted.max(at + 1));
-        match &self.best {
-            Some((answered, _)) if floor >= *answered => None,
-            Some((answered, _)) => Some(floor + (answered - floor) / 2),
-            None if floor >= latest => (latest == 0 && self.refused.is_none()).then_some(0),
+        let from = match &self.best {
+            Some((answered, _)) if floor >= *answered => return Next::Found,
+            Some((answered, _)) => floor + (answered - floor) / 2,
+            None if floor >= latest && (latest > 0 || self.refused.is_some()) => {
+                return Next::Found
+            }
+            None if floor >= latest => 0,
             // Not refused there yet: the first read, or the stream moved on.
             None if self.refused.is_none_or(|at| counted > at) && self.guesses < MAX_GUESSES => {
                 self.guesses += 1;
-                Some(counted)
+                counted
             }
             // Hermes drops by size as well. Is anything kept at all?
-            None => Some(latest - 1),
+            None => latest - 1,
+        };
+        if self.reads >= MAX_READS {
+            return Next::Spent;
         }
+        Next::Read(from)
     }
 }
 
@@ -120,15 +138,19 @@ impl Poll {
                 }
             }
         }
-        if let Some(seq) = search.next(latest) {
-            let cursor = Some(Cursor {
-                epoch: epoch.to_owned(),
-                seq,
-            });
-            let session = at.clone();
-            let step = Step::Since { session, cursor };
-            return self.set(at, Read::Wanted { step, search });
-        }
+        let whole = match search.next(latest) {
+            Next::Read(seq) => {
+                let cursor = Some(Cursor {
+                    epoch: epoch.to_owned(),
+                    seq,
+                });
+                let session = at.clone();
+                let step = Step::Since { session, cursor };
+                return self.set(at, Read::Wanted { step, search });
+            }
+            Next::Found => true,
+            Next::Spent => false,
+        };
         let (dropped, reading) = match search.best.take() {
             Some((from, reading)) => (from > 0, reading),
             // No event can be read. The sets of questions are told all
@@ -142,13 +164,14 @@ impl Poll {
                 (true, reading)
             }
         };
-        self.settle(at, reading, dropped);
+        self.settle(at, reading, dropped, whole);
     }
 
     /// What the session waits on, from the events read; or a snapshot to
     /// take, where they cannot say. `dropped` is whether Hermes has dropped
-    /// any event of the stream, so that a request may wait unseen.
-    fn settle(&mut self, at: &SessionRef, mut reading: Reading, dropped: bool) {
+    /// any event of the stream, so that a request may wait unseen. `whole`
+    /// is whether everything Hermes keeps was read.
+    fn settle(&mut self, at: &SessionRef, mut reading: Reading, dropped: bool, whole: bool) {
         let Some(status) = self.sessions.get(at).map(|look| look.status) else {
             return;
         };
@@ -161,14 +184,22 @@ impl Poll {
                 reading.end(key, Closed::TurnEnded);
             }
         }
-        // Once in each stretch of waiting: where events were dropped, a
-        // request may wait that none of those kept tells of, whatever else
-        // is seen waiting; and where nothing is seen waiting, something is.
-        let first = !self.snapshotted.contains(at) && (dropped || !reading.prompts());
-        // Whenever a card showing is not accounted for.
-        let unexplained = |key: &String| !reading.holds(key) && !reading.over.contains_key(key);
-        let read = if status == Status::Waiting && (first || shown.prompts.iter().any(unexplained))
-        {
+        if status != Status::Waiting {
+            // Hermes says no question or approval waits here. That, and
+            // the sets of questions it lists, hold whatever was read.
+            return self.set(at, Read::Done(reading));
+        }
+        // The cards showing that the events read do not speak for: all of
+        // them where not everything kept was read, else those whose
+        // request and whose end are both missing from the events.
+        let silent =
+            |key: &&String| !reading.holds(key) && (!whole || !reading.over.contains_key(*key));
+        let unexplained: Vec<String> = shown.prompts.iter().filter(silent).cloned().collect();
+        // A request may wait that no event read tells of: asked before
+        // the oldest event kept, or before the oldest one read. And where
+        // nothing is seen waiting, something is.
+        let unsure = dropped || !whole || !reading.prompts() || !unexplained.is_empty();
+        let read = if unsure && !self.recent.contains(at) {
             let step = Step::Snapshot(at.clone());
             let over = reading.over;
             let search = Search {
@@ -177,6 +208,9 @@ impl Poll {
             };
             Read::Wanted { step, search }
         } else {
+            // A snapshot was taken of it not long ago. Until the next one,
+            // the cards the events do not speak for stay as they are.
+            reading.kept = unexplained;
             Read::Done(reading)
         };
         self.set(at, read);

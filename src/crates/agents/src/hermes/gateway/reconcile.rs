@@ -7,6 +7,7 @@
 //! asks again.
 use super::ask::{Ask, Pending};
 use super::effect::{Closed, Effect, Status};
+use super::identity::SessionRef;
 use super::poll::{Poll, Read};
 use super::state::{Card, Gateway, Key};
 use super::Connection;
@@ -31,19 +32,26 @@ impl Gateway {
         let unlisted = |listed: Option<&Option<bool>>| matches!(listed, Some(None | Some(false)));
         self.listed
             .retain(|at, _| unlisted(poll.profiles.get(&at.profile)));
-        self.snapshotted
-            .retain(|at| unlisted(poll.profiles.get(&at.profile)));
         for (at, look) in &poll.sessions {
             self.listed.insert(at.clone(), look.status);
-            // A stretch of waiting lasts while every poll lists it waiting.
-            let again = poll.snapshotted.contains(at) || look.snapshot;
-            if look.status == Status::Waiting && again {
-                self.snapshotted.insert(at.clone());
-            }
         }
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {
             if let Some(why) = self.over(&poll, &key, now_ms, effects) {
                 self.close(&key, why, effects);
+            }
+        }
+        // After the cards, since a card that closes forgets its session's
+        // snapshot and a snapshot taken in this poll is newer than that.
+        // A session that no longer waits, or left the list, has none.
+        let waits = |at: &SessionRef| {
+            let look = poll.sessions.get(at);
+            look.is_some_and(|look| look.status == Status::Waiting)
+        };
+        self.snapshotted
+            .retain(|at, _| unlisted(poll.profiles.get(&at.profile)) || waits(at));
+        for (at, look) in &poll.sessions {
+            if look.snapshot && look.status == Status::Waiting {
+                self.snapshotted.insert(at.clone(), now_ms);
             }
         }
         for (at, look) in poll.sessions {
@@ -90,6 +98,9 @@ impl Gateway {
             return None;
         };
         let Some((ask, wait_ms)) = reading.asks.iter().find(|(ask, _)| ask.key() == asked) else {
+            if reading.kept.contains(asked) {
+                return None;
+            }
             return Some(reading.over.get(asked).cloned().unwrap_or(Closed::Gone));
         };
         let card = self.cards.get_mut(key)?;

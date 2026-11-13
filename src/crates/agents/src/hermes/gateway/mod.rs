@@ -34,7 +34,7 @@ pub use effect::{Closed, Effect, Input, Status};
 pub use frame::{answered, event, frame, hints, refusal, Answered, Cursor, Event, Frame, Refusal};
 pub use identity::{GatewayId, Profile, SessionRef};
 pub use poll::{Poll, Step};
-pub use state::{Gateway, BUSY_POLL_MS, IDLE_POLL_MS};
+pub use state::{Gateway, BUSY_POLL_MS, IDLE_POLL_MS, SNAPSHOT_EVERY_MS};
 pub use ticket::{
     granted, identify_line, pointed_socket, ticket_line, Scope, Ticket, CONTROL_POINTER,
     CONTROL_SOCKET, SOCKET_PATH, SUBPROTOCOL,

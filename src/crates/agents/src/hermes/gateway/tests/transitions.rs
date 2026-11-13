@@ -432,10 +432,10 @@ fn a_snapshot_is_taken_only_where_the_events_cannot_say() {
     let effects = poll(&mut g, &mut h, 0);
     assert_eq!(h.asked.last(), Some(&Step::Snapshot(g.session(&work(), S))));
     assert_eq!(opened(&effects), ["p1"]);
-    // While that lasts, each poll asks again: the events never account
-    // for the card, and nothing is remembered from one poll to the next.
+    // While that lasts the events never account for the card. It stays,
+    // and no second snapshot is taken so soon after the first.
     assert_eq!(poll(&mut g, &mut h, 1_000), []);
-    assert_eq!((h.snapshots(), names(&g)), (1, vec!["p1".to_owned()]));
+    assert_eq!((h.snapshots(), names(&g)), (0, vec!["p1".to_owned()]));
 
     // A second request, whose event the stream still holds, shows too.
     asks(&mut h, "p2", 1);

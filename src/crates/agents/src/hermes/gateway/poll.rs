@@ -84,9 +84,8 @@ pub struct Poll {
     pub(super) profiles: BTreeMap<Profile, Option<bool>>,
     pub(super) sessions: BTreeMap<SessionRef, Look>,
     pub(super) shown: BTreeMap<SessionRef, Shown>,
-    /// The sessions a snapshot was already taken of in the stretch of
-    /// waiting they are in.
-    pub(super) snapshotted: BTreeSet<SessionRef>,
+    /// The sessions a snapshot was taken of too recently to take another.
+    pub(super) recent: BTreeSet<SessionRef>,
 }
 
 impl Poll {
@@ -95,7 +94,7 @@ impl Poll {
         number: u64,
         served: impl Iterator<Item = Profile>,
         shown: BTreeMap<SessionRef, Shown>,
-        snapshotted: BTreeSet<SessionRef>,
+        recent: BTreeSet<SessionRef>,
     ) -> Self {
         Self {
             gateway,
@@ -103,7 +102,7 @@ impl Poll {
             profiles: served.map(|profile| (profile, None)).collect(),
             sessions: BTreeMap::new(),
             shown,
-            snapshotted,
+            recent,
         }
     }
 
@@ -145,7 +144,7 @@ impl Poll {
                 let reading = Reading {
                     asks,
                     over: search.over,
-                    unshown: false,
+                    ..Reading::default()
                 };
                 if let Some(look) = self.sessions.get_mut(session) {
                     look.snapshot = true;

@@ -4,8 +4,8 @@
 //! The cards follow polls and nothing else. Each poll asks Hermes what
 //! waits now (`poll.rs`), and `reconcile.rs` opens, changes and closes
 //! cards until they match what it said. Between polls the model keeps the
-//! cards, the gateway's instance, a count of polls, and which waiting
-//! sessions it has taken a snapshot of. It keeps no place in any stream
+//! cards, the gateway's instance, a count of polls, and when it last took
+//! a snapshot of each waiting session. It keeps no place in any stream
 //! and no memory of what was over, so there is no order in which two
 //! readings can be merged wrongly: a poll is whole, the next one starts
 //! after it, and one that is no longer the newest when it comes back is
@@ -17,7 +17,7 @@ use super::frame::{answered, Answered, Refusal};
 use super::identity::{GatewayId, Profile, SessionRef};
 use super::poll::{Poll, Shown};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// How long to wait between polls while any session starts, works or
 /// waits, or a card shows.
@@ -25,6 +25,11 @@ pub const BUSY_POLL_MS: i64 = 1_000;
 /// How long when nothing seems to happen: Hermes's hints and the hooks can
 /// be missed, and this is what finds a turn they did not tell.
 pub const IDLE_POLL_MS: i64 = 10_000;
+/// The least time between two snapshots of one session while it goes on
+/// waiting. A request that no read of the session's events can show (its
+/// event dropped, or not reached) is found by the next snapshot, so this is
+/// also how long such a request can stay hidden.
+pub const SNAPSHOT_EVERY_MS: i64 = 30_000;
 
 /// One request as the model files it: where it waits, and the gateway's
 /// own id for it. The gateway is part of every key.
@@ -50,13 +55,17 @@ pub struct Gateway {
     /// What the last poll listed each live session as doing. It is only
     /// reported (`statuses`, `poll_ms`); no poll reads it.
     pub(super) listed: BTreeMap<SessionRef, Status>,
-    /// The sessions a snapshot was taken of since they were last seen not
-    /// to wait. Hermes drops a stream's old events, and a request asked
-    /// before the oldest one kept shows in no read. A snapshot finds it,
-    /// and subscribes to do so, so one is taken once for each stretch of
-    /// waiting and not at every poll. This is the one thing a poll leaves
-    /// for the next, beside the cards.
-    pub(super) snapshotted: BTreeSet<SessionRef>,
+    /// When a snapshot was last taken of each session that waits. Hermes
+    /// drops a stream's old events, and a request asked before the oldest
+    /// one kept shows in no read. A snapshot finds it, and subscribes to
+    /// do so, so one is not taken at every poll: this says when the last
+    /// one was. It is the one thing a poll leaves for the next, beside the
+    /// cards. It is forgotten when the session stops waiting, when a card
+    /// of the session closes, when the socket is lost and when the gateway
+    /// restarts, so that the next poll takes a snapshot again.
+    pub(super) snapshotted: BTreeMap<SessionRef, i64>,
+    /// The latest time `apply` was given.
+    pub(super) now_ms: i64,
 }
 
 impl Gateway {
@@ -68,7 +77,8 @@ impl Gateway {
             polls: 0,
             cards: BTreeMap::new(),
             listed: BTreeMap::new(),
-            snapshotted: BTreeSet::new(),
+            snapshotted: BTreeMap::new(),
+            now_ms: 0,
         }
     }
     pub fn id(&self) -> &GatewayId {
@@ -132,19 +142,26 @@ impl Gateway {
             }
         }
         let served = instance.served.iter().map(|served| served.profile.clone());
-        let snapshotted = self.snapshotted.clone();
+        // Counted from the latest time the model was told of.
+        let recent = self
+            .snapshotted
+            .iter()
+            .filter(|(_, at)| self.now_ms - **at < SNAPSHOT_EVERY_MS)
+            .map(|(session, _)| session.clone())
+            .collect();
         Some(Poll::new(
             self.id.clone(),
             self.polls,
             served,
             shown,
-            snapshotted,
+            recent,
         ))
     }
 
     /// Takes what happened at `now_ms` and returns what to do, in order.
     pub fn apply(&mut self, input: Input<'_>, now_ms: i64) -> Vec<Effect> {
         let mut effects = Vec::new();
+        self.now_ms = now_ms;
         match input {
             Input::Dialing => self.connect(Connection::Connecting, &mut effects),
             Input::Identified { answer, home } => self.identified(answer, home, &mut effects),
@@ -194,6 +211,8 @@ impl Gateway {
     /// shown again. A poll under way cannot end.
     fn lost(&mut self, failure: Failure, effects: &mut Vec<Effect>) {
         self.polls += 1;
+        // What happened while nothing was read is not known.
+        self.snapshotted.clear();
         for card in self.cards.values_mut() {
             if card.sent_ms.take().is_some() {
                 effects.push(Effect::Unanswered {
@@ -218,6 +237,9 @@ impl Gateway {
 
     pub(super) fn close(&mut self, key: &Key, why: Closed, effects: &mut Vec<Effect>) {
         if let Some(card) = self.cards.remove(key) {
+            // What the session waited on is over. If it still waits, it
+            // waits on something else, which a snapshot may have to find.
+            self.snapshotted.remove(&card.pending.session);
             effects.push(Effect::Close {
                 id: card.pending.id(),
                 session: card.pending.session,

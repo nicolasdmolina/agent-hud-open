@@ -29,6 +29,9 @@ pub(super) struct Reading {
     /// Hermes added later, or one without its text). It gets no card, and
     /// it is why the session says it waits.
     pub(super) unshown: bool,
+    /// Cards showing that this reading cannot speak for: they are left as
+    /// they are.
+    pub(super) kept: Vec<String>,
 }
 
 impl Reading {
