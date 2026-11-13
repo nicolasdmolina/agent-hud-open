@@ -1,0 +1,267 @@
+{
+ "scenario": "gateway-self-description",
+ "description": "What the gateway says about itself at each step of the handshake: the control socket's identify answer (live MacBook gateway and the throwaway one, ready and starting), the session-ticket grant, the gateway.ready event sent on every new socket, and runtime.describe. Then the refusals.",
+ "captured": {
+  "hermes_version": "0.22.5",
+  "code_sha": "9847fb8d5dd0",
+  "date": "2026-11-12",
+  "gateway": "isolated throwaway gateway (own HOME and HERMES_HOME), profile hud-spike, approvals.mode manual, approvals.timeout 20, agent.clarify_timeout 20, scripted loopback model",
+  "scrubbed": "home path and login name replaced, system prompts removed, tool and skill inventories and skin colour tables trimmed, strings over 1500 chars cut. Tickets never appear in frames; ticket fields in notes are masked."
+ },
+ "control_socket": {
+  "identify_request": {
+   "protocol": 1,
+   "id": 1,
+   "verb": "identify"
+  },
+  "identify_live_macbook_gateway_ready": {
+   "ok": true,
+   "protocol": 1,
+   "result": {
+    "protocol": 1,
+    "kind": "hermes-gateway",
+    "pid": 67250,
+    "start_time": 179452422318,
+    "hermes_home": "/Users/USER/.hermes",
+    "profile": "default",
+    "supervisor": "launchd",
+    "launch_supervisor": "launchd",
+    "code_sha": "9847fb8d5dd0e94aec7307b09996aa6a15793954",
+    "code_version": "0.22.5",
+    "instance_id": "0bb0f8bb1327467ebb5fef6507ce5b94",
+    "runtime_protocol": 1,
+    "authority_epoch": 5,
+    "state": "ready",
+    "api_origin": "http://127.0.0.1:57825",
+    "served_profiles": [
+     {
+      "profile_id": "/Users/USER/.hermes",
+      "home": "/Users/USER/.hermes"
+     }
+    ],
+    "parked_profiles": {},
+    "capabilities": [
+     "session-authority-v1",
+     "durable-admission-v1",
+     "event-replay-v1"
+    ]
+   },
+   "id": 1
+  },
+  "identify_throwaway_starting": {
+   "pid": 58836,
+   "instance_id": "29ec940a9a0c45039dbbed3e26a621c9",
+   "authority_epoch": 2,
+   "state": "starting",
+   "runtime_protocol": 1,
+   "capabilities": [],
+   "code_version": "0.22.5",
+   "api_origin": "http://127.0.0.1:63690",
+   "supervisor": "none",
+   "launch_supervisor": "manual"
+  },
+  "identify_throwaway_ready_two_profiles": {
+   "ok": true,
+   "protocol": 1,
+   "result": {
+    "protocol": 1,
+    "kind": "hermes-gateway",
+    "pid": 59184,
+    "start_time": 179452654763,
+    "hermes_home": "/Users/USER/.hermes",
+    "profile": "default",
+    "supervisor": "none",
+    "launch_supervisor": "manual",
+    "code_sha": "9847fb8d5dd0e94aec7307b09996aa6a15793954",
+    "code_version": "0.22.5",
+    "served_profiles": [
+     {
+      "profile_id": "/Users/USER/.hermes",
+      "home": "/Users/USER/.hermes"
+     },
+     {
+      "profile_id": "/Users/USER/.hermes/profiles/hud-spike",
+      "home": "/Users/USER/.hermes/profiles/hud-spike"
+     }
+    ],
+    "instance_id": "8840a9b1bf594bfaa691e88e7117086f",
+    "runtime_protocol": 1,
+    "authority_epoch": 3,
+    "state": "ready",
+    "api_origin": "http://127.0.0.1:63760",
+    "parked_profiles": {},
+    "capabilities": [
+     "session-authority-v1",
+     "durable-admission-v1",
+     "event-replay-v1"
+    ]
+   },
+   "id": 1
+  },
+  "identify_while_stopped_cleanly": {
+   "_error": "FileNotFoundError",
+   "_detail": "[Errno 2] No such file or directory: '/Users/USER/.hermes/gateway.so"
+  },
+  "session_ticket_request": {
+   "protocol": 1,
+   "id": 1,
+   "verb": "session-ticket",
+   "params": {
+    "profile_id": "<served_profiles[].profile_id>",
+    "instance_id": "<identify.instance_id>",
+    "purpose": "interactive",
+    "scope": "<omit for one profile | 'host' for every served profile>"
+   }
+  },
+  "session_ticket_grant": {
+   "ticket": "<masked>",
+   "expires_in_seconds": 30,
+   "instance_id": "872abcc3ca924469bbddc60f7e29ce80",
+   "profile_id": "/Users/USER/.hermes/profiles/hud-spike",
+   "runtime_protocol": 1
+  },
+  "refused_stale_instance": {
+   "ok": false,
+   "error": "PermissionError: stale runtime instance",
+   "protocol": 1,
+   "id": 1
+  },
+  "refused_unserved_profile": {
+   "ok": false,
+   "error": "PermissionError: bootstrap binding rejected",
+   "protocol": 1,
+   "id": 1
+  },
+  "unknown_verb": {
+   "ok": false,
+   "error": "unknown verb: 'no-such-verb'",
+   "protocol": 1,
+   "supported_verbs": [
+    "active-work",
+    "identify",
+    "migrate-profile-identity",
+    "pause-for-update",
+    "purge-profile-identity",
+    "reload-plugins",
+    "rescan-profiles",
+    "serve-profile",
+    "status",
+    "unserve-profile"
+   ],
+   "id": 1
+  }
+ },
+ "websocket": {
+  "url": "ws://127.0.0.1:<port from identify.api_origin>/api/ws",
+  "subprotocols_offered": [
+   "hermes-gateway-v1",
+   "hermes-gateway-ticket.<ticket>"
+  ],
+  "subprotocol_echoed": "hermes-gateway-v1",
+  "first_frame_gateway_ready": {
+   "jsonrpc": "2.0",
+   "method": "event",
+   "params": {
+    "type": "gateway.ready",
+    "payload": {
+     "skin": {
+      "name": "default",
+      "_trimmed": true
+     },
+     "change_events": true,
+     "heartbeat": true,
+     "replay_epoch": "8a4e848e7f92413398b59f0f9f1dab65",
+     "session_authority": true
+    }
+   }
+  },
+  "runtime_describe_result": {
+   "jsonrpc": "2.0",
+   "id": 2,
+   "result": {
+    "instance_id": "872abcc3ca924469bbddc60f7e29ce80",
+    "profile_id": "/Users/USER/.hermes/profiles/hud-spike",
+    "authority_epoch": 1,
+    "capabilities": [
+     "durable-admission-v1",
+     "event-replay-v1",
+     "local-cli-create-v1",
+     "acp-editor-policy-v1",
+     "acp-session-mcp-v1",
+     "clarify-batch-v1"
+    ],
+    "session_create": {
+     "sources": [
+      "acp",
+      "cli",
+      "gui",
+      "oneshot",
+      "tool",
+      "tui"
+     ],
+     "parameters": [
+      "accept_hooks",
+      "api_key",
+      "base_url",
+      "checkpoints",
+      "client_env",
+      "cwd",
+      "cwd_explicit",
+      "editor",
+      "follow_profile_config",
+      "ignore_rules",
+      "ignore_user_config",
+      "max_turns",
+      "model",
+      "pass_session_id",
+      "provider",
+      "reasoning",
+      "request_id",
+      "row_cwd",
+      "run_budget",
+      "safe_mode",
+      "service_tier",
+      "skills",
+      "source",
+      "title",
+      "toolsets",
+      "verbose",
+      "yolo"
+     ]
+    },
+    "skin": {
+     "name": "default",
+     "_trimmed": true
+    }
+   }
+  },
+  "ticket_first_use": {
+   "opened": true,
+   "subprotocol": "hermes-gateway-v1",
+   "ping": [
+    "gateway.ready",
+    {
+     "pong": true
+    }
+   ]
+  },
+  "ticket_second_use": {
+   "opened": false,
+   "error": "InvalidStatus",
+   "detail": "server rejected WebSocket connection: HTTP 403"
+  },
+  "ticket_after_31s": {
+   "opened": false,
+   "error": "InvalidStatus",
+   "detail": "server rejected WebSocket connection: HTTP 403",
+   "waited_s": 31.1
+  },
+  "no_ticket": {
+   "opened": false,
+   "error": "InvalidStatus",
+   "detail": "server rejected WebSocket connection: HTTP 403"
+  },
+  "close_code_on_clean_gateway_stop": 1012,
+  "close_code_on_gateway_kill": 1006
+ }
+}

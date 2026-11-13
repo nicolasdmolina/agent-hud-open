@@ -1,0 +1,129 @@
+{
+ "scenario": "real-gateway-readonly-aggregate",
+ "description": "The live MacBook gateway, looked at read-only (ping, runtime.describe, session.list, session.active_list, 10 s of listening; nothing subscribed, created or submitted). Counts only: no ids, titles or text.",
+ "captured": {
+  "hermes_version": "0.22.5",
+  "code_sha": "9847fb8d5dd0",
+  "date": "2026-11-12",
+  "gateway": "live MacBook gateway",
+  "scrubbed": "home path and login name replaced, system prompts removed, tool and skill inventories and skin colour tables trimmed, strings over 1500 chars cut. Tickets never appear in frames; ticket fields in notes are masked."
+ },
+ "result": {
+  "handshake": {
+   "subprotocol_echoed": "hermes-gateway-v1",
+   "ticket_len": 43,
+   "mint_to_open_s": 0.072,
+   "grant_keys": [
+    "expires_in_seconds",
+    "instance_id",
+    "profile_id",
+    "runtime_protocol",
+    "ticket"
+   ]
+  },
+  "identify": {
+   "protocol": 1,
+   "kind": "hermes-gateway",
+   "profile": "default",
+   "supervisor": "launchd",
+   "launch_supervisor": "launchd",
+   "code_version": "0.22.5",
+   "runtime_protocol": 1,
+   "state": "ready",
+   "capabilities": [
+    "session-authority-v1",
+    "durable-admission-v1",
+    "event-replay-v1"
+   ],
+   "served_profiles_count": 1,
+   "parked_profiles_count": 0,
+   "identify_keys": [
+    "api_origin",
+    "authority_epoch",
+    "capabilities",
+    "code_sha",
+    "code_version",
+    "hermes_home",
+    "instance_id",
+    "kind",
+    "launch_supervisor",
+    "parked_profiles",
+    "pid",
+    "profile",
+    "protocol",
+    "runtime_protocol",
+    "served_profiles",
+    "start_time",
+    "state",
+    "supervisor"
+   ]
+  },
+  "ping": {
+   "pong": true
+  },
+  "runtime_describe": {
+   "keys": [
+    "authority_epoch",
+    "capabilities",
+    "instance_id",
+    "profile_id",
+    "session_create",
+    "skin"
+   ],
+   "capabilities": [
+    "durable-admission-v1",
+    "event-replay-v1",
+    "local-cli-create-v1",
+    "acp-editor-policy-v1",
+    "acp-session-mcp-v1",
+    "clarify-batch-v1"
+   ],
+   "session_create_sources": [
+    "acp",
+    "cli",
+    "gui",
+    "oneshot",
+    "tool",
+    "tui"
+   ]
+  },
+  "session_list_live": {
+   "ms": 115,
+   "count": 1,
+   "row_keys": [
+    "id",
+    "message_count",
+    "model",
+    "running",
+    "session_id",
+    "source",
+    "started_at",
+    "title"
+   ],
+   "by_source": {
+    "api_server": 1
+   },
+   "running": 0,
+   "id_shapes": {
+    "other": 1
+   },
+   "error": null
+  },
+  "session_active_list": {
+   "ms": 40,
+   "count": 2,
+   "by_status": {
+    "idle": 2
+   },
+   "by_source_status": {
+    "local/idle": 1,
+    "api_server/idle": 1
+   },
+   "error": null
+  },
+  "unsolicited_event_types_in_10s": {
+   "gateway.ready": 1
+  },
+  "unsolicited_events_with_session_id": 0
+ }
+}
