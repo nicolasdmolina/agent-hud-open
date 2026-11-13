@@ -23,7 +23,9 @@ mod tests {
         assert_eq!(hook_owner(None), None);
         assert_eq!(hook_owner(Some("")), None);
         assert_eq!(
-            hook_owner(Some("/Applications/Agent HUD Fork.app/Contents/MacOS/Agent HUD Fork")),
+            hook_owner(Some(
+                "/Applications/Agent HUD Fork.app/Contents/MacOS/Agent HUD Fork"
+            )),
             Some("/Applications/Agent HUD Fork.app/Contents/MacOS/Agent HUD Fork".into())
         );
     }
