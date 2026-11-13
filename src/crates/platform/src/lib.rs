@@ -20,6 +20,7 @@ pub mod local_ipc;
 pub mod local_tools;
 mod navigation;
 mod os;
+pub mod ssh_link;
 #[cfg(target_os = "windows")]
 #[path = "windows/session.rs"]
 pub mod windows_session;
