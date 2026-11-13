@@ -2,7 +2,7 @@
 //! it (`normalizeSshConfig` in its `connection-config.ts`), then every part
 //! checked, so nothing that reaches `ssh` can read as an option or a shell
 //! word.
-use super::{Scalar, SshAddress};
+use super::{Shape, SshAddress};
 
 /// The longest host or user name taken.
 const LONGEST: usize = 255;
@@ -12,7 +12,7 @@ const LONGEST: usize = 255;
 pub(super) fn address(
     host: &str,
     user: Option<&str>,
-    port: Option<Scalar>,
+    port: Option<Shape>,
     key_path: Option<&str>,
 ) -> Option<SshAddress> {
     let split = split(host);
@@ -22,9 +22,9 @@ pub(super) fn address(
     };
     // The port as written, if one is: `None` inside when it is no number.
     let written = match port {
-        None | Some(Scalar::Empty) => split.port,
-        Some(Scalar::Whole(number) | Scalar::Digits(number)) => Some(Some(number)),
-        Some(Scalar::Other) => Some(None),
+        None | Some(Shape::Empty) => split.port,
+        Some(Shape::Whole(number) | Shape::Digits(number)) => Some(Some(number)),
+        Some(Shape::Array | Shape::Object | Shape::Other) => Some(None),
     };
     // A port that is written must be usable.
     let port = match written {

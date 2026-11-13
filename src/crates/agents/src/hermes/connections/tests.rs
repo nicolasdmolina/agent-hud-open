@@ -115,7 +115,34 @@ fn only_version_2_is_understood() {
             "{version}"
         );
     }
-    assert_eq!(parse(r#"{"version":2}"#), Ok(vec![]));
+    assert_eq!(parse(r#"{"version":2,"connections":[]}"#), Ok(vec![]));
+}
+
+/// A list a later reader would act on removes every machine it no longer
+/// holds, so only an explicit array may read as a list, even an empty one.
+#[test]
+fn a_list_without_its_connection_array_is_not_understood() {
+    for text in [
+        r#"{"version":2}"#,
+        r#"{"version":2,"primary":"local","lastUsed":"local"}"#,
+        r#"{"version":2,"connections":null}"#,
+        r#"{"version":2,"connections":{}}"#,
+        r#"{"version":2,"connections":{"0":{"id":"a","kind":"ssh","host":"box"}}}"#,
+        r#"{"version":2,"connections":"[]"}"#,
+        r#"{"version":2,"connections":0}"#,
+        r#"{"version":2,"connections":false}"#,
+        // A document that is not an object holds no list.
+        "null",
+        "[]",
+        "[2,[]]",
+        r#""connections""#,
+        "2",
+        "true",
+    ] {
+        assert_eq!(parse(text), Err(ListError::NotUnderstood), "{text}");
+    }
+    // An explicit empty array is a real, empty list.
+    assert_eq!(parse(r#"{"connections":[],"version":2}"#), Ok(vec![]));
 }
 
 #[test]
@@ -181,6 +208,7 @@ fn no_token_or_header_value_reaches_an_entry_or_an_error() {
         // Its string closed, then a stray character.
         format!("{}\"x{}", &text[..at], &text[at + 1..]),
         // A field of the wrong type whose own value is the marker.
+        format!(r#"{{"version":2,"connections":["{MARKER}"]}}"#),
         format!(r#"{{"version":2,"connections":"{MARKER}"}}"#),
         format!(r#"{{"version":2,"connections":[{{"id":"{MARKER}","kind":["{MARKER}"]}}]}}"#),
         format!(r#"{{"version":"{MARKER}","connections":[]}}"#),
@@ -213,6 +241,7 @@ fn no_token_or_header_value_reaches_an_entry_or_an_error() {
             ..
         })
     ));
+    assert_eq!(parse(&broken[3]), Err(ListError::NotUnderstood));
     // Why the error keeps only position and class: the JSON library's own
     // message quotes the file.
     let quoted = serde_json::from_str::<List>(&broken[2])

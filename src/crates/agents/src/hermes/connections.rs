@@ -116,10 +116,14 @@ impl From<serde_json::Error> for ListError {
 
 /// The entries of the list in `text`, in the list's order.
 pub fn parse(text: &str) -> Result<Vec<Entry>, ListError> {
-    // The version first, so a list of another version is "not understood"
-    // whatever shape the rest of it has.
+    // The shape first: an object whose version is understood and whose
+    // `connections` is an array. Anything else is "not understood" whatever
+    // the rest holds, so a list that lacks its array never reads as empty.
+    if serde_json::from_str::<Shape>(text)? != Shape::Object {
+        return Err(ListError::NotUnderstood);
+    }
     let head: Head = serde_json::from_str(text)?;
-    if head.version != Some(Scalar::Whole(VERSION)) {
+    if head.version != Some(Shape::Whole(VERSION)) || head.connections != Some(Shape::Array) {
         return Err(ListError::NotUnderstood);
     }
     let list: List = serde_json::from_str(text)?;
@@ -137,12 +141,12 @@ pub fn parse(text: &str) -> Result<Vec<Entry>, ListError> {
 
 #[derive(Deserialize)]
 struct Head {
-    version: Option<Scalar>,
+    version: Option<Shape>,
+    connections: Option<Shape>,
 }
 
 #[derive(Deserialize)]
 struct List {
-    #[serde(default)]
     connections: Vec<RawEntry>,
 }
 
@@ -153,7 +157,7 @@ struct RawEntry {
     label: Option<String>,
     host: Option<String>,
     user: Option<String>,
-    port: Option<Scalar>,
+    port: Option<Shape>,
     #[serde(rename = "keyPath")]
     key_path: Option<String>,
 }
@@ -190,71 +194,76 @@ fn trimmed(text: Option<String>) -> String {
     text.as_deref().unwrap_or("").trim().to_owned()
 }
 
-/// What a `version` or `port` holds, read from any JSON value so a value
-/// of another type is judged rather than breaking the list. No text is
-/// kept, and nested values are skipped, never built.
+/// What the document, its `version` and `connections`, or a `port` hold,
+/// read from any JSON value so a value of another type is judged rather
+/// than breaking the list. No text is kept, and nested values are skipped,
+/// never built.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Scalar {
+enum Shape {
     /// A whole number.
     Whole(u64),
     /// A string of digits, the whitespace around it ignored.
     Digits(u64),
     /// An empty string, or one of only whitespace.
     Empty,
+    /// An array.
+    Array,
+    /// An object.
+    Object,
     /// Anything else.
     Other,
 }
 
-impl<'de> Deserialize<'de> for Scalar {
+impl<'de> Deserialize<'de> for Shape {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_any(ScalarVisitor)
+        deserializer.deserialize_any(ShapeVisitor)
     }
 }
 
-struct ScalarVisitor;
+struct ShapeVisitor;
 
-impl<'de> Visitor<'de> for ScalarVisitor {
-    type Value = Scalar;
+impl<'de> Visitor<'de> for ShapeVisitor {
+    type Value = Shape;
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("any value")
     }
-    fn visit_u64<E>(self, value: u64) -> Result<Scalar, E> {
-        Ok(Scalar::Whole(value))
+    fn visit_u64<E>(self, value: u64) -> Result<Shape, E> {
+        Ok(Shape::Whole(value))
     }
-    fn visit_i64<E>(self, value: i64) -> Result<Scalar, E> {
-        Ok(u64::try_from(value).map_or(Scalar::Other, Scalar::Whole))
+    fn visit_i64<E>(self, value: i64) -> Result<Shape, E> {
+        Ok(u64::try_from(value).map_or(Shape::Other, Shape::Whole))
     }
-    fn visit_f64<E>(self, value: f64) -> Result<Scalar, E> {
+    fn visit_f64<E>(self, value: f64) -> Result<Shape, E> {
         // Only a whole number in `u32`'s range is taken, so the cast is exact.
         let whole = value.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&value);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         Ok(if whole {
-            Scalar::Whole(value as u64)
+            Shape::Whole(value as u64)
         } else {
-            Scalar::Other
+            Shape::Other
         })
     }
-    fn visit_str<E>(self, value: &str) -> Result<Scalar, E> {
+    fn visit_str<E>(self, value: &str) -> Result<Shape, E> {
         let value = value.trim();
         Ok(if value.is_empty() {
-            Scalar::Empty
+            Shape::Empty
         } else {
-            address::digits(value).map_or(Scalar::Other, Scalar::Digits)
+            address::digits(value).map_or(Shape::Other, Shape::Digits)
         })
     }
-    fn visit_bool<E>(self, _: bool) -> Result<Scalar, E> {
-        Ok(Scalar::Other)
+    fn visit_bool<E>(self, _: bool) -> Result<Shape, E> {
+        Ok(Shape::Other)
     }
-    fn visit_unit<E>(self) -> Result<Scalar, E> {
-        Ok(Scalar::Other)
+    fn visit_unit<E>(self) -> Result<Shape, E> {
+        Ok(Shape::Other)
     }
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Scalar, A::Error> {
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Shape, A::Error> {
         while seq.next_element::<IgnoredAny>()?.is_some() {}
-        Ok(Scalar::Other)
+        Ok(Shape::Array)
     }
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Scalar, A::Error> {
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Shape, A::Error> {
         while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
-        Ok(Scalar::Other)
+        Ok(Shape::Object)
     }
 }
 
