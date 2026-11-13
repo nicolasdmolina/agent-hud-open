@@ -22,17 +22,28 @@ fn service() -> Option<Retained<AnyObject>> {
     let class = AnyClass::get(c"SMAppService")?;
     Some(unsafe { msg_send![class, mainAppService] })
 }
+/// The main app reports "not found" (3) until it is first registered, and
+/// registering from there works, so it counts as "not registered" (0).
+fn status_of(service: &AnyObject) -> isize {
+    known(unsafe { msg_send![service, status] })
+}
+fn known(status: isize) -> isize {
+    if status == 3 {
+        0
+    } else {
+        status
+    }
+}
 fn login() -> Value {
     let Some(service) = service() else {
         return json!({"supported":false,"enabled":false,"status":"unavailable","notice":"Launch at login requires a real app bundle on macOS 13 or later."});
     };
-    let status: isize = unsafe { msg_send![&*service, status] };
+    let status = status_of(&service);
     let notice = match status {
         2 => Some(format!(
             "Approve {} in System Settings → General → Login Items.",
             app_name()
         )),
-        3 => Some("The login service was not found in this app bundle.".to_owned()),
         _ => None,
     };
     json!({"supported":true,"enabled":status==1,"status":match status {1=>"enabled",2=>"requires-approval",0=>"disabled",_=>"unavailable"},"notice":notice})
@@ -51,7 +62,7 @@ pub(super) fn register_if_never_registered() -> bool {
     let Some(service) = service() else {
         return true;
     };
-    let current: isize = unsafe { msg_send![&*service, status] };
+    let current = status_of(&service);
     if current == 0 {
         let mut error: *mut NSError = std::ptr::null_mut();
         let _: Bool = unsafe { msg_send![&*service, registerAndReturnError: &mut error] };
@@ -60,7 +71,7 @@ pub(super) fn register_if_never_registered() -> bool {
 }
 pub(super) fn set_login(_identifier: &str, enabled: bool) -> Result<(), String> {
     let service = service().ok_or("Launch at login requires a real macOS app bundle")?;
-    let current: isize = unsafe { msg_send![&*service, status] };
+    let current = status_of(&service);
     if enabled && current == 1 || !enabled && current == 0 {
         return Ok(());
     }
@@ -202,6 +213,14 @@ pub(crate) fn private_output(options: &mut std::fs::OpenOptions) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_main_app_never_registered_counts_as_not_registered() {
+        assert_eq!(known(3), 0);
+        for status in [0, 1, 2] {
+            assert_eq!(known(status), status);
+        }
+    }
 
     #[test]
     fn settings_offers_the_system_sounds_by_plain_name_in_order() {
