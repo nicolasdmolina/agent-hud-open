@@ -1,6 +1,7 @@
 //! Explicit operating-system actions. No login registration happens merely by
 //! constructing this owner. There are no system notifications: the HUD island
-//! is the alert surface on every platform.
+//! is the alert surface on every platform, and `sound` plays Core's sound
+//! alerts where the host can.
 use serde_json::{json, Value};
 use std::sync::{Mutex, PoisonError};
 use tauri::Manager;
@@ -8,6 +9,7 @@ use tauri::Manager;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+pub(crate) mod sound;
 #[cfg(unix)]
 mod unix;
 #[cfg(target_os = "windows")]
@@ -30,6 +32,10 @@ use windows as target;
 //   configure_client_command(command)    client setup runs in the background, even
 //                                        for a console executable
 //   stop_client(child)
+//   play_sound(name)                     plays the system sound of that name and
+//                                        waits for it to end; Err where the host
+//                                        cannot (status() says so under "sound")
+pub use sound::Sounds;
 pub(crate) use target::{
     bundled_cli, cli_candidates, client_command_line, configure_client_command, private_output,
     stop_client,

@@ -112,6 +112,7 @@ pub fn run_with_options(
                 picture::picture_resize,
                 capture::native_capture_webview,
                 system::native_system_status,
+                system::sound::native_play_sound,
                 activity::window_activity,
                 hud::hud_monitors,
                 hud::hud_geometry,
@@ -156,6 +157,13 @@ pub fn run_with_options(
             app.manage(picture::Pictures::default());
             let directory = agent_hud_runtime::local_tools_directory()?;
             let demo_data = directory.join("demo-run");
+            // The demo plays sounds too, but only after sound is turned on in
+            // its own settings, which start over (off) on every launch.
+            app.manage(system::Sounds::new(if app.state::<AppState>().demo {
+                &demo_data
+            } else {
+                &directory
+            }));
             let legacy = if app.state::<AppState>().demo {
                 None
             } else {

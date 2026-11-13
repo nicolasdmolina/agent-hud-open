@@ -42,8 +42,14 @@ fn set_entry(key: &Key, identifier: &str, enabled: bool) -> Result<(), String> {
 pub(super) fn status(identifier: &str) -> Result<Value, String> {
     let enabled = enabled(identifier);
     Ok(
-        json!({"platform":"windows","launchAtLogin":{"supported":true,"enabled":enabled,"status":if enabled{"enabled"}else{"disabled"},"notice":"Uses the current-user Run registry entry; Windows runtime validation is pending."}}),
+        json!({"platform":"windows","launchAtLogin":{"supported":true,"enabled":enabled,"status":if enabled{"enabled"}else{"disabled"},"notice":"Uses the current-user Run registry entry; Windows runtime validation is pending."},"sound":{"supported":false,"notice":"Not implemented: sound playback on Windows is unverified."}}),
     )
+}
+
+/// Not implemented: no sound plays on Windows until playback is built and
+/// verified on a real machine.
+pub(super) fn play_sound(_name: &str) -> Result<(), String> {
+    Err("Sound playback is not implemented on Windows".into())
 }
 
 /// Launch at login is left to the user here; nothing is registered on first run.

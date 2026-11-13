@@ -116,6 +116,8 @@ export interface Snapshot {
         status: "enabled" | "disabled" | "requires-approval" | "unavailable";
         notice: string | null;
       };
+      /** Whether this host plays sound alerts; `notice` says why not. */
+      sound?: { supported: boolean; notice: string | null };
     };
     localTools?: {
       supported: boolean;

@@ -79,7 +79,28 @@ pub(super) fn set_login(_identifier: &str, enabled: bool) -> Result<(), String> 
     }
 }
 pub(super) fn status(_identifier: &str) -> Result<Value, String> {
-    Ok(json!({"platform":"macos","launchAtLogin":login()}))
+    Ok(json!({"platform":"macos","launchAtLogin":login(),"sound":{"supported":true,"notice":null}}))
+}
+/// Plays one of macOS's own alert sounds, from `/System/Library/Sounds`, and
+/// waits until it ends. `afplay` is a process of its own, so the app never
+/// waits on audio.
+pub(super) fn play_sound(name: &str) -> Result<(), String> {
+    let path = Path::new("/System/Library/Sounds").join(format!("{name}.aiff"));
+    if !path.is_file() {
+        return Err(format!("macOS has no system sound named {name}"));
+    }
+    let status = std::process::Command::new("/usr/bin/afplay")
+        .arg(&path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|error| format!("afplay could not start: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("afplay ended with {status}"))
+    }
 }
 
 /// Settings looks only where `cli_candidates` says.
