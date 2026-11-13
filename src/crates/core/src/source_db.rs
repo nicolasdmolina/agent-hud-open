@@ -66,7 +66,8 @@ pub(crate) fn reader_version(path: &Path, source: &str) -> u16 {
         2
     } else if source == "hermes" {
         // 2: calls carry the route their billing provider names.
-        2
+        // 3: sessions carry their profile as their client.
+        3
     } else if source == "antigravity" {
         // 2: trajectory_metadata_blob cwd, parent_id, role, duration_ms, archived.
         2

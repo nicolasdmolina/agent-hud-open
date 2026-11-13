@@ -42,7 +42,7 @@ Open: 13 files, 1,414 lines. Counts (70 rows): same 29 · deliberate 0 · better
 | 52 | ZCodeSessions.swift:23-29 | Re-query rows by completion time | rowid watermark | unclear | Depends on ZCode row timing |
 | 54 | ZCode/Hermes | Bad row excluded with notice | whole source page aborts | differs | Source stops updating, English error |
 | 55 | ZCodeSessions.swift:44-46 | Title fallbacks | id | fixed | "zcode:<id>" **Fixed 2026-10-20** (session titles). |
-| 58 | HermesSessions.swift:62-66 | Title fallback; client label with profile | id; none | differs | "hermes:<id>"; profiles indistinguishable **Title part fixed 2026-10-20**; the rest is open. |
+| 58 | HermesSessions.swift:62-66 | Title fallback; client label with profile | hermes/transcript.rs (`client`); naming/clients.rs (`client_name`) | fixed | "hermes:<id>"; profiles indistinguishable **Title part fixed 2026-10-20**. **Label fixed 2026-11-12:** a session is "Hermes Agent", or "Hermes Agent · <profile>" from its `profile_name` (not empty, not "default") else its `profiles/<name>` folder, in the Sessions list, the session page and search (test `sessions_are_labelled_by_their_profile`). |
 | 59 | WholeFileStore.swift:136-139 | Running-total growth dated when observed | replaced at first_seen | differs | All tokens at first use in Today/hourly/burn |
 | 60 | HermesSessions.swift:45-58 | Activity includes last_seen | ignored | differs | Tokens frozen until session ends |
 | 63 | OpenClawSessions.swift:33-35,106-172 | openclaw-agent.sqlite sessions, turns, completions | none | missing | Those sessions and usage absent |
@@ -50,7 +50,7 @@ Open: 13 files, 1,414 lines. Counts (70 rows): same 29 · deliberate 0 · better
 | 66 | OpenClawSessions.swift:73-79 | Identity incl. counts, first wins | last wins | differs | Data only |
 | 67 | OpenClawSessions.swift:93,99 | Title "OpenClaw · <agent>"; start from header | id | differs | "openclaw:<id>" **Title part fixed 2026-10-20**; the rest is open. |
 | 68 | OpenClawSessions.swift:69-71 | Malformed line fails file with notice | skip / 0 | differs | No notice, partial usage |
-| 69 | all | Per-session client labels | none | differs | Hermes profiles indistinguishable |
+| 69 | all | Per-session client labels | transcript/records.rs (`Record::client`); naming/clients.rs | fixed | Hermes profiles indistinguishable **Fixed 2026-11-12:** a database reader can name a session's client; Hermes names its profile (row 58). OpenClaw's label, "OpenClaw", is the agent name the Sessions list already falls back to. |
 | 70 | ProviderData.swift:19,24-38 | Localized source descriptions; "Qwen" | English implementation notes; "Qwen Code" | differs | Settings source list text |
 
 Better: 5小时 without space accepted. Same (29): roots, token math, model names, ceilings hold/expiry/rows, metering db, titles from db, entry attribution, hooks for CodeBuddy/Copilot/Qwen, Copilot token order/endpoints/snapshots/account/shutdown/OTel, Qwen roots/archive/telemetry, ZCode db/layout, Hermes roots/ids, OpenClaw roots/archives/bookkeeping.

@@ -56,6 +56,7 @@ pub fn read(path: &Path, cursor: &Value) -> rusqlite::Result<Page> {
                 .filter(|title| session_title::named(Some(title)).is_some())
                 .or_else(|| row["name"].as_str())
                 .map(str::to_owned),
+            client: None,
             title_fallback: None,
             cwd: None,
             model: "Unknown".into(),

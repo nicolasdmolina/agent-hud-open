@@ -194,6 +194,7 @@ pub(super) fn task(path: &Path, source: &str) -> Option<Vec<Record>> {
             .map(|request| Record {
                 id: id.clone(),
                 title: title.clone(),
+                client: None,
                 title_fallback: None,
                 cwd: cwd.clone(),
                 model: routed(
