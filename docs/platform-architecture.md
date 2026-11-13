@@ -84,7 +84,7 @@ stubs are the list of open work for that operating system.
 | A client's short-lived processes | `crates/platform/src/delivery/process/mod.rs` | `process/unix.rs`, `process/windows.rs` (a job object) | `prepare`, `drain`, `Job` (tracks nothing on macOS and Linux) |
 | HUD windows | `crates/host/src/hud/mod.rs` | `hud/macos.rs`, `hud/windows.rs`, `hud/linux.rs`; `hud/generic.rs` holds Tauri-only pieces a host may re-export | listed at the selector |
 | App shell | `crates/host/src/shell/mod.rs` | `shell/macos.rs`, `shell/windows.rs`, `shell/linux.rs` | `install`, `window_opened`, `windows_changed`, `reopened`, `statistics_chrome`, `system_prefers_chinese`, `alert` (Linux prints to standard error until a dialog exists before Tauri starts) |
-| System settings | `crates/host/src/system/mod.rs` | `system/macos.rs`, `system/windows.rs`, `system/linux.rs` | login item, `cli_candidates`, `private_output` |
+| System settings | `crates/host/src/system/mod.rs` | `system/macos.rs`, `system/windows.rs`, `system/linux.rs` | login item, `cli_candidates`, `private_output`, `play_sound` (macOS only; Windows and Linux are unverified stubs that play nothing) |
 | MCP relay | `crates/host/src/cli.rs` | `cli/unix.rs` (exec), `cli/windows.rs` (waits on the server) | `serve` |
 | Picture capture | `crates/host/src/capture.rs` | `capture/macos.rs`, `capture/windows.rs`, `capture/linux.rs` | `capture` |
 | Display changes | `crates/host/src/screens.rs` | `screens/macos.rs`, `screens/windows.rs`, `screens/linux.rs` | `install`, `shutdown` |

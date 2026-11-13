@@ -41,7 +41,7 @@ pub(super) fn status(identifier: &str) -> Result<Value, String> {
     let path = path(identifier);
     let enabled = path.as_deref().is_ok_and(enabled);
     Ok(
-        json!({"platform":"linux","launchAtLogin":{"supported":path.is_ok(),"enabled":enabled,"status":if enabled {"enabled"} else {"disabled"},"notice":"Uses the desktop's XDG autostart directory; runtime validation is pending."}}),
+        json!({"platform":"linux","launchAtLogin":{"supported":path.is_ok(),"enabled":enabled,"status":if enabled {"enabled"} else {"disabled"},"notice":"Uses the desktop's XDG autostart directory; runtime validation is pending."},"sound":{"supported":false,"notice":"Not implemented: sound playback on Linux is unverified."}}),
     )
 }
 pub(super) fn set_login(identifier: &str, value: bool) -> Result<(), String> {
@@ -80,6 +80,12 @@ pub(super) fn set_login(identifier: &str, value: bool) -> Result<(), String> {
     let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
     fs::write(&temporary, content).map_err(|_| "The autostart entry could not be written")?;
     fs::rename(&temporary, &path).map_err(|_| "The autostart entry could not be committed".into())
+}
+
+/// Not implemented: no sound plays on Linux until playback is built and
+/// verified on a real machine.
+pub(super) fn play_sound(_name: &str) -> Result<(), String> {
+    Err("Sound playback is not implemented on Linux".into())
 }
 
 /// Launch at login is left to the user here; nothing is registered on first run.
