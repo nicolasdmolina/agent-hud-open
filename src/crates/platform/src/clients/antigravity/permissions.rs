@@ -1,6 +1,7 @@
 //! Observes only approvals the existing native client is already asking about.
 use super::service::{self as antigravity, Endpoint};
 use agent_hud_agents::antigravity::AGENT;
+use agent_hud_agents::SOLE_READER;
 use agent_hud_agents::{antigravity_permissions, AntigravityPermission};
 use agent_hud_core::l10n;
 use agent_hud_core::requests::{Requests, Ticket};
@@ -62,7 +63,7 @@ impl Drop for Observer {
         }
         self.shared
             .requests
-            .set_native_waiting(AGENT.id, &[], crate::hooks::now_ms());
+            .set_native_waiting(AGENT.id, SOLE_READER, &[], crate::hooks::now_ms());
         // Blocking discovery/HTTP has its own bounded deadlines. Do not make a UI
         // disable/shutdown wait for that I/O; the invalidated generation checks its
         // active flag before publishing and again before writing any answer.
@@ -150,9 +151,12 @@ fn work(shared: Arc<Shared>) {
                 }
             }
         }
-        shared
-            .requests
-            .set_native_waiting(AGENT.id, &sessions, crate::hooks::now_ms());
+        shared.requests.set_native_waiting(
+            AGENT.id,
+            SOLE_READER,
+            &sessions,
+            crate::hooks::now_ms(),
+        );
         drop(known);
         waiters.retain(|thread| !thread.is_finished());
         for (pending, ticket) in tickets {
