@@ -6,6 +6,10 @@
 //! Several requests that newly wait in one session at the same look make one
 //! `needs-you`, not one each: one ping per session per look. Every one of
 //! them is decided then, so none sounds on its own later.
+//!
+//! A waiting session whose row its transcript now gives, in place of one
+//! only its cards or hooks made, is the same wait: the transcript's
+//! sightings of cards that already sounded make none.
 use super::*;
 
 mod requests;
@@ -13,9 +17,11 @@ pub(crate) use requests::Heard;
 use requests::Request;
 
 /// What a session was waiting on at the last look: its requests (none for a
-/// wait its hooks or process report without a card).
+/// wait its hooks or process report without a card), and whether its row
+/// came from its transcript.
 struct Wait {
     requests: Vec<Request>,
+    transcript: bool,
 }
 pub(crate) struct Tracker {
     primed: bool,
@@ -116,6 +122,22 @@ impl Tracker {
             }
             let key = format!("{source}:{id}");
             let previous = self.waits.remove(&key);
+            let transcript = !session["logPath"].is_null();
+            // A row its transcript now gives, in place of one only its cards
+            // or hooks made, shows what those cards already told: the
+            // transcript's sightings of them, which it may not pair with
+            // them one to one. While a card told before still waits, they
+            // are decided without a sound.
+            let handover = transcript
+                && previous.as_ref().is_some_and(|p| {
+                    !p.transcript
+                        && p.requests.iter().any(|told| {
+                            !told.names[0].starts_with("log:")
+                                && now_requests
+                                    .iter()
+                                    .any(|r| r.names.contains(&told.names[0]))
+                        })
+                });
             let mut told = None;
             for request in &now_requests {
                 let names: Vec<String> = request
@@ -131,7 +153,11 @@ impl Tracker {
                 }
                 // A wait already told without a card is the same wait once
                 // its card comes. The look's first new request names the alert.
-                if new && !previous.as_ref().is_some_and(|p| p.requests.is_empty()) {
+                let sighting = request.names[0].starts_with("log:");
+                if new
+                    && !(handover && sighting)
+                    && !previous.as_ref().is_some_and(|p| p.requests.is_empty())
+                {
                     told.get_or_insert(names[0].clone());
                 }
             }
@@ -159,6 +185,7 @@ impl Tracker {
                 key,
                 Wait {
                     requests: now_requests,
+                    transcript,
                 },
             );
         }

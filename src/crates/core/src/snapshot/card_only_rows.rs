@@ -1,5 +1,5 @@
 //! Cards for sessions no log row holds yet. A client's hooks or its native
-//! channel can name a session before the HUD reads its log (a Hermes
+//! channel can name a session before the HUD reads its log (a
 //! question in a session just started), and only log rows took their cards.
 //! A row only hooks made takes its cards as a log row does, and a native card
 //! whose session has no row at all gets one; either way the session waits,
@@ -31,17 +31,11 @@ impl crate::AgentHudCore {
             .iter()
             .filter_map(|row| Some((row["source"].as_str()?, row["id"].as_str()?)))
             .collect();
-        // A session its log hides on purpose stays hidden: gone, archived,
-        // internal, or a Claude project's worker.
+        // A session the list leaves out on purpose stays out.
         listed.extend(
             self.logs
                 .values()
-                .filter(|log| {
-                    log.gone
-                        || log.archived
-                        || log.live.is_internal
-                        || self.is_claude_project_worker(log)
-                })
+                .filter(|log| self.hidden_from_list(log))
                 .map(|log| (log.source.as_str(), log.id.as_str())),
         );
         let presentation = self.presentation(now);

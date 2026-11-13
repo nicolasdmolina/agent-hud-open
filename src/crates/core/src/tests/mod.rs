@@ -7,6 +7,7 @@ mod conversation_feed;
 mod forks;
 mod hermes_questions;
 mod ingestion;
+mod native_card_handover;
 mod native_card_rows;
 mod plan_value;
 mod quota_history;
