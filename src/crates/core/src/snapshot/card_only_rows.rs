@@ -20,16 +20,30 @@ impl crate::AgentHudCore {
         }
     }
 
-    /// A waiting row for each native card whose session `sessions` lacks.
+    /// A waiting row for each native card whose session `sessions` lacks,
+    /// for every native channel alike.
     pub(super) fn card_only_rows(&self, sessions: &[Value], now: i64) -> Vec<Value> {
         let carded = self.requests.native_sessions();
         if carded.is_empty() {
             return Vec::new();
         }
-        let listed: HashSet<(&str, &str)> = sessions
+        let mut listed: HashSet<(&str, &str)> = sessions
             .iter()
             .filter_map(|row| Some((row["source"].as_str()?, row["id"].as_str()?)))
             .collect();
+        // A session its log hides on purpose stays hidden: gone, archived,
+        // internal, or a Claude project's worker.
+        listed.extend(
+            self.logs
+                .values()
+                .filter(|log| {
+                    log.gone
+                        || log.archived
+                        || log.live.is_internal
+                        || self.is_claude_project_worker(log)
+                })
+                .map(|log| (log.source.as_str(), log.id.as_str())),
+        );
         let presentation = self.presentation(now);
         let mut rows: Vec<Value> = carded
             .into_iter()
