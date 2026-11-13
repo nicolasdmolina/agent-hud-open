@@ -9,6 +9,7 @@ import {
   useText,
   type SettingsPaneProps,
 } from "./SettingsPrimitives";
+import { SoundSection, soundKeys } from "./SoundSection";
 import { usePending } from "./use-pending";
 
 const appearanceKeys = ["appearance", "appearanceFollowsScreen", "language"];
@@ -27,13 +28,13 @@ export function GeneralPane({ snapshot, action }: SettingsPaneProps) {
   const [savedKey, setSavedKey] = useState("");
 
   /** One save at a time; a failure shows in the card of the setting that
-   * failed. */
-  const save = (key: string, value: unknown) => {
-    if (pending) return;
+   * failed. Answers whether the setting was saved. */
+  const save = async (key: string, value: unknown) => {
+    if (pending) return false;
     setSavedKey(key);
-    void run(() => action("set_setting", { key, value }));
+    return run(() => action("set_setting", { key, value }));
   };
-  const setting = (key: string) => (value: unknown) => save(key, value);
+  const setting = (key: string) => (value: unknown) => void save(key, value);
   const problem = (keys: string[]) =>
     error && keys.includes(savedKey) ? (
       <Notice tone="error">{error}</Notice>
@@ -148,6 +149,12 @@ export function GeneralPane({ snapshot, action }: SettingsPaneProps) {
         />
         {problem(startupKeys)}
       </Section>
+      <SoundSection
+        snapshot={snapshot}
+        t={t}
+        save={save}
+        problem={problem(soundKeys)}
+      />
     </Page>
   );
 }

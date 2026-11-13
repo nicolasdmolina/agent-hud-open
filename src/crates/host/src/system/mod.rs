@@ -34,7 +34,8 @@ use windows as target;
 //   stop_client(child)
 //   play_sound(name)                     plays the system sound of that name and
 //                                        waits for it to end; Err where the host
-//                                        cannot (status() says so under "sound")
+//                                        cannot (status() says so under "sound",
+//                                        with the `names` it can play)
 pub use sound::Sounds;
 pub(crate) use target::{
     bundled_cli, cli_candidates, client_command_line, configure_client_command, private_output,

@@ -79,13 +79,32 @@ pub(super) fn set_login(_identifier: &str, enabled: bool) -> Result<(), String> 
     }
 }
 pub(super) fn status(_identifier: &str) -> Result<Value, String> {
-    Ok(json!({"platform":"macos","launchAtLogin":login(),"sound":{"supported":true,"notice":null}}))
+    Ok(
+        json!({"platform":"macos","launchAtLogin":login(),"sound":{"supported":true,"notice":null,"names":sound_names()}}),
+    )
+}
+const SOUNDS: &str = "/System/Library/Sounds";
+/// The system sounds Settings offers, sorted: each one `play_sound` can play
+/// and Core's settings accept.
+fn sound_names() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(SOUNDS)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            (path.extension()? == "aiff").then_some(())?;
+            let name = path.file_stem()?.to_str()?.to_owned();
+            (super::sound::plain(&name) && name.trim() == name).then_some(name)
+        })
+        .collect();
+    names.sort();
+    names
 }
 /// Plays one of macOS's own alert sounds, from `/System/Library/Sounds`, and
 /// waits until it ends. `afplay` is a process of its own, so the app never
 /// waits on audio.
 pub(super) fn play_sound(name: &str) -> Result<(), String> {
-    let path = Path::new("/System/Library/Sounds").join(format!("{name}.aiff"));
+    let path = Path::new(SOUNDS).join(format!("{name}.aiff"));
     if !path.is_file() {
         return Err(format!("macOS has no system sound named {name}"));
     }
@@ -183,6 +202,16 @@ pub(crate) fn private_output(options: &mut std::fs::OpenOptions) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_offers_the_system_sounds_by_plain_name_in_order() {
+        let names = sound_names();
+        assert!(names.iter().any(|name| name == "Glass"));
+        assert!(names.iter().any(|name| name == "Hero"));
+        assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(names.iter().all(|name| super::super::sound::plain(name)));
+        assert_eq!(status("").unwrap()["sound"]["names"], json!(names));
+    }
 
     #[test]
     fn codex_is_found_in_the_chatgpt_app_too() {
