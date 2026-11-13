@@ -189,7 +189,8 @@ engine code that decides by client name. It goes in five slices:
      question stream, `deepseek::QUESTIONS`, still runs beside it;
    - `hermes::GATEWAY`, Hermes's local gateway, the live connection its
      desktop app uses. Its pure half (shapes, frames to cards, decisions to
-     frames, state) is `agents/src/hermes/gateway/`.
+     frames, state) is `agents/src/hermes/gateway/`; the sockets are
+     `platform/src/clients/hermes/`.
 
    Each says what it carries (requests, quota) and on which OS it runs.
    Platform keeps them in `platform/src/clients/<id>/`, starts each only where
