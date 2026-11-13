@@ -11,6 +11,7 @@ import { alertText } from "../tokens";
 import { useGround } from "../ground";
 import { cardColumn } from "../card-column";
 import { permissionToolBadge } from "./permission-tool-badge";
+import { rowHeadLabel } from "./row-head-label";
 import { CompletionClosedRow } from "./CompletionClosedRow";
 
 export function WaitedLabel({ createdAt }: { createdAt: string }) {
@@ -83,11 +84,9 @@ export function PermissionRowHead({
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          // Where no summary shares the row (an open question), the whole
-          // name shows, such as a profile's after its agent's.
-          flexShrink: hideSummary ? 1 : 0,
-          minWidth: 0,
-          maxWidth: hideSummary ? undefined : 150,
+          // An open card shows the whole name, such as a profile's after its
+          // agent's; a closed row keeps the 150 px cap.
+          ...rowHeadLabel(open, hideSummary),
         }}
       >
         {who}
