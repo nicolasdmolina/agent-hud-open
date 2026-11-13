@@ -17,11 +17,14 @@ trap 'rm -rf "$staged"' EXIT
 ditto "$built" "$staged"
 id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$staged/Contents/Info.plist")
 [ "$id" = "com.nickymolina.agenthud" ] || { echo "Staged bundle id is $id" >&2; exit 1; }
-if pgrep -xq "$name"; then osascript -e "quit app \"$name\""; fi
-waited=0
+# One 30 s deadline for the quit request and the wait after it.
+deadline=$(($(date +%s) + 30))
+if pgrep -xq "$name"; then
+  osascript -e "with timeout of 10 seconds" -e "quit app \"$name\"" -e "end timeout" || true
+fi
 while pgrep -xq "$name"; do
-  [ "$waited" -lt 30 ] || { echo "$name did not quit in 30 s" >&2; exit 1; }
-  sleep 1 && waited=$((waited + 1))
+  [ "$(date +%s)" -lt "$deadline" ] || { echo "$name did not quit in 30 s" >&2; exit 1; }
+  sleep 1
 done
 # Swap: the old copy stays until the new one is in place.
 old="/Applications/.$name.old-$$.app"
