@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "primary": "local",
+  "launchMode": "primary",
+  "lastUsed": "lab-box",
+  "connections": [
+    { "id": "local", "kind": "local", "label": "This device" },
+    {
+      "id": "lab-box",
+      "kind": "ssh",
+      "label": "Lab box",
+      "host": "lab-box",
+      "token": { "encoding": "plain", "value": "SYNTHETIC-TOKEN-ONE" }
+    }
+  ]
+}

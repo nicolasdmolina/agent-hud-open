@@ -1,0 +1,48 @@
+{
+  "version": 2,
+  "primary": "local",
+  "launchMode": "primary",
+  "lastUsed": "local",
+  "connections": [
+    { "id": "local", "kind": "local", "label": "This device" },
+    {
+      "id": "build-host",
+      "kind": "ssh",
+      "label": "Build host",
+      "host": "build.example.test",
+      "user": "builder",
+      "port": 2222,
+      "keyPath": "~/.ssh/id_lab",
+      "remoteHermesPath": "~/.local/bin/hermes",
+      "remoteProfile": "work",
+      "token": { "encoding": "plain", "value": "SYNTHETIC-TOKEN-TWO" }
+    },
+    {
+      "id": "office-gateway",
+      "kind": "remote",
+      "label": "Office gateway",
+      "url": "https://gateway.example.test",
+      "authMode": "token",
+      "token": { "encoding": "plain", "value": "SYNTHETIC-TOKEN-THREE" },
+      "headers": { "CF-Access-Client-Secret": { "encoding": "plain", "value": "SYNTHETIC-HEADER" } }
+    },
+    {
+      "id": "cloud-oauth",
+      "kind": "cloud",
+      "label": "Cloud",
+      "url": "https://cloud.example.test",
+      "authMode": "oauth",
+      "org": "lab-org",
+      "name": "lab-instance"
+    },
+    {
+      "id": "cloud-legacy",
+      "kind": "cloud",
+      "label": "Cloud (old sign-in)",
+      "url": "https://legacy.example.test",
+      "authMode": "token",
+      "token": { "encoding": "plain", "value": "SYNTHETIC-TOKEN-FOUR" }
+    },
+    { "id": "future", "kind": "satellite", "label": "Future kind", "host": "lab-box" }
+  ]
+}

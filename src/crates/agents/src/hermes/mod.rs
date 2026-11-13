@@ -1,5 +1,6 @@
 //! Hermes.
 pub mod account;
+pub mod connections;
 pub mod gateway;
 mod hooks;
 mod session_counts;
