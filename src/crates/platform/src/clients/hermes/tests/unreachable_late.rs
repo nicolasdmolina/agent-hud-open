@@ -319,3 +319,37 @@ fn late_for_an_earlier_answer(late: &'static str) {
     assert!(lab.cards().is_empty());
     assert_eq!(shows(&lab), 1, "one request, registered once");
 }
+
+/// The socket the polls run on is fine, and the answer still cannot be
+/// sent: the gateway gives no ticket for it. Nothing is written, and the
+/// card is back as it was and marked, since the gateway took no answer
+/// just now. The next poll finds the request waiting and takes the mark
+/// away: one request throughout, with the hold it had.
+#[test]
+fn an_answer_that_cannot_be_sent_marks_its_card_until_a_poll_finds_it_waiting() {
+    let mut lab = lab();
+    let gateway = started(&mut lab);
+    let id = asks(&lab, &gateway);
+    let card = lab.card();
+    let before = times(&lab, &card);
+    gateway.world().grants = false;
+    lab.requests.answer(&id, &red(), now()).unwrap();
+    until("the card is back and can be answered again", || {
+        lab.log().contains("reached id=") && lab.cards().len() == 1
+    });
+    gateway.world().grants = true;
+    let said = |what: &str| lab.log().find(what).unwrap();
+    assert!(said("undelivered id=") < said("unreachable id="));
+    assert!(said("unreachable id=") < said("reached id="));
+    assert_eq!(lab.card(), card);
+    assert_eq!(times(&lab, &card), before);
+    assert_eq!(lab.delivery(&id)["state"], "failed");
+    assert_eq!(shows(&lab), 1, "register_native was not called again");
+    assert!(gateway.world().calls("clarify.respond").is_empty());
+    assert!(!lab.log().contains("connection failed"), "{}", lab.log());
+    // And it is answered.
+    lab.requests.answer(&id, &red(), now()).unwrap();
+    until("the answer is confirmed", || {
+        lab.delivery(&id)["state"] == "confirmed"
+    });
+}
