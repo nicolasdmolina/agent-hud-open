@@ -6,7 +6,7 @@
 //! it, the pointer, its folder and the socket are the user's and closed to
 //! everyone else, and the process listening is the same user. Nothing here
 //! writes.
-use super::Silent;
+use crate::clients::hermes::control::Silent;
 use agent_hud_agents::hermes::gateway::{pointed_socket, CONTROL_POINTER, CONTROL_SOCKET};
 use sha2::{Digest, Sha256};
 use std::{
