@@ -21,6 +21,7 @@ use crate::{Location, Source};
 pub static GATEWAY: Channel = Channel {
     name: "Hermes's local gateway",
     carries: &[Carries::Requests],
+    transcript_shows_pending: false,
     support: PerOs {
         macos: Support::Verified(()),
         windows: Support::Unsupported(

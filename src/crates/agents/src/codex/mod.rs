@@ -21,6 +21,7 @@ use crate::{Location, Source};
 pub static DESKTOP: Channel = Channel {
     name: "Codex desktop app IPC",
     carries: &[Carries::Requests],
+    transcript_shows_pending: true,
     support: PerOs {
         macos: Support::Verified(()),
         windows: Support::Unverified(()),

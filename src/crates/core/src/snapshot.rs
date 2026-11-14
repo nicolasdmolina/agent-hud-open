@@ -260,7 +260,6 @@ impl crate::AgentHudCore {
             sightings: self.listed_rows.as_ref().map(|(_, rows)| &rows.heard),
             calls: self.requests.calls(),
         };
-        self.sound_alerts.open_cards(self.requests.waiting_ids());
         let sound_alerts =
             self.sound_alerts
                 .update(&island_events, &sessions, &heard, &self.settings, now);

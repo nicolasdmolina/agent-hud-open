@@ -107,6 +107,12 @@ pub struct Channel {
     /// What it is, in a few words.
     pub name: &'static str,
     pub carries: &'static [Carries],
+    /// Whether the client's own transcript shows a request it waits on (an
+    /// open question or approval call) as well as this channel's card. Where
+    /// it never does, core may show the card's session waiting before its
+    /// transcript is read, since the transcript can add no second sighting of
+    /// what the card already told.
+    pub transcript_shows_pending: bool,
     /// Where it runs. An unsupported OS never starts it.
     pub support: PerOs<()>,
 }

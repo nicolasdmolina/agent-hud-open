@@ -20,6 +20,7 @@ use crate::{Location, Source};
 pub static LOCAL_SERVICE: Channel = Channel {
     name: "Antigravity's local language server",
     carries: &[Carries::Requests, Carries::Quota],
+    transcript_shows_pending: true,
     support: PerOs {
         macos: Support::Verified(()),
         windows: Support::Unsupported(
@@ -34,6 +35,7 @@ pub static LOCAL_SERVICE: Channel = Channel {
 pub static ACCOUNT_SERVICE: Channel = Channel {
     name: "Antigravity's local account service",
     carries: &[Carries::Quota],
+    transcript_shows_pending: true,
     support: PerOs {
         macos: Support::Verified(()),
         windows: Support::Unverified(()),
