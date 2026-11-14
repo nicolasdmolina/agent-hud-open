@@ -34,6 +34,8 @@ mod gateways;
 mod handshake;
 #[path = "tests/live.rs"]
 mod live;
+#[path = "tests/receipts.rs"]
+mod receipts;
 #[path = "tests/reconnect.rs"]
 mod reconnect;
 #[path = "tests/replies.rs"]
@@ -50,6 +52,8 @@ mod reviewer27;
 mod reviewer27_extra;
 #[path = "tests/reviewer27_round3.rs"]
 mod reviewer27_round3;
+#[path = "tests/reviewer27_round4.rs"]
+mod reviewer27_round4;
 #[path = "tests/round3.rs"]
 mod round3;
 #[path = "tests/round4.rs"]
@@ -199,6 +203,17 @@ fn ask(home: &Path, line: &Value, wait: Duration) -> Result<Value, Silent> {
     let route = Local::at(home);
     let home = route.homes()?.remove(0);
     control::ask(&route, &home, line, wait)
+}
+
+/// The one receipt of an answer that never got out because its request
+/// was over first: it failed, and nothing confirmed it (ticket 27, the
+/// fourth review). Before that such an answer had no receipt at all.
+fn failed_once(lab: &Lab, id: &str) {
+    let rows = lab.requests.deliveries(crate::hooks::now_ms());
+    let of: Vec<&Value> = rows.iter().filter(|row| row["id"] == id).collect();
+    assert_eq!(of.len(), 1, "{rows:?}");
+    assert_eq!(of[0]["state"], "failed", "{rows:?}");
+    assert!(of[0]["reason"].as_str().is_some_and(|why| !why.is_empty()));
 }
 
 /// Whether a card says its gateway cannot be reached (ticket 27).

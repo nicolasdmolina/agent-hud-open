@@ -1,6 +1,10 @@
 //! An answer given here between its first byte and its receipt, and what
 //! a card closing, or its gateway going out of reach, says of it.
-use super::{answer::unreachable, effects::unconfirmed, Model, Shared};
+use super::{
+    answer::unreachable,
+    effects::{too_late, unconfirmed},
+    Model, Shared,
+};
 use agent_hud_agents::hermes::gateway::{Closed, Instance, Pending};
 use std::sync::mpsc::TryRecvError;
 
@@ -30,15 +34,27 @@ impl Shared {
     /// replies to. Otherwise the answer is still on its way, or its reply
     /// is: the close is kept with it, and the thread that sends it gives
     /// the receipt when it knows.
+    ///
+    /// `out` is the wait of the decision that was out for the card, if
+    /// one was. Every decision core took has one receipt, so one that
+    /// never got as far as a write gets it here: the request is over
+    /// without it, and it failed. What is filed counts only where it is
+    /// that decision's own; a record the answer before left behind is
+    /// its own thread's to clear.
     pub(super) fn closed(
         &self,
         model: &mut Model,
         id: &str,
         session: &str,
         why: &Closed,
+        out: Option<u64>,
         now: i64,
     ) {
-        let Some(out) = model.answered.get_mut(id) else {
+        let own = |filed: &&mut Out| Some(filed.taken) == out;
+        let Some(out) = model.answered.get_mut(id).filter(own) else {
+            if out.is_some() {
+                self.note(id, session, "failed", Some(too_late()), now);
+            }
             return;
         };
         let replied = matches!(

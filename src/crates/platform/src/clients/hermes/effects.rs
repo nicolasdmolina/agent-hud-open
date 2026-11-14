@@ -55,13 +55,18 @@ impl Shared {
                 }
                 Effect::Close { id, session, why } => {
                     self.log.line(&format!("close id={id} why={why:?}"));
-                    model.waiters.remove(&id);
+                    // A decision core handed over for it that nobody
+                    // picked up ends with the card, as one that is out.
+                    let handed = model.waiters.remove(&id).and_then(|waiter| {
+                        let said = waiter.response.try_recv();
+                        matches!(said, Ok(Some(_))).then_some(waiter.wait)
+                    });
                     model.opened.remove(&id);
-                    model.taken.remove(&id);
+                    let out = model.taken.remove(&id).or(handed);
                     // An answer to it that is being written is cut.
                     model.cut_writing(|request| request == Some(id.as_str()));
                     self.requests.settle_native(&id);
-                    self.closed(model, &id, &session.hud_id(), &why, now);
+                    self.closed(model, &id, &session.hud_id(), &why, out, now);
                 }
                 Effect::Unanswered { pending, why } => {
                     let id = pending.id();
@@ -70,13 +75,7 @@ impl Shared {
                     // Core put the card away when it was answered; this
                     // gives it back as it was, since the request still waits.
                     self.back(model, &pending, now);
-                    let (state, reason) = match &why {
-                        Some(Refusal::Other(word)) if word == NO_REPLY => {
-                            ("uncertain", unconfirmed())
-                        }
-                        Some(refusal) => ("failed", refused(refusal)),
-                        None => ("uncertain", unconfirmed()),
-                    };
+                    let (state, reason) = unlanded(why.as_ref());
                     self.note(&id, &pending.session.hud_id(), state, Some(reason), now);
                 }
                 Effect::Poll => self.want_poll(),
@@ -171,6 +170,10 @@ impl Shared {
             Closed::Gone | Closed::Settled | Closed::Withdrawn(_) if batch => {
                 self.note(id, session, "confirmed", None, now)
             }
+            // The set went another way after its answer was written (its
+            // turn ended, its gateway restarted): whether Hermes took the
+            // answer first, nothing says.
+            _ if batch => self.note(id, session, "uncertain", Some(unconfirmed()), now),
             _ => {}
         }
     }
@@ -233,6 +236,18 @@ fn said(connection: &Connection) -> String {
             format!("connection unsupported reason={}", why.reason_code())
         }
         Connection::Failed(failure) => format!("connection failed reason={failure:?}"),
+    }
+}
+
+/// What became of an answer that was written and did not land: failed
+/// where Hermes refused it, uncertain where it said nothing (`why` is
+/// None, or the word for no reply). The same for a card that still shows
+/// and for one a poll closed before the reply came.
+pub(super) fn unlanded(why: Option<&Refusal>) -> (&'static str, String) {
+    match why {
+        Some(Refusal::Other(word)) if word == NO_REPLY => ("uncertain", unconfirmed()),
+        Some(refusal) => ("failed", refused(refusal)),
+        None => ("uncertain", unconfirmed()),
     }
 }
 

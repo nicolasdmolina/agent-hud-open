@@ -199,7 +199,10 @@ fn a_late_failure_after_hermes_settled_restores_nothing() {
     assert_eq!(needs(&mut core), 1, "no alert");
     assert_eq!(shows(&lab), registered);
     assert!(gateway.world().calls("clarify.respond").is_empty());
-    assert!(lab.requests.deliveries(now()).is_empty());
+    // The answer core took has its one receipt, from the close: it
+    // failed, since the request was over before it was written.
+    super::failed_once(&lab, &id);
+    assert_eq!(lab.requests.reviewer27_notes(&id), ["failed"]);
     assert!(!lab.log().contains("undelivered"), "{}", lab.log());
 }
 

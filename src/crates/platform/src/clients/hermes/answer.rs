@@ -12,7 +12,7 @@
 //! decision opens no socket and writes nothing, also once the gateway is
 //! back: the card takes a new answer, never the old one.
 use super::{
-    effects::too_late,
+    effects::{too_late, unlanded},
     out::Out,
     socket::{result, Reply as Came, Socket},
     visit::Visit,
@@ -91,7 +91,15 @@ impl Going<'_> {
         let Some(done) = done else {
             // Not checked through, cut, or out of time: no answer left.
             if own(&model) && model.answered.get(&id).is_some_and(|out| !out.written) {
-                model.answered.remove(&id);
+                let out = model.answered.remove(&id);
+                // Its card closed while the frame was going out, which cut
+                // it: the request is over without this answer. The close
+                // left the receipt to this thread, and this is it.
+                if out.is_some_and(|out| out.closed.is_some()) {
+                    let (session, now) = (self.pending.session.hud_id(), crate::hooks::now_ms());
+                    let late = Some(too_late());
+                    self.shared.note(&id, &session, "failed", late, now);
+                }
             }
             return None;
         };
@@ -170,7 +178,13 @@ impl Going<'_> {
             Answered::AlreadyResolved | Answered::Refused(Refusal::StaleGeneration) => self
                 .shared
                 .note(&id, &session, "failed", Some(too_late()), now),
-            Answered::Refused(_) => {}
+            // Refused, or no reply at all, after a poll closed the card:
+            // the written answer has its receipt all the same, as it
+            // would with the card still showing.
+            Answered::Refused(refusal) => {
+                let (state, why) = unlanded(Some(&refusal));
+                self.shared.note(&id, &session, state, Some(why), now);
+            }
         }
     }
 
