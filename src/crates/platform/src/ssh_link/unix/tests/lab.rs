@@ -141,7 +141,15 @@ impl Lab {
     /// The lab, or None where this machine cannot run one. On macOS, where
     /// the link is verified, that is a failure.
     pub(crate) fn start() -> Option<Self> {
-        match Self::try_start() {
+        Self::start_with(&[])
+    }
+
+    /// A lab whose logins also get `env` from its `sshd`, which sets them
+    /// over its own defaults, `HOME` and `PATH` among them. `{lab}` in a
+    /// value is the lab's folder. A later ticket's far side is this
+    /// machine, so its lab gives a login a home folder of the lab's own.
+    pub(crate) fn start_with(env: &[(&str, &str)]) -> Option<Self> {
+        match Self::try_start(env) {
             Ok(lab) => Some(lab),
             Err(why) if cfg!(target_os = "macos") => panic!("the lab sshd did not start: {why}"),
             Err(why) => {
@@ -151,7 +159,7 @@ impl Lab {
         }
     }
 
-    fn try_start() -> Result<Self, String> {
+    fn try_start(env: &[(&str, &str)]) -> Result<Self, String> {
         // A socket path holds 104 bytes, so the lab needs a short folder.
         let base = Some(std::env::temp_dir())
             .filter(|base| base.as_os_str().len() <= 52)
@@ -174,6 +182,11 @@ impl Lab {
             |name: &str| fs::read_to_string(at(&format!("{name}.pub"))).unwrap_or_default();
         fs::write(at("authorized_keys"), public("id") + &public("agentkey"))
             .map_err(|error| error.to_string())?;
+        let here = dir.path().display().to_string();
+        let more: String = env
+            .iter()
+            .map(|(name, value)| format!(" {name}={}", value.replace("{lab}", &here)))
+            .collect();
         // The login shell's startup files, in place of the user's own.
         fs::create_dir_all(at(SHELL).join("fish")).map_err(|error| error.to_string())?;
         fs::write(at(SHELL).join(".zshenv"), format!("export {MARKER}=zsh\n"))
@@ -198,7 +211,7 @@ impl Lab {
                      AllowAgentForwarding yes\nMaxStartups 100\n\
                      PermitUserRC no\nPermitUserEnvironment no\nHostbasedAuthentication no\n\
                      IgnoreRhosts yes\nX11Forwarding no\n\
-                     SetEnv ZDOTDIR={shell} XDG_CONFIG_HOME={shell} BASH_ENV=/dev/null ENV=/dev/null\n",
+                     SetEnv ZDOTDIR={shell} XDG_CONFIG_HOME={shell} BASH_ENV=/dev/null ENV=/dev/null{more}\n",
                     text("hostkey"),
                     text("authorized_keys"),
                     shell = text(SHELL),
