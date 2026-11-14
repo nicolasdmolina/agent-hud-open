@@ -8,3 +8,13 @@ pub(crate) mod claude_desktop;
 pub(crate) mod claude_processes;
 pub(crate) mod claude_project;
 pub(crate) mod workbuddy;
+
+impl crate::AgentHudCore {
+    /// Whether the session list leaves this log's session out on purpose:
+    /// gone, archived, internal, or a session a client shows elsewhere (a
+    /// Claude project's worker belongs to its project's row). Shared code
+    /// asks only this, never which client.
+    pub(crate) fn hidden_from_list(&self, log: &crate::LogHead) -> bool {
+        log.gone || log.archived || log.live.is_internal || self.is_claude_project_worker(log)
+    }
+}
