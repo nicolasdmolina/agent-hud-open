@@ -310,6 +310,8 @@ fn same_instance_returns() {
     drop(world);
     assert!(lab.log().contains("why=Answered"), "{}", lab.log());
     until("the session stops waiting", || lab.waiting().is_empty());
+    // One outage and return, as the connection logged it.
+    eprintln!("--- outage and return ---\n{}--- end ---", lab.log());
 }
 
 #[test]
@@ -334,9 +336,9 @@ fn since_ready(lab: &Lab) -> Vec<String> {
     let log = lab.log();
     let lines: Vec<&str> = log.lines().collect();
     let ready = |line: &&str| line.contains("connection ready");
-    let from = lines.iter().rposition(|line| ready(&line)).unwrap();
+    let from = lines.iter().rposition(ready).unwrap();
     let said = |line: &&str| line.split_once(' ').map(|(_, said)| said.to_owned());
-    lines[from..].iter().filter_map(|line| said(line)).collect()
+    lines[from..].iter().filter_map(said).collect()
 }
 
 #[test]

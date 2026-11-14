@@ -46,14 +46,8 @@ impl Shared {
                 // Out of reach, or found waiting again: the same request,
                 // changed in place. Its time, its hold and whether it
                 // was dismissed are core's, and are not touched.
-                Effect::Marked(pending) | Effect::Unmarked(pending) => {
-                    let id = pending.id();
-                    let marked = model.gateway.marked(&id);
-                    let word = if marked { "unreachable" } else { "reached" };
-                    self.log.line(&format!("{word} id={id}"));
-                    let view = self.view(model, &pending, now);
-                    self.requests.refresh_native(&id, view);
-                }
+                Effect::Marked(pending) => self.reach(model, &pending, "unreachable", now),
+                Effect::Unmarked(pending) => self.reach(model, &pending, "reached", now),
                 Effect::Close { id, session, why } => {
                     self.log.line(&format!("close id={id} why={why:?}"));
                     model.waiters.remove(&id);
@@ -106,6 +100,15 @@ impl Shared {
         self.back(&mut model, pending, now);
         self.note(&id, &pending.session.hud_id(), "failed", Some(reason), now);
         (self.wake)();
+    }
+
+    /// Shows the card as the model has it now, marked or not, under the
+    /// request it already has; `word` is what the log says of it.
+    fn reach(&self, model: &Model, pending: &Pending, word: &str, now: i64) {
+        let id = pending.id();
+        self.log.line(&format!("{word} id={id}"));
+        self.requests
+            .refresh_native(&id, self.view(model, pending, now));
     }
 
     /// The card as it shows now: marked while its gateway is out of reach.
