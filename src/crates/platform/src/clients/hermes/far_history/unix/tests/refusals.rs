@@ -169,7 +169,7 @@ fn a_home_that_is_not_its_own_canonical_path_is_refused() {
 fn a_crash_says_its_kind_and_no_row_text() {
     let Some(world) = World::start() else { return };
     let link = world.link();
-    let request = format!("{{\"k\":\"prints\",\"after\":\"{SECRET}\"}}");
+    let request = format!("{{\"k\":\"prints\",\"after\":0,\"n\":\"{SECRET}\"}}");
     let ran = link
         .run(&FarCommand {
             script: far::SCRIPT,
@@ -213,5 +213,121 @@ fn a_crash_says_its_kind_and_no_row_text() {
         "{line}"
     );
     assert!(world.logged().iter().all(|line| !line.contains("SECRET")));
+    link.close();
+}
+
+/// A far SQLite older than 3.43 cannot say how long a value is without
+/// loading it. The reader has no other way to bound what it holds, so it
+/// refuses there, with its reason, and opens nothing.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_far_sqlite_too_old_to_measure_a_value_is_refused_by_name() {
+    let Some(world) = World::start() else { return };
+    world.add_session(&world.db(), "s1", 1);
+    let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
+    let slot = slots.of(&world.machine());
+    // The system's Python, saying its SQLite is the last one without it.
+    world.stand_in(&format!(
+        "shift 2\nexec {PYTHON} -I -c 'import sys, sqlite3; sqlite3.sqlite_version_info = (3, 42, 0); exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
+    ));
+    for request in [Request::Probe, sessions(&["s1"])] {
+        let read = reader.read(&link, &slot, &world.home, &request);
+        assert_eq!(read, Err(Failure::Refused(No::SqliteOld)));
+    }
+    assert_eq!(
+        Failure::Refused(No::SqliteOld).to_string(),
+        "the far SQLite is older than 3.43, which cannot bound what it reads"
+    );
+    let line = world.logged().pop().unwrap();
+    assert!(
+        line.contains("failed exit=0") && line.ends_with("cannot bound what it reads"),
+        "{line}"
+    );
+    // It said so before it started: no `started` line, and no database.
+    let ran = super::world::raw(
+        &link,
+        &world.home,
+        Duration::from_secs(5),
+        &sessions(&["s1"]),
+    );
+    assert_eq!(ran.stdout, b"[\"no\",\"sqlite-old\"]\n");
+    // With the SQLite it really has, the same machine is read.
+    world.no_stand_in();
+    let read = reader.read(&link, &slot, &world.home, &sessions(&["s1"]));
+    assert!(
+        matches!(&read, Ok(Reply::Sessions(batch)) if batch.sessions.len() == 1),
+        "{read:?}"
+    );
+    link.close();
+}
+
+/// A page is never asked from a rowid below zero: not by the caller, and
+/// not taken by the far program from anyone else.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_page_from_a_rowid_below_zero_is_refused_on_both_sides() {
+    let Some(world) = World::start() else { return };
+    world.add_session(&world.db(), "s1", 1);
+    let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
+    let slot = slots.of(&world.machine());
+    assert_eq!(
+        reader.read(&link, &slot, &world.home, &Request::Probe),
+        Ok(Reply::Probed)
+    );
+    let before = world.logged().len();
+    for request in [
+        Request::Prints {
+            after: -9,
+            limit: 1,
+            since: None,
+        },
+        Request::Rowids {
+            after: -1,
+            limit: 1,
+        },
+    ] {
+        assert_eq!(
+            reader.read(&link, &slot, &world.home, &request),
+            Err(Failure::Refused(No::Request))
+        );
+    }
+    assert_eq!(
+        reader.prints(&link, &slot, &world.home, -9, 1, None),
+        Err(Failure::Refused(No::Request))
+    );
+    // Nothing was sent for them.
+    let log = world.logged();
+    assert_eq!(log.len(), before + 3);
+    assert!(
+        log[before..]
+            .iter()
+            .all(|line| line.ends_with("not asked: a rowid below zero")),
+        "{log:?}"
+    );
+    // The far program, asked all the same, refuses before it starts.
+    for request in [
+        "{\"k\":\"prints\",\"after\":-9,\"n\":1}",
+        "{\"k\":\"rowids\",\"after\":-1,\"n\":1}",
+    ] {
+        let ran = link
+            .run(&FarCommand {
+                script: far::SCRIPT,
+                args: &[&world.mark(), "5.000", &world.home, request],
+                stdin: Some(far::PROGRAM.as_bytes()),
+                limit: Duration::from_secs(30),
+                most_output: 64 * 1024,
+            })
+            .unwrap();
+        assert_eq!(
+            (ran.end, ran.stdout.as_slice()),
+            (End::Ended(0), &b"[\"no\",\"request\"]\n"[..]),
+            "{request}"
+        );
+    }
+    // From zero, the page is read.
+    let page = reader
+        .prints(&link, &slot, &world.home, 0, 1, None)
+        .unwrap();
+    assert_eq!(page.prints.len(), 1);
     link.close();
 }

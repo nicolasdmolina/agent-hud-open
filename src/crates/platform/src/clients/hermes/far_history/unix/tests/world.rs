@@ -137,6 +137,51 @@ impl World {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("its mode");
     }
 
+    /// From here on, every far reader's highest memory over its whole
+    /// life is kept (`peaks`). The far `python3` becomes a parent that
+    /// starts the real one, waits for it, and writes down what the system
+    /// says it used at most. The parent takes the reader's arguments from
+    /// a file, so it carries no mark and is no reader to anyone.
+    pub(super) fn measure_memory(&self) {
+        let at = |name: &str| self.lab.at(name).display().to_string();
+        fs::write(
+            at("measure.py"),
+            format!(
+                "import os, subprocess, sys\n\
+                 args = open({args:?}).read().split('\\n')[:-1]\n\
+                 child = subprocess.Popen([{PYTHON:?}] + args, stdin=sys.stdin)\n\
+                 _, status, used = os.wait4(child.pid, 0)\n\
+                 open({peaks:?}, 'a').write('%d\\n' % used.ru_maxrss)\n\
+                 sys.exit(os.waitstatus_to_exitcode(status) % 256)\n",
+                args = at("measure-arguments"),
+                peaks = at("measure-peaks"),
+            ),
+        )
+        .expect("the measuring parent");
+        self.stand_in(&format!(
+            "printf '%s\\n' \"$@\" > '{}'\nexec {PYTHON} -I '{}'",
+            at("measure-arguments"),
+            at("measure.py")
+        ));
+    }
+
+    /// The highest memory of each far reader since `measure_memory`, in
+    /// KiB, in the order they ended.
+    pub(super) fn peaks(&self) -> Vec<u64> {
+        let text = fs::read_to_string(self.lab.at("measure-peaks")).unwrap_or_default();
+        let bytes = text.lines().filter_map(|line| line.parse::<u64>().ok());
+        // The system counts in bytes on macOS and in KiB elsewhere.
+        bytes
+            .map(|peak| {
+                if cfg!(target_os = "macos") {
+                    peak / 1024
+                } else {
+                    peak
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn no_stand_in(&self) {
         let _ = fs::remove_file(self.lab.at(BIN).join("python3"));
     }

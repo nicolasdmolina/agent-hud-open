@@ -67,6 +67,11 @@ pub struct Print {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Prints {
     pub prints: Vec<Print>,
+    /// Rows of the page that could not be read, by rowid: nothing of them
+    /// came. The far reader ended itself on each, over a value too long
+    /// to hold. The caller names them from a read of rowids alone
+    /// (`Request::Rowids`); a far answer never does.
+    pub skipped: Vec<i64>,
     /// How many rows the page looked at, and the last one's rowid: the
     /// next page starts after it.
     pub seen: u32,
@@ -82,6 +87,9 @@ pub enum No {
     Busy,
     /// That Python has no `sqlite3` module.
     Sqlite,
+    /// Its SQLite is older than `OLDEST_SQLITE`: it cannot say how long
+    /// a value is without loading it, so nothing there bounds one.
+    SqliteOld,
     /// The far process list could not be read, so nothing showed that no
     /// other reader runs.
     Processes,
@@ -119,6 +127,8 @@ pub enum Reply {
     No(No),
     Probed,
     Prints(Prints),
+    /// The rowids of a page, in order.
+    Rowids(Vec<i64>),
     Sessions(Batch),
     /// The far `active_sessions.json` as it is, untrusted, or none where
     /// it is missing, too long or not JSON.

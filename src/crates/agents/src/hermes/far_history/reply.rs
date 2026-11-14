@@ -55,6 +55,7 @@ pub fn parse(request: &Request, stdout: &[u8]) -> Result<Reply, Rejected> {
             return Ok(Reply::No(match why.as_str() {
                 Some("busy") => No::Busy,
                 Some("sqlite") => No::Sqlite,
+                Some("sqlite-old") => No::SqliteOld,
                 Some("processes") => No::Processes,
                 Some("request") => No::Request,
                 _ => return Err(Rejected::Line(1)),
@@ -77,6 +78,11 @@ pub fn parse(request: &Request, stdout: &[u8]) -> Result<Reply, Rejected> {
     let (Some(status), Some(counts)) = (status, counts) else {
         return Err(Rejected::NoCompletion);
     };
+    // No number of the last line is below zero, whatever was asked, and
+    // nothing is asked from a rowid below zero.
+    if counts.iter().any(|count| *count < 0) || !request.askable() {
+        return Err(Rejected::Counts);
+    }
     let body = &lines[1..lines.len() - 1];
     if status != "ok" {
         // No row comes with any other status.
@@ -86,7 +92,7 @@ pub fn parse(request: &Request, stdout: &[u8]) -> Result<Reply, Rejected> {
         if counts != [0, 0, 0, 0] {
             return Err(Rejected::Counts);
         }
-        let read = matches!(request, Request::Prints { .. } | Request::Sessions { .. });
+        let read = !matches!(request, Request::Probe | Request::Held);
         return match status {
             "none" if *request == Request::Held => Ok(Reply::Held(None)),
             "too-large" if read => Ok(Reply::TooLarge),
@@ -111,7 +117,7 @@ pub fn parse(request: &Request, stdout: &[u8]) -> Result<Reply, Rejected> {
     let counted = match request {
         Request::Probe | Request::Held => 0,
         Request::Sessions { .. } => 2,
-        Request::Prints { .. } => 4,
+        Request::Prints { .. } | Request::Rowids { .. } => 4,
     };
     if counts[counted..].iter().any(|count| *count != 0) {
         return Err(Rejected::Counts);
@@ -129,6 +135,7 @@ pub fn parse(request: &Request, stdout: &[u8]) -> Result<Reply, Rejected> {
             _ => Err(Rejected::Line(2)),
         },
         Request::Prints { after, limit, .. } => prints(&rows, *after, *limit, &counts),
+        Request::Rowids { after, limit } => rowids(&rows, *after, *limit, &counts),
         Request::Sessions { ids } => sessions(&rows, ids, &counts),
     }
 }
@@ -175,6 +182,31 @@ fn prints(
     read.last = counts[3];
     read.ended = read.seen < page;
     Ok(Reply::Prints(read))
+}
+
+/// The rowids of a page: each past the one before, as many as the last
+/// line says, and the last of them where it says the page ended.
+fn rowids(
+    rows: &[(usize, Vec<Value>)],
+    after: i64,
+    limit: u32,
+    counts: &[i64],
+) -> Result<Reply, Rejected> {
+    let mut found = Vec::new();
+    let mut last = after;
+    for (line, parts) in rows {
+        let rowid = match parts.as_slice() {
+            [word, rowid] if word == "r" => rowid.as_i64().filter(|rowid| *rowid > last),
+            _ => None,
+        };
+        last = rowid.ok_or(Rejected::Line(*line))?;
+        found.push(last);
+    }
+    let count = found.len() as i64;
+    if counts != [count, 0, count, last] || count > i64::from(limit.clamp(1, MOST_PAGE)) {
+        return Err(Rejected::Counts);
+    }
+    Ok(Reply::Rowids(found))
 }
 
 fn sessions(

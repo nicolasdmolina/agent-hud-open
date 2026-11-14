@@ -18,6 +18,8 @@
 //!   usage rows, with the columns this crate's reader selects. No value
 //!   longer than 64 KiB is loaded on the far side: a session that holds one
 //!   is too large, and a fingerprint made of one reads `oversized`;
+//! - rowids: the rowids alone of a page, which load nothing of a row. A
+//!   row whose page cannot be read is named by it and stepped over;
 //! - held: `runtime/active_sessions.json`, bounded, as untrusted text.
 use super::gateway::MachineKey;
 use super::session_counts;
@@ -32,6 +34,11 @@ mod rows;
 
 pub use reply::{first_line, parse, First};
 pub use rows::{Batch, Cell, Far, No, Print, Prints, Rejected, Reply, Session};
+
+/// The oldest SQLite a far Python may have: the first with `octet_length`,
+/// which is how the reader measures a value without loading it. A reader
+/// that finds an older one refuses, and reads nothing.
+pub const OLDEST_SQLITE: &str = "3.43";
 
 /// The reader, as it is sent.
 pub const PROGRAM: &str = include_str!("far_history/reader.py");
@@ -105,6 +112,12 @@ pub enum Request {
         limit: u32,
         since: Option<f64>,
     },
+    /// The rowids alone of the `limit` rows after rowid `after`. Nothing
+    /// of a row is loaded for it, so it names a row that cannot be read.
+    Rowids {
+        after: i64,
+        limit: u32,
+    },
     Sessions {
         ids: Vec<String>,
     },
@@ -118,9 +131,16 @@ impl Request {
             Self::Probe => "probe",
             Self::Prints { since: None, .. } => "prints",
             Self::Prints { .. } => "prints-since",
+            Self::Rowids { .. } => "rowids",
             Self::Sessions { .. } => "sessions",
             Self::Held => "held",
         }
+    }
+
+    /// Whether the request can be asked at all: a page starts after a
+    /// rowid that is not negative. The far program refuses any other too.
+    pub fn askable(&self) -> bool {
+        !matches!(self, Self::Prints { after, .. } | Self::Rowids { after, .. } if *after < 0)
     }
 
     /// The request as the program reads it, with the most output it may
@@ -138,6 +158,7 @@ impl Request {
                 }
                 None => json!({"k": "prints", "after": after, "n": limit, "most": most}),
             },
+            Self::Rowids { after, limit } => json!({"k": "rowids", "after": after, "n": limit}),
             Self::Sessions { ids } => json!({"k": "sessions", "ids": ids, "most": most}),
             Self::Held => json!({"k": "held"}),
         }

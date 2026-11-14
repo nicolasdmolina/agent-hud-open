@@ -52,6 +52,7 @@ pub struct Sessions {
 pub(super) fn counts(reply: &Reply) -> String {
     match reply {
         Reply::Prints(page) => format!(" prints={} seen={}", page.prints.len(), page.seen),
+        Reply::Rowids(found) => format!(" rowids={}", found.len()),
         Reply::Sessions(batch) => format!(
             " sessions={} usage={} skipped={}",
             batch.sessions.len(),
@@ -182,6 +183,13 @@ impl Reader {
 
     /// The fingerprints of the sessions among the `limit` rows after rowid
     /// `after`; with `since` (seconds), only of those active from then on.
+    ///
+    /// A page that cannot be read is asked again in halves. One row that
+    /// cannot be read (the far reader ended itself over a value too long
+    /// to hold) is named by a read of rowids alone, which loads nothing of
+    /// a row, and comes back as a page that holds no fingerprint and that
+    /// rowid as skipped. So the next page starts after it and a sweep goes
+    /// on. Nothing of the row is read or logged but its rowid.
     pub fn prints(
         &self,
         link: &Link,
@@ -201,10 +209,27 @@ impl Reader {
             match self.read(link, slot, home, &request)? {
                 Reply::Prints(page) => return Ok(page),
                 Reply::TooLarge if limit > 1 => limit /= 2,
-                Reply::TooLarge => return Err(Failure::TooLarge),
+                Reply::TooLarge => break,
                 _ => return Err(Failure::Rejected(Rejected::Status)),
             }
         }
+        let next = Request::Rowids { after, limit: 1 };
+        let Reply::Rowids(found) = self.read(link, slot, home, &next)? else {
+            return Err(Failure::Rejected(Rejected::Status));
+        };
+        let mut page = Prints {
+            last: after,
+            ended: found.is_empty(),
+            ..Prints::default()
+        };
+        if let Some(rowid) = found.first() {
+            self.say(format!(
+                "history prints quarantines rowid {rowid}: too large to read, and stepped over"
+            ));
+            page.skipped.push(*rowid);
+            (page.seen, page.last) = (1, *rowid);
+        }
+        Ok(page)
     }
 
     /// The far `runtime/active_sessions.json` as it is, to be read as

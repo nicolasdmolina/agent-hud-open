@@ -94,12 +94,12 @@ fn the_program_is_one_short_file_of_the_standard_library_that_only_reads() {
         assert!(!PROGRAM.contains(verb), "{verb}");
     }
     assert!(!PROGRAM.contains("executescript") && !PROGRAM.contains("executemany"));
-    assert_eq!(PROGRAM.matches(".execute(").count(), 3);
+    assert_eq!(PROGRAM.matches(".execute(").count(), 4);
     let sql: Vec<&str> = quoted(PROGRAM)
         .into_iter()
         .filter(|text| text.contains(" FROM "))
         .collect();
-    assert_eq!(sql.len(), 7, "{sql:?}");
+    assert_eq!(sql.len(), 8, "{sql:?}");
     for text in sql {
         let starts = ["SELECT ", "(SELECT ", "+(SELECT ", " UNION ALL SELECT "];
         assert!(starts.iter().any(|start| text.starts_with(start)), "{text}");
@@ -675,4 +675,139 @@ fn v_completion_counts_are_checked_for_every_kind() {
     // A status that brings no rows brings no numbers either.
     let none = answer(&[STARTED, r#"["end","none",0,0,0,1]"#]);
     assert_eq!(parse(&Request::Held, &none), Err(Rejected::Counts));
+}
+
+/// The probe of the second review (`evidence/36/verifier-report-2.md`,
+/// finding 3): a page asked from a rowid below zero, and answered with
+/// that rowid as where it ended, was taken. No number of a last line is
+/// below zero, and no page is asked from below zero.
+#[test]
+fn completion_numbers_must_not_accept_negatives_even_for_an_empty_page() {
+    let request = Request::Prints {
+        after: -9,
+        limit: 1,
+        since: None,
+    };
+    let got = parse(&request, b"[\"started\",42]\n[\"end\",\"ok\",0,0,0,-9]\n");
+    println!("negative empty-page completion => {got:?}");
+    assert!(got.is_err(), "a negative completion number was accepted");
+    assert!(!request.askable());
+    assert!(!Request::Rowids {
+        after: -1,
+        limit: 1
+    }
+    .askable());
+    assert!(Request::Rowids { after: 0, limit: 1 }.askable() && Request::Probe.askable());
+    // Whatever the far side answers to such a request is refused.
+    for reply in ["[\"end\",\"ok\",0,0,0,0]", "[\"end\",\"ok\",0,0,0,5]"] {
+        assert!(
+            parse(&request, &answer(&[STARTED, reply])).is_err(),
+            "{reply}"
+        );
+    }
+}
+
+/// The same review's second probe of the counts: with a status that
+/// brings no rows, each number below zero is refused.
+#[test]
+fn every_non_ok_reply_refuses_each_negative_completion_number() {
+    let page = Request::Prints {
+        after: 0,
+        limit: 10,
+        since: None,
+    };
+    let cases = [
+        (Request::Held, "none"),
+        (ids(&[]), "too-large"),
+        (page, "too-large"),
+        (ids(&[]), "no-database"),
+        (ids(&[]), "db-open"),
+        (ids(&[]), "db-locked"),
+        (ids(&[]), "db-schema"),
+        (ids(&[]), "db-corrupt"),
+        (ids(&[]), "db-error"),
+    ];
+    for (ask, status) in cases {
+        for at in 0..4 {
+            let mut counts = [0; 4];
+            counts[at] = -1;
+            let [a, b, c, d] = counts;
+            let reply = format!("[\"started\",42]\n[\"end\",\"{status}\",{a},{b},{c},{d}]\n");
+            assert_eq!(
+                parse(&ask, reply.as_bytes()),
+                Err(Rejected::Counts),
+                "{ask:?} {status} {at}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_page_of_rowids_and_an_old_sqlite_are_read_as_what_they_are() {
+    let ask = Request::Rowids { after: 4, limit: 3 };
+    assert_eq!(ask.kind(), "rowids");
+    let said = |rows: &[&str], end: &str| {
+        let mut lines = vec![STARTED];
+        lines.extend(rows);
+        lines.push(end);
+        answer(&lines)
+    };
+    let two = [r#"["r",6]"#, r#"["r",9]"#];
+    assert_eq!(
+        parse(&ask, &said(&two, r#"["end","ok",2,0,2,9]"#)),
+        Ok(Reply::Rowids(vec![6, 9]))
+    );
+    assert_eq!(
+        parse(&ask, &said(&[], r#"["end","ok",0,0,0,4]"#)),
+        Ok(Reply::Rowids(vec![]))
+    );
+    for end in [
+        r#"["end","ok",1,0,2,9]"#,
+        r#"["end","ok",2,0,1,9]"#,
+        r#"["end","ok",2,1,2,9]"#,
+        r#"["end","ok",2,0,2,8]"#,
+        r#"["end","ok",2,0,2,10]"#,
+    ] {
+        assert_eq!(
+            parse(&ask, &said(&two, end)),
+            Err(Rejected::Counts),
+            "{end}"
+        );
+    }
+    // Not past where the page began, not in order, not a whole number,
+    // and more rows than were asked for.
+    for rows in [
+        vec![r#"["r",4]"#],
+        vec![r#"["r",9]"#, r#"["r",6]"#],
+        vec![r#"["r","6"]"#],
+        vec![r#"["p",6,"a","x"]"#],
+    ] {
+        let end = format!(r#"["end","ok",{0},0,{0},9]"#, rows.len());
+        assert!(
+            matches!(parse(&ask, &said(&rows, &end)), Err(Rejected::Line(_))),
+            "{rows:?}"
+        );
+    }
+    let four = [r#"["r",5]"#, r#"["r",6]"#, r#"["r",7]"#, r#"["r",8]"#];
+    assert_eq!(
+        parse(&ask, &said(&four, r#"["end","ok",4,0,4,8]"#)),
+        Err(Rejected::Counts)
+    );
+    assert_eq!(
+        parse(&ask, &said(&[], r#"["end","db-locked",0,0,0,0]"#)),
+        Ok(Reply::Failed(Far::Locked))
+    );
+
+    // A far SQLite with no way to measure a value says so and reads
+    // nothing.
+    assert_eq!(
+        parse(&Request::Probe, &answer(&[r#"["no","sqlite-old"]"#])),
+        Ok(Reply::No(No::SqliteOld))
+    );
+    assert!(
+        !PROGRAM.contains("length(")
+            || PROGRAM.matches("length(").count() == PROGRAM.matches("octet_length(").count()
+    );
+    assert!(PROGRAM.contains("if sqlite3.sqlite_version_info < (3, 43):\n        return say(line([\"no\", \"sqlite-old\"]))"));
+    assert_eq!(OLDEST_SQLITE, "3.43");
 }

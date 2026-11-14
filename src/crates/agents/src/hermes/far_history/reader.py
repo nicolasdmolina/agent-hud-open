@@ -38,14 +38,14 @@ import urllib.parse
 MARK = "agent-hud-far-history:"  # then the machine's key, a colon, and what names the home
 MOST_USAGE = 500  # the usage rows of one session the HUD's reader accepts
 MOST_HELD = 256 * 1024
-MOST_FIELD = 64 * 1024  # the bytes of one value that are loaded at all
-SIZE = ["octet_length"]  # which SQLite answers from a row's header, but for a column declared REAL
+MOST_FIELD = 64 * 1024  # the bytes of one value that are loaded at all: `octet_length` is asked first,
+# which SQLite (3.43 on) answers from a row's header without loading the value, but for a column declared REAL
 TIE_WAIT = 3.0  # how long a reader waits for higher process ids to leave
 TOKENS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
 SESSION = ("title", "cwd", "source", "model", "billing_provider", "billing_base_url",
            "billing_mode") + TOKENS + ("ended_at", "last_activity_at", "profile_name")
 USAGE = ("model", "billing_provider", "billing_base_url", "billing_mode", "task") + TOKENS + ("first_seen", "last_seen")
-MORE_MEMORY = 16 << 20  # what a read may add to the process, beside twice its output bound
+MORE_MEMORY = 12 << 20  # what a read may add to the process, beside twice its output bound
 END = [0.0, float("inf")]  # when the watchdog ends this process, and the most memory it may reach
 NONE = [0, 0, 0, 0]
 ERRORS = (("locked", "db-locked"), ("unable to open", "db-open"), ("no such", "db-schema"),
@@ -58,7 +58,7 @@ def watchdog():
             os._exit(3)
         if peak() > END[1]:
             os._exit(5)
-        time.sleep(min(left, 0.002))
+        time.sleep(min(left, 0.0005))
 
 def peak():
     """The most memory this process has held, in bytes."""
@@ -116,7 +116,7 @@ def tokens(have, alias, wrap):
 
 def bound(names):
     """SQL for each value, or nothing where it is too long to load, and for how many are."""
-    long = ["%s(%s)>%d" % (SIZE[0], name, MOST_FIELD) for name in names]
+    long = ["octet_length(%s)>%d" % (name, MOST_FIELD) for name in names]
     return (",".join("CASE WHEN %s THEN NULL ELSE %s END" % pair for pair in zip(long, names)),
             "+".join("COALESCE(%s,0)" % one for one in long))
 
@@ -141,6 +141,11 @@ def prints(cursor, ask, s, u, most):
     the `n`th row looked at. `oversized`: a value of it is too long to load."""
     after, since = int(ask.get("after", 0)), ask.get("since")
     count = max(1, min(int(ask.get("n", 100)), 500))
+    if ask["k"] == "rowids":
+        # The rowids alone, which load nothing of a row: what names a row that cannot be read.
+        found = [row[0] for row in cursor.execute(
+            "SELECT s.rowid FROM sessions s WHERE s.rowid>?1 ORDER BY s.rowid LIMIT ?2", (after, count))]
+        return [line(["r", rowid]) for rowid in found], [len(found), 0, len(found), max(found + [after])]
     (big, mark), args, active = print_sql(s, u), [after, count], "1"
     if since is not None:
         seen = "NULL"
@@ -214,7 +219,6 @@ def database(ask, home, sqlite3, most):
     if not os.path.isfile(path):
         return [], "no-database", NONE
     db = cursor = None
-    SIZE[0] = "octet_length" if sqlite3.sqlite_version_info >= (3, 43) else "length"  # which loads a text once
     try:
         db = sqlite3.connect("file:" + urllib.parse.quote(path) + "?mode=ro", uri=True, timeout=2.0)
         db.text_factory = lambda raw: raw.decode("utf-8", "replace")
@@ -223,7 +227,7 @@ def database(ask, home, sqlite3, most):
                  for table in ("sessions", "session_model_usage")]
         if "id" not in names[0] or "started_at" not in names[0]:
             return [], "db-schema", NONE
-        read = prints if ask["k"] == "prints" else sessions
+        read = sessions if ask["k"] == "sessions" else prints
         found = read(cursor, ask, names[0], names[1], most)
         # None: what was read does not fit the output bound.
         return (found[0], "ok", found[1]) if found else ([], "too-large", NONE)
@@ -261,7 +265,8 @@ def main():
     ask = json.loads(request)
     key, digest = mark[len(MARK):len(MARK) + 16], hashlib.sha256(home.encode("utf-8", "surrogateescape")).hexdigest()
     if mark != MARK + key + ":" + digest[:16] or len(key) != 16 or set(key) - set("0123456789abcdef") or (
-            os.path.realpath(home) != home or ask.get("k") not in ("probe", "prints", "sessions", "held")):
+            os.path.realpath(home) != home or ask.get("after", 0) < 0 or ask.get("k") not in (
+                "probe", "prints", "rowids", "sessions", "held")):
         return say(line(["no", "request"]))
     try:
         lone = alone(mark)
@@ -273,6 +278,8 @@ def main():
         import sqlite3
     except ImportError:
         return say(line(["no", "sqlite"]))
+    if sqlite3.sqlite_version_info < (3, 43):
+        return say(line(["no", "sqlite-old"]))  # it has no `octet_length`, and nothing else bounds a value
     arm(deadline)
     say(line(["started", os.getpid()]))
     most = max(1024, min(int(ask.get("most", 1 << 20)), 8 << 20))
