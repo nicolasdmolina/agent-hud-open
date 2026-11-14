@@ -90,3 +90,79 @@ fn named_and_unnamed_cards_against_any_count_of_sightings() {
     }
     assert!(wrong.is_empty(), "{wrong:?}");
 }
+
+/// A row of session `s` whose `cards` are (id, kind, call) and whose
+/// `sightings` are (call, kind).
+fn cards_row(
+    cards: &[(&str, &str, Option<&str>)],
+    sightings: &[(&str, &str)],
+    transcript: bool,
+) -> Value {
+    let shown: Vec<_> = cards.iter().map(|(id, kind, _)| (*id, *kind)).collect();
+    let mut row = waiting("s", &shown);
+    if transcript {
+        row["logPath"] = json!("synthetic/s.jsonl");
+    }
+    row["heard"] = json!(sightings
+        .iter()
+        .map(|(call, kind)| json!({"id":format!("log:claude:s:{call}"),"kind":kind}))
+        .collect::<Vec<_>>());
+    if cards.is_empty() {
+        row["liveFacts"]["requests"] = row["heard"].clone();
+    }
+    row["calls"] = json!(cards
+        .iter()
+        .filter_map(|(id, _, call)| call.map(|call| (id.to_string(), json!(call))))
+        .collect::<serde_json::Map<_, _>>());
+    row
+}
+
+fn take(tracker: &mut Tracker, row: Value, at: i64) -> usize {
+    look(tracker, &no_events(), &[row], &on(), T + at).len()
+}
+
+/// A card a call once named stays that call when a later view of it names
+/// none. The fourth verifier's
+/// `a_previously_named_card_cannot_regain_credit_when_its_current_call_metadata_is_absent`.
+#[test]
+fn a_card_once_named_never_stands_for_another_sighting() {
+    let mut tracker = started();
+    take(
+        &mut tracker,
+        cards_row(&[("card", "question", Some("a"))], &[], false),
+        1,
+    );
+    let unnamed = [("card", "question", None)];
+    let got = take(
+        &mut tracker,
+        cards_row(&unnamed, &[("a", "question"), ("new", "question")], true),
+        2,
+    );
+    assert_eq!(got, 1, "the card is call a; new is a new question");
+}
+
+/// A card the one possible pairing made a call at one takeover is that call
+/// at the next. The fourth verifier's
+/// `a_second_takeover_must_not_reuse_an_already_inferred_cards_allowance`.
+#[test]
+fn a_card_paired_at_one_takeover_stands_for_nothing_at_the_next() {
+    let mut tracker = started();
+    let cards = [
+        ("named", "question", Some("a")),
+        ("unnamed", "question", None),
+    ];
+    assert_eq!(take(&mut tracker, cards_row(&cards, &[], false), 1), 1);
+    let first = cards_row(&cards, &[("a", "question"), ("b", "question")], true);
+    assert_eq!(take(&mut tracker, first, 2), 0);
+    assert_eq!(take(&mut tracker, cards_row(&cards, &[], false), 3), 0);
+    let second = cards_row(
+        &cards,
+        &[("a", "question"), ("b", "question"), ("new", "question")],
+        true,
+    );
+    assert_eq!(
+        take(&mut tracker, second, 4),
+        1,
+        "the unnamed card was b; new is a new question"
+    );
+}

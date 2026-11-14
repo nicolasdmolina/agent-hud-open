@@ -34,6 +34,20 @@ pub(crate) struct Tracker {
     decided: HashMap<String, i64>,
     revision: u64,
     items: VecDeque<Value>,
+    /// What each waiting card was, by its request id, for as long as it
+    /// waits: never forgotten while it does, whatever a later view shows.
+    cards: HashMap<String, Card>,
+    /// The ids of the cards still waiting, as Core holds them; without it a
+    /// card is forgotten once no row shows it.
+    open: Option<HashSet<String>>,
+}
+/// A waiting card's life so far: whether a call ever named it (its `callId`,
+/// or the one possible pairing), and whether it already stood for a sighting
+/// at a takeover. Either keeps it from standing for one again.
+#[derive(Default)]
+struct Card {
+    named: bool,
+    spent: bool,
 }
 const KEPT_MS: i64 = 86_400_000;
 /// Alerts of earlier looks kept beside the newest look's, as many as the
@@ -62,7 +76,14 @@ impl Tracker {
             decided: HashMap::new(),
             revision: 0,
             items: VecDeque::new(),
+            cards: HashMap::new(),
+            open: None,
         }
+    }
+    /// The cards still waiting, by request id: a card is forgotten only when
+    /// it is no longer among them.
+    pub fn open_cards(&mut self, ids: HashSet<String>) {
+        self.open = Some(ids);
     }
     /// Whether `id` is new, noting it as seen now either way.
     fn first(&mut self, id: &str, now: i64) -> bool {
@@ -113,6 +134,8 @@ impl Tracker {
             }
         }
         let mut waits = HashMap::new();
+        // The cards some row shows at this look.
+        let mut seen: HashSet<String> = HashSet::new();
         for session in sessions {
             let (Some(source), Some(id)) = (session["source"].as_str(), session["id"].as_str())
             else {
@@ -128,25 +151,32 @@ impl Tracker {
             // A row its transcript now gives, in place of one only its cards
             // or hooks made, shows what those cards already told: the
             // transcript's sightings of them, which it may not pair with
-            // them one to one. Each card told before that still waits, and
-            // that no call names (its `callId`, or the one possible pairing,
-            // already makes it that call), can stand for one new sighting
-            // of its own kind (`absorbs`); a sighting none can stand for is a
-            // request of its own.
-            let mut absorbs: HashMap<&str, usize> = HashMap::new();
+            // them one to one. A card told before that still waits can
+            // stand for one new sighting of its own kind (`absorbs`), once in
+            // its life, and only if no call ever named it (its `callId`, or
+            // the one possible pairing, makes it that call for good). A
+            // sighting none can stand for is a request of its own.
+            for request in now_requests
+                .iter()
+                .filter(|r| !r.names[0].starts_with("log:"))
+            {
+                seen.insert(request.names[0].clone());
+                let card = self.cards.entry(request.names[0].clone()).or_default();
+                card.named |= request.names[1..]
+                    .iter()
+                    .any(|n| n.starts_with("call:") || n.starts_with("log:"));
+            }
+            let mut absorbs: HashMap<&str, Vec<String>> = HashMap::new();
             if let Some(p) = previous.as_ref().filter(|p| transcript && !p.transcript) {
                 for heard in &p.requests {
-                    let card = !heard.names[0].starts_with("log:");
-                    let unnamed = now_requests
-                        .iter()
-                        .find(|r| r.names.contains(&heard.names[0]))
-                        .is_some_and(|r| {
-                            r.names
-                                .iter()
-                                .all(|n| !n.starts_with("call:") && !n.starts_with("log:"))
-                        });
-                    if card && unnamed {
-                        *absorbs.entry(heard.kind.as_str()).or_default() += 1;
+                    let card = &heard.names[0];
+                    let can = seen.contains(card)
+                        && self.cards.get(card).is_some_and(|c| !c.named && !c.spent);
+                    if can {
+                        absorbs
+                            .entry(heard.kind.as_str())
+                            .or_default()
+                            .push(card.clone());
                     }
                 }
             }
@@ -161,8 +191,9 @@ impl Tracker {
                 // without a sound; one none can stand for sounds.
                 let undecided = names.iter().all(|name| !self.decided.contains_key(name));
                 if request.names[0].starts_with("log:") && undecided {
-                    if let Some(left) = absorbs.get_mut(request.kind.as_str()).filter(|n| **n > 0) {
-                        *left -= 1;
+                    let card = absorbs.get_mut(request.kind.as_str()).and_then(Vec::pop);
+                    if let Some(card) = card {
+                        self.cards.entry(card).or_default().spent = true;
                         for name in &names {
                             self.first(name, now);
                         }
@@ -210,6 +241,12 @@ impl Tracker {
             );
         }
         self.waits = waits;
+        // A card is forgotten only once it no longer waits.
+        let open = self.open.take();
+        self.cards.retain(|card, _| {
+            seen.contains(card) || open.as_ref().is_some_and(|o| o.contains(card))
+        });
+        self.open = open;
         self.decided.retain(|_, at| now - *at < KEPT_MS);
         // What waits at the first look was there before the app: noted only.
         let primed = std::mem::replace(&mut self.primed, true);

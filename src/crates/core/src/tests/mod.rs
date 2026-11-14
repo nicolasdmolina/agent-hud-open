@@ -11,6 +11,7 @@ mod hermes_questions;
 mod ingestion;
 mod machines;
 mod native_card_handover;
+mod native_card_memory;
 mod native_card_rows;
 mod plan_value;
 mod quota_history;

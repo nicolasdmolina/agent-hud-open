@@ -3,7 +3,10 @@
 use super::{Content, Requests};
 use agent_hud_agents::{MachineStatus, Machines};
 use serde_json::{Map, Value};
-use std::{collections::HashMap, sync::PoisonError};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::PoisonError,
+};
 
 impl Requests {
     /// The first time a waiting request expires or a delivery leaves the
@@ -79,6 +82,11 @@ impl Requests {
             .iter()
             .filter_map(|item| Some((item.id.clone(), call(item)?)))
             .collect()
+    }
+    /// The id of every card still waiting.
+    pub fn waiting_ids(&self) -> HashSet<String> {
+        let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.pending.iter().map(|item| item.id.clone()).collect()
     }
     /// The session each waiting native card belongs to, by source, with when
     /// its first card came. A native channel can ask before its client's log
