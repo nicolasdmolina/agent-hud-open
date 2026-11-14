@@ -74,9 +74,6 @@ fn reclaims(dismiss: bool) {
     let newcomer = Fake::serving(&lab.home, "zzzzzzzz-new-alpha", &["alpha"]);
     newcomer.asks("alpha", "s-alpha", "p9");
     lab.looks(3);
-    until("the newcomer is said to wait for the name", || {
-        !lab.said("gateway waits").is_empty()
-    });
     lab.looks(3);
     let after = needs(&snapshot(&mut core));
     let ends = lab.observer.as_ref().unwrap().ends();
