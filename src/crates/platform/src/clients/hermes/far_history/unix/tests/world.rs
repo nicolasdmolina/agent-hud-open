@@ -27,8 +27,8 @@ pub(super) const BIN: &str = "bin";
 /// its own programs.
 pub(super) const PATH: &str = "{lab}/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
-/// What makes every read of a session's usage endless, for a database
-/// with Hermes's schema.
+/// What makes every read that touches the session `endless` never end,
+/// for a database with Hermes's schema.
 pub(super) const ENDLESS: &str = "DROP TABLE session_model_usage;
     CREATE VIEW session_model_usage AS WITH RECURSIVE spin(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM spin)
     SELECT 'endless' AS session_id, 'model' AS model FROM spin WHERE n < 0;
@@ -209,10 +209,13 @@ impl World {
         names
     }
 
-    /// Makes every read of a session's usage never end, and adds the
-    /// session `endless`: a query made slow on purpose, which holds the
-    /// database open until something ends the reader. The usage table
-    /// goes behind a view that counts for ever.
+    /// Adds the session `endless`, and makes every read that touches it
+    /// never end: a query made slow on purpose, which holds the database
+    /// open until something ends the reader. The usage table goes behind
+    /// a view that counts for ever and names that one session. A read of
+    /// any other session does not spin, since SQLite sees the view's one
+    /// session is not the one asked for. Every test that needs a read
+    /// that never ends asks for `endless`.
     pub(super) fn make_every_read_endless(&self) {
         self.db().execute_batch(ENDLESS).expect("the endless view");
     }

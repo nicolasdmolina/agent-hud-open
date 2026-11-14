@@ -106,9 +106,9 @@ pub enum Far {
     Locked,
     Schema,
     Corrupt,
-    /// A table declares a column named `rowid`, `_rowid_` or `oid`, which
-    /// SQLite reads in place of a row's own number. Hermes's schema has
-    /// none, and nothing is read from one that has.
+    /// A table declares a column named `rowid`, `_rowid_` or `oid`, plain
+    /// or generated, which SQLite reads in place of a row's own number.
+    /// Hermes's schema has none, and nothing is read from one that has.
     Rowid,
     Error,
 }

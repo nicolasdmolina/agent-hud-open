@@ -40,7 +40,7 @@ MOST_USAGE = 500  # the usage rows of one session the HUD's reader accepts
 MOST_HELD = 256 * 1024
 MOST_FIELD = 64 * 1024  # the bytes of one value that are loaded at all: `octet_length` is asked first,
 # which SQLite (3.43 on) answers from a row's header without loading the value, but for a column declared REAL
-TIE_WAIT = 3.0  # how long a reader waits for higher process ids to leave
+TIE_WAIT = 3.0  # the longest a reader waits for higher process ids to leave
 TOKENS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
 SESSION = ("title", "cwd", "source", "model", "billing_provider", "billing_base_url",
            "billing_mode") + TOKENS + ("ended_at", "last_activity_at", "profile_name")
@@ -92,8 +92,8 @@ def others(mark):
     return [int(part[0]) for part in rows if len(part) > 2 and part[1] == uid and int(part[0]) != me and any(
         word.startswith(MARK) and (word.startswith(machine + ":") or word.endswith(":" + home)) for word in part[2:])]
 
-def alone(mark):
-    until = time.monotonic() + TIE_WAIT
+def alone(mark, wait):
+    until = time.monotonic() + wait
     while True:
         found = others(mark)
         if not found:
@@ -222,12 +222,12 @@ def database(ask, home, sqlite3, most):
         db = sqlite3.connect("file:" + urllib.parse.quote(path) + "?mode=ro", uri=True, timeout=2.0)
         db.text_factory = lambda raw: raw.decode("utf-8", "replace")
         cursor = db.cursor()
-        names = [{row[0] for row in cursor.execute("SELECT name FROM pragma_table_info(?)", (table,))}
+        names = [{row[0] for row in cursor.execute("SELECT name FROM pragma_table_xinfo(?)", (table,))}
                  for table in ("sessions", "session_model_usage")]
         if "id" not in names[0] or "started_at" not in names[0]:
             return [], "db-schema", NONE
         if {name.lower() for name in names[0] | names[1]} & {"rowid", "_rowid_", "oid"}:
-            return [], "db-rowid", NONE  # a column of that name would stand in for a row's own number
+            return [], "db-rowid", NONE  # such a column, generated ones too, stands in for a row's own number
         read = sessions if ask["k"] == "sessions" else prints
         found = read(cursor, ask, names[0], names[1], most)
         # None: what was read does not fit the output bound.
@@ -270,7 +270,7 @@ def main():
                 "probe", "prints", "rowids", "sessions", "held")):
         return say(line(["no", "request"]))
     try:
-        lone = alone(mark)
+        lone = alone(mark, min(TIE_WAIT, deadline / 2))  # so that "busy" is said before the deadline
     except (OSError, ValueError, subprocess.SubprocessError):
         return say(line(["no", "processes"]))
     if not lone:

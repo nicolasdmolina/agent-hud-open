@@ -457,3 +457,75 @@ fn retire_and_readd_keeps_reader_exclusion() {
     let samples = watch.finish();
     assert_eq!(most(&samples).1, 1);
 }
+
+/// An older reader can have the higher process id, once the system's
+/// ids have gone round. The newer one, with the lower id, waits for it to
+/// leave, as it would for one that started beside it. It must give up
+/// and answer "busy" before its own deadline: with a deadline shorter
+/// than that wait, its watchdog ended it first, with the deadline's
+/// status and no answer. Found by a run of these tests in which the ids
+/// went round.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_reader_that_waits_for_a_higher_process_id_answers_busy_before_its_deadline() {
+    let Some(world) = World::start() else { return };
+    world.add_session(&world.db(), "s1", 1);
+    let link = world.link();
+    let mark = world.mark();
+    // The reader's process is there at once and looks 0.7 s later, by
+    // when another process that carries its mark has started: a later
+    // one, so one with a higher id.
+    world.stand_in(&format!("sleep 0.7\nexec {PYTHON} \"$@\""));
+    for (deadline, most) in [(2, 2_600), (1, 1_900)] {
+        let began = Instant::now();
+        let (ran, lower, higher) = thread::scope(|scope| {
+            let read = scope.spawn(|| {
+                raw(
+                    &link,
+                    &world.home,
+                    Duration::from_secs(deadline),
+                    &sessions(&["s1"]),
+                )
+            });
+            assert!(until(Duration::from_secs(5), || !readers(&mark).is_empty()));
+            let lower = readers(&mark)[0];
+            let mut other = Command::new(PYTHON)
+                .args(["-I", "-c", "import time; time.sleep(20)", &mark])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let higher = other.id();
+            let ran = read.join().unwrap();
+            other.kill().unwrap();
+            other.wait().unwrap();
+            (ran, lower, higher)
+        });
+        let took = began.elapsed();
+        println!(
+            "  deadline {deadline} s: the reader {lower} beside {higher} => {:?}, {:?} after {took:?}",
+            ran.end,
+            String::from_utf8_lossy(&ran.stdout)
+        );
+        if higher < lower {
+            // The ids went round between the two: the other one is the
+            // lower, and the reader says so at once.
+            println!("  the ids went round here: nothing to wait for");
+        }
+        assert_eq!(ran.end, End::Ended(0));
+        assert_eq!(ran.stdout, b"[\"no\",\"busy\"]\n");
+        assert!(took < Duration::from_millis(most), "{took:?}");
+        assert!(until(Duration::from_secs(5), || readers(&mark).is_empty()));
+    }
+    // With nobody beside it, the same reader reads.
+    let ran = raw(
+        &link,
+        &world.home,
+        Duration::from_secs(2),
+        &sessions(&["s1"]),
+    );
+    assert_eq!(ran.end, End::Ended(0));
+    assert!(String::from_utf8_lossy(&ran.stdout).starts_with("[\"started\","));
+    link.close();
+}

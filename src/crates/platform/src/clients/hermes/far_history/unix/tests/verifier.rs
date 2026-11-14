@@ -697,3 +697,146 @@ fn a_shadow_rowid_column_must_not_forge_a_quarantined_rowid() {
     );
     link.close();
 }
+
+/// The probe of the fourth review (`evidence/36/verifier-report-4.md`).
+/// The names of a table's columns were read from the list that leaves
+/// out generated columns, and SQLite reads a generated column named
+/// `rowid` in place of a row's own number as it does a plain one. So such
+/// a table was read: it forged the rowid that was skipped, made a table
+/// of healthy sessions read as empty, and made the read of rowids alone
+/// hold a long value.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn r4_a_generated_column_named_rowid_must_be_refused_like_a_plain_one() {
+    use super::super::Failure;
+    let long = "replace(hex(zeroblob(33554432)),'0','x')";
+    let cases = [
+        // The third review's own probe, with the column generated.
+        (
+            "a number of its choosing",
+            "rowid",
+            "CASE id WHEN 'poison' THEN 9001 ELSE 2 END",
+        ),
+        // Zero for every row: no row is past zero, so a sweep read the
+        // table as empty and ended, with nothing logged.
+        ("zero for every row", "rowid", "0"),
+        // 64 MiB of text, which the read of rowids alone held.
+        ("64 MiB of text", "rowid", long),
+        ("another spelling", "RowID", "7"),
+        ("the second name", "_rowid_", "7"),
+        ("the third name", "OID", "7"),
+    ];
+    for (what, column, value) in cases {
+        let Some(world) = World::start() else { return };
+        let db = world.db();
+        for id in ["poison", "good-after", "good-last"] {
+            world.add_session(&db, id, 1);
+        }
+        db.execute_batch(&format!(
+            "ALTER TABLE sessions ADD COLUMN {column} GENERATED ALWAYS AS ({value}) VIRTUAL;
+             UPDATE sessions SET last_activity_at={long} WHERE id='poison';
+             PRAGMA wal_checkpoint(TRUNCATE)"
+        ))
+        .unwrap();
+        // The plain list of columns does not hold it. The whole list does.
+        let listed = |list: &str| -> i64 {
+            let sql = format!(
+                "SELECT COUNT(*) FROM {list}('sessions') WHERE lower(name) IN ('rowid','_rowid_','oid')"
+            );
+            db.query_row(&sql, [], |row| row.get(0)).unwrap()
+        };
+        assert_eq!(
+            (listed("pragma_table_info"), listed("pragma_table_xinfo")),
+            (0, 1),
+            "{what}"
+        );
+        world.measure_memory();
+        let link = world.link();
+        let ask = Request::Rowids {
+            after: 0,
+            limit: 10,
+        };
+        let ran = raw(&link, &world.home, Duration::from_secs(5), &ask);
+        let said = String::from_utf8_lossy(&ran.stdout).into_owned();
+        println!(
+            "  a generated {column}, {what}: rowids => {:?}, {:?}",
+            ran.end,
+            said.lines().last()
+        );
+        assert_eq!(ran.end, End::Ended(0), "{what}");
+        assert_eq!(
+            far::parse(&ask, &ran.stdout),
+            Ok(Reply::Failed(far::Far::Rowid)),
+            "{what}"
+        );
+        let (reader, slots) = (world.reader(settings()), Slots::new());
+        let slot = slots.of(&world.machine());
+        for after in [0, 2] {
+            let got = reader.prints(&link, &slot, &world.home, after, 100, None);
+            println!("  the caller from {after} => {got:?}");
+            // Not a forged skip, not an empty table, not a reader ended
+            // over the value: the table is not read, and says why.
+            assert_eq!(got, Err(Failure::Far(far::Far::Rowid)), "{what}");
+        }
+        let read = reader.sessions(&link, &slot, &world.home, &["good-after".to_owned()]);
+        assert_eq!(read.stopped, Some(Failure::Far(far::Far::Rowid)), "{what}");
+        let log = world.logged();
+        assert!(
+            log.iter()
+                .all(|line| !line.contains("quarantines") && !line.contains("9001")),
+            "{log:?}"
+        );
+        let peaks = world.peaks();
+        println!(
+            "  whole-life peaks of its {} readers: at most {} KiB",
+            peaks.len(),
+            peaks.iter().max().unwrap()
+        );
+        assert!(
+            peaks.iter().all(|peak| *peak < MOST_MEMORY),
+            "{what}: {peaks:?}"
+        );
+        link.close();
+    }
+    // A stored one, which only a table made with it can have, and one in
+    // the usage table.
+    let Some(world) = World::start() else { return };
+    let db = world.db();
+    world.add_session(&db, "s1", 1);
+    db.execute_batch(
+        "ALTER TABLE session_model_usage ADD COLUMN rowid GENERATED ALWAYS AS (3) VIRTUAL;",
+    )
+    .unwrap();
+    let link = world.link();
+    let ask = sessions(&["s1"]);
+    let ran = raw(&link, &world.home, Duration::from_secs(5), &ask);
+    assert_eq!(
+        far::parse(&ask, &ran.stdout),
+        Ok(Reply::Failed(far::Far::Rowid))
+    );
+    db.execute_batch(
+        "ALTER TABLE session_model_usage DROP COLUMN rowid;
+         ALTER TABLE sessions RENAME TO kept;
+         CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, started_at REAL NOT NULL,
+            rowid INTEGER GENERATED ALWAYS AS (9001) STORED);
+         INSERT INTO sessions (id, source, started_at) SELECT id, source, started_at FROM kept;",
+    )
+    .unwrap();
+    let ran = raw(&link, &world.home, Duration::from_secs(5), &ask);
+    assert_eq!(
+        far::parse(&ask, &ran.stdout),
+        Ok(Reply::Failed(far::Far::Rowid))
+    );
+    // A generated column of another name is a column like any other, and
+    // the table is read.
+    db.execute_batch(
+        "DROP TABLE sessions; ALTER TABLE kept RENAME TO sessions;
+         ALTER TABLE sessions ADD COLUMN shown GENERATED ALWAYS AS (id || '!') VIRTUAL;",
+    )
+    .unwrap();
+    let ran = raw(&link, &world.home, Duration::from_secs(5), &ask);
+    assert!(
+        matches!(far::parse(&ask, &ran.stdout), Ok(Reply::Sessions(batch)) if batch.sessions.len() == 1)
+    );
+    link.close();
+}

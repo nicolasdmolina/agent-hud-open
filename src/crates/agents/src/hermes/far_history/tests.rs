@@ -833,4 +833,10 @@ fn a_table_that_hides_its_row_numbers_is_named_as_not_read() {
     assert!(PROGRAM.contains(
         r#"if {name.lower() for name in names[0] | names[1]} & {"rowid", "_rowid_", "oid"}:"#
     ));
+    // The names come from the list that holds generated and hidden
+    // columns too: the plain list leaves those out, and SQLite reads a
+    // generated `rowid` in a row number's place all the same (fourth
+    // review).
+    assert!(PROGRAM.contains(r#""SELECT name FROM pragma_table_xinfo(?)""#));
+    assert!(!PROGRAM.contains("pragma_table_info"));
 }
