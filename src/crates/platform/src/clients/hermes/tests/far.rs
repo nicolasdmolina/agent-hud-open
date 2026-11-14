@@ -35,6 +35,8 @@ mod cards;
 mod identity;
 #[path = "far/links.rs"]
 pub(super) mod links;
+#[path = "far/review30.rs"]
+mod review30;
 #[path = "far/rules.rs"]
 mod rules;
 

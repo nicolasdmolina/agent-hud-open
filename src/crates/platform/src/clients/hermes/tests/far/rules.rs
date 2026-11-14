@@ -12,7 +12,7 @@ use super::{
         fake::{fixture, Fake},
         marked,
     },
-    far_lab, lab, until, FarLab, Standing, INSTALL,
+    far_lab, lab, until, Standing, INSTALL,
 };
 use agent_hud_agents::hermes::gateway::{
     identify, identify_line, machine_key, Identified, Instance,
@@ -30,9 +30,9 @@ impl Stop for Stopped {
     }
 }
 
-/// The ports the master of the open link listens on.
-fn listening(far: &FarLab) -> Vec<String> {
-    let (link, _) = far.inner().route.link().expect("a link");
+/// The ports the master of the route's open link listens on.
+fn listening(route: &Ssh) -> Vec<String> {
+    let (link, _) = route.link().expect("a link");
     let pid = link.master_pid().expect("its master").to_string();
     let listed = Command::new("lsof")
         .args(["-a", "-p", &pid, "-iTCP", "-sTCP:LISTEN", "-P", "-n", "-Fn"])
@@ -47,8 +47,7 @@ fn listening(far: &FarLab) -> Vec<String> {
 
 /// The instance the gateway in the far root answers as, read as the
 /// model reads it.
-fn instance(far: &FarLab) -> Instance {
-    let route = &far.inner().route;
+fn instance(route: &Ssh) -> Instance {
     let home = route.homes().expect("the far homes").remove(0);
     let line = format!("{}\n", identify_line());
     let answer = route
@@ -61,58 +60,71 @@ fn instance(far: &FarLab) -> Instance {
     }
 }
 
+/// Someone who asks and goes on wanting it.
+struct Wanted;
+impl Stop for Wanted {
+    fn wait(&self, time: Duration) -> bool {
+        std::thread::sleep(time);
+        false
+    }
+}
+
 #[test]
 #[ignore = "starts processes: run by the_lab_tests_pass"]
 fn a_forward_asked_for_by_someone_who_stopped_is_cancelled_and_not_kept() {
-    let Some(mut far) = far_lab() else {
+    let Some(far) = far_lab() else {
         return;
     };
-    // Never verified, so no follower makes a forward of its own.
-    let gateway = far.gateway("instance-1");
-    gateway.world().install = None;
-    far.follow();
-    until("the link is up", || far.inner().route.link().is_some());
-    until("the machine was asked and is not covered", || {
-        matches!(far.standing(), Standing::NotCovered(_))
-    });
-    let route = &far.inner().route;
-    let instance = instance(&far);
-    until("the first socket's forward is the only one", || {
-        listening(&far).len() == 1
-    });
-    let (made, kept) = (route.forwards_made(), listening(&far));
+    let _gateway = far.gateway("instance-1");
+    // The route alone: nothing else makes a forward over it.
+    let (folder, target) = (far.lab.folder(), far.lab.target());
+    let route = Ssh::start(
+        folder,
+        target,
+        far.lab.settings(),
+        std::sync::Arc::new(|_| {}),
+    )
+    .expect("the route");
+    until("the link is up", || route.link().is_some());
+    let instance = instance(&route);
+    assert_eq!(listening(&route), Vec::<String>::new());
 
-    // Another instance at that home, asked for by someone who stopped:
-    // refused, and whatever was begun for it is ended.
+    // Asked for by someone who stopped: refused, and whatever was begun
+    // for it is ended.
+    assert!(route.prepare(&instance, &Stopped).is_err());
+    assert!(route.dial(&instance).is_err(), "nothing to dial through");
+    std::thread::sleep(Duration::from_millis(800));
+    assert!(route.dial(&instance).is_err(), "nothing was kept for it");
+    assert_eq!(listening(&route), Vec::<String>::new());
+    assert_eq!(route.forwards_made(), 0, "none was kept as made");
+
+    // Asked for by someone who still wants it: made, once.
+    route.prepare(&instance, &Wanted).expect("a forward");
+    assert_eq!(route.forwards_made(), 1);
+    let kept = listening(&route);
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    route.prepare(&instance, &Wanted).expect("the same forward");
+    assert_eq!(route.forwards_made(), 1);
+    assert_eq!(listening(&route), kept);
+
+    // Another instance at that home replaces it: the old forward is
+    // cancelled before the new one is in place.
     let mut other = instance.clone();
     other.id = "instance-2".into();
-    assert!(route.prepare(&other, &Stopped).is_err());
-    assert!(route.dial(&other).is_err(), "nothing to dial through");
-    std::thread::sleep(Duration::from_millis(800));
-    assert!(route.dial(&other).is_err(), "nothing was kept for it");
-    assert!(listening(&far).len() <= 1, "{:?}", listening(&far));
-    assert_eq!(route.forwards_made(), made, "none was kept as made");
-
-    // Asked for by someone who still wants it: made, and it replaces the
-    // forward of the instance that answered at that home before.
-    struct Wanted;
-    impl Stop for Wanted {
-        fn wait(&self, time: Duration) -> bool {
-            std::thread::sleep(time);
-            false
-        }
-    }
     route.prepare(&other, &Wanted).expect("a forward");
-    assert_eq!(route.forwards_made(), made + 1);
-    let now = listening(&far);
+    assert_eq!(route.forwards_made(), 2);
+    let now = listening(&route);
     assert_eq!(now.len(), 1, "one forward for the gateway: {now:?}");
     assert_ne!(now, kept, "the old instance's forward was cancelled");
     assert!(route.dial(&instance).is_err(), "the old one leads nowhere");
     drop(route.dial(&other).expect("a stream through the forward"));
-    // A second asking makes nothing new.
-    route.prepare(&other, &Wanted).expect("the same forward");
-    assert_eq!(route.forwards_made(), made + 1);
-    assert_eq!(listening(&far), now);
+
+    // An instance that is followed no more has its forward cancelled,
+    // whatever home it was asked through.
+    route.release(&other.id);
+    until("the forward is cancelled", || listening(&route).is_empty());
+    assert!(route.dial(&other).is_err());
+    route.stop();
 }
 
 #[test]

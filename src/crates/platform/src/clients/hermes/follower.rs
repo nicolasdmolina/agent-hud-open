@@ -249,7 +249,13 @@ impl Shared {
         model.taken.clear();
         model.waiters.clear();
         model.opened.clear();
+        let followed = model.gateway.instance().map(str::to_owned);
         drop(model);
+        // Its gateway is followed no more: the route lets go of what it
+        // kept for that instance, with the model unlocked.
+        if let Some(instance) = followed {
+            self.route.release(&instance);
+        }
         self.requests.end_native_reader(AGENT.id, &self.reader);
         #[cfg(test)]
         (self.ends.lock().unwrap()).push(self.reader.clone());

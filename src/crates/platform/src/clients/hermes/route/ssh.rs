@@ -181,10 +181,12 @@ impl Ssh {
         self.identity.settle(root, reported, link)
     }
 
-    /// The route leads to no machine until it is verified again.
+    /// The route leads to no machine until it is verified again, and no
+    /// gateway of it is followed: every forward is cancelled.
     pub(crate) fn forget(&self) {
         self.identity.forget();
         self.notice.clear();
+        self.forwards.release_all(self.keeper.link());
     }
 }
 
@@ -262,6 +264,10 @@ impl Route for Ssh {
         let local = local.ok_or(Failure::Unreachable)?;
         let at = SocketAddr::from((Ipv4Addr::LOCALHOST, local));
         TcpStream::connect_timeout(&at, DIAL).map_err(|_| Failure::Unreachable)
+    }
+
+    fn release(&self, instance: &str) {
+        self.forwards.release(self.keeper.link(), instance);
     }
 
     fn admit(&self, instance: &Instance, call: Call<'_>) -> Result<(), Failure> {

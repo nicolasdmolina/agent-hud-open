@@ -35,30 +35,74 @@ const LEAST_FREE_KB: u64 = 5 * 1024 * 1024;
 const POLLS: usize = 100;
 const ROOT: &str = "${HERMES_HOME:-$HOME/.hermes}";
 
-/// What the test did and found, written to the receipt folder whether
-/// it ends well or not.
+/// What the test did and found, written to the receipt folder line by
+/// line as it goes, so a run that ends early has said all it did.
 struct Receipt {
     folder: PathBuf,
-    lines: Vec<String>,
+    /// Every control path a master of this test was started on.
+    paths: Vec<PathBuf>,
 }
 
 impl Receipt {
     fn say(&mut self, line: impl Into<String>) {
+        use std::io::Write;
         let line = line.into();
         println!("{line}");
-        self.lines.push(line);
+        let mut file = std::fs::OpenOptions::new();
+        let file = file.create(true).append(true);
+        if let Ok(mut file) = file.open(self.folder.join("receipt.txt")) {
+            let _ = writeln!(file, "{line}");
+        }
     }
-}
 
-impl Drop for Receipt {
-    fn drop(&mut self) {
-        let mut all = self.lines.join("\n");
-        all.push_str(
-            "\n\n## Every command run on the far machine, in order, with how it ended\n\n",
-        );
-        all.push_str(&transcript::kept().join("\n"));
-        all.push('\n');
-        let _ = std::fs::write(self.folder.join("receipt.txt"), all);
+    /// Notes the control paths of the masters that are up in `folder`.
+    fn note_paths(&mut self, folder: &Folder) {
+        for name in sockets(folder) {
+            let path = folder.path().join(name);
+            if !self.paths.contains(&path) {
+                self.say(format!("HUD control path in use: {}", path.display()));
+                self.paths.push(path);
+            }
+        }
+    }
+
+    /// The end, whichever way the run went: nothing answers on any
+    /// control path this test used, each checked by its own name, and no
+    /// `ssh` that names the control folder is left. True where that holds.
+    fn proof(&mut self, folder: &Folder) -> bool {
+        self.say("## Cleanup proof");
+        let mut clean = !self.paths.is_empty();
+        for control in self.paths.clone() {
+            let check = Command::new("/usr/bin/ssh")
+                .args(["-F", "none", "-o"])
+                .arg(format!("ControlPath={}", control.display()))
+                .args(["-O", "check", "--", "link.invalid"])
+                .output()
+                .expect("ssh");
+            let said = String::from_utf8_lossy(&check.stderr);
+            let said = said.lines().next().unwrap_or("").to_owned();
+            let verdict = match check.status.success() {
+                true => "A MASTER STILL ANSWERS",
+                false => "fails, as it must",
+            };
+            self.say(format!(
+                "ssh -O check on {}: exit {:?}, {verdict}: {said}",
+                control.display(),
+                check.status.code()
+            ));
+            clean &= !check.status.success();
+        }
+        let left = masters(folder);
+        self.say(format!(
+            "ssh processes naming the HUD control folder: {left:?}"
+        ));
+        let entries = lab::entries(folder.path());
+        self.say(format!("entries left in the control folder: {entries:?}"));
+        self.say("## Every command run on the far machine, in order, with how it ended");
+        for command in transcript::kept() {
+            self.say(command);
+        }
+        clean && left.is_empty() && entries.is_empty()
     }
 }
 
@@ -147,57 +191,30 @@ fn polls(log: &str) -> BTreeMap<String, Vec<(u64, u64, u64)>> {
     by_reader
 }
 
-#[test]
-#[ignore = "reads a real far machine: run by hand"]
-fn a_real_far_machine_is_followed_and_only_read() {
-    let (Ok(host), Ok(out)) = (
-        std::env::var("AGENT_HUD_FAR_HOST"),
-        std::env::var("AGENT_HUD_FAR_RECEIPT"),
-    ) else {
-        eprintln!("skipped: AGENT_HUD_FAR_HOST and AGENT_HUD_FAR_RECEIPT name no machine");
-        return;
-    };
-    tap::read_only();
-    transcript::keep();
-    let out = PathBuf::from(out);
-    std::fs::create_dir_all(&out).unwrap();
-    let mut receipt = Receipt {
-        folder: out.clone(),
-        lines: Vec::new(),
-    };
-    // A short folder of this test's own for the masters and the data.
-    let temp = tempfile::Builder::new()
-        .prefix("ahm")
-        .tempdir_in(lab::short_base())
-        .unwrap();
-    let folder = Folder::open(&temp.path().join("c")).expect("the control folder");
-    let data = temp.path().join("data");
-    crate::os::private_directory(&data).unwrap();
+/// The run itself. An error is why it stopped; the proof of cleanup is
+/// made by the caller whichever way this ends.
+fn run(
+    receipt: &mut Receipt,
+    folder: &Folder,
+    data: &std::path::Path,
+    host: &str,
+) -> Result<(), String> {
+    let out = receipt.folder.clone();
     let settings = Settings {
         connect_timeout: Duration::from_secs(60),
         ..Settings::system()
     };
-    let target = Target::new(&host, None, None, None).expect("a plain host");
-    receipt.say(format!(
-        "# A real far machine, read only: host alias `{host}`"
-    ));
-    receipt.say(format!("control folder: {}", folder.path().display()));
-    let mut seen_sockets: Vec<String> = Vec::new();
+    let target = Target::new(host, None, None, None).map_err(|why| why.reason().to_owned())?;
 
     // Before anything else: free disk, the config hashes, the install id.
     let began = Instant::now();
-    let link = match Link::open(&folder, &target, &settings) {
-        Ok(link) => link,
-        Err(failure) => {
-            receipt.say(format!("STOP: the link did not open: {failure}"));
-            panic!("the link did not open: {failure}");
-        }
-    };
+    let link = Link::open(folder, &target, &settings)
+        .map_err(|failure| format!("STOP: the link did not open: {failure}"))?;
     receipt.say(format!(
         "first link up after {} ms",
         began.elapsed().as_millis()
     ));
-    seen_sockets.extend(sockets(&folder));
+    receipt.note_paths(folder);
     let free = read(&link, "df -Pk \"$HOME\" | tail -1 | awk '{print $4}'");
     let free_kb: u64 = free.and_then(|kb| kb.parse().ok()).unwrap_or(0);
     receipt.say(format!(
@@ -205,9 +222,9 @@ fn a_real_far_machine_is_followed_and_only_read() {
         free_kb as f64 / 1024.0 / 1024.0
     ));
     if free_kb < LEAST_FREE_KB {
-        link.close();
-        receipt.say("STOP: under 5 GB free");
-        panic!("under 5 GB free on the far machine");
+        let closed = link.close();
+        receipt.say(format!("first link closed: {closed:?}"));
+        return Err("STOP: under 5 GB free on the far machine".to_owned());
     }
     let before = config_hashes(&link).unwrap_or_default();
     receipt.say(format!("config.yaml hashes before:\n{before}"));
@@ -218,9 +235,11 @@ fn a_real_far_machine_is_followed_and_only_read() {
     receipt.say(format!("install id file: {install:?}"));
     if install.as_deref() != Some("present") {
         // Asking a Hermes without one for its id makes it write one.
-        link.close();
-        receipt.say("STOP: Hermes there has no install id yet, and asking would make it write one");
-        panic!("no install id on the far machine");
+        let closed = link.close();
+        receipt.say(format!("first link closed: {closed:?}"));
+        return Err(
+            "STOP: Hermes there has no install id, and asking would make it write one".into(),
+        );
     }
     // Where `python3` is, and whether the developer tools are there. It
     // is not run here: without the tools `/usr/bin/python3` is a stub
@@ -233,7 +252,6 @@ fn a_real_far_machine_is_followed_and_only_read() {
     receipt.say(format!("python3 there: {:?}", python.unwrap_or_default()));
     let closed = link.close();
     receipt.say(format!("first link closed: {closed:?}"));
-
     // Followed, at the app's own pace, with every poll said in the log.
     let requests = Requests::default();
     let entry = FarEntry {
@@ -248,7 +266,7 @@ fn a_real_far_machine_is_followed_and_only_read() {
     };
     let wake = Arc::new(|| {});
     let began = Instant::now();
-    let observer = FarObserver::start_at(entry, &data, requests.clone(), wake, pace).unwrap();
+    let observer = FarObserver::start_at(entry, data, requests.clone(), wake, pace)?;
     let log = || std::fs::read_to_string(data.join("hermes-gateway.log")).unwrap_or_default();
     let mut standing = Standing::Connecting;
     while !matches!(standing, Standing::Connected(_)) && began.elapsed() < Duration::from_secs(240)
@@ -260,7 +278,7 @@ fn a_real_far_machine_is_followed_and_only_read() {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    seen_sockets.extend(sockets(&folder));
+    receipt.note_paths(folder);
     let followed = matches!(standing, Standing::Connected(_));
     if !followed {
         receipt.say(format!(
@@ -364,42 +382,15 @@ fn a_real_far_machine_is_followed_and_only_read() {
     ));
 
     // After: the same hashes, over a link of its own.
-    let link = Link::open(&folder, &target, &settings).expect("the last link");
-    seen_sockets.extend(sockets(&folder));
+    let link = Link::open(folder, &target, &settings)
+        .map_err(|failure| format!("the last link did not open: {failure}"))?;
+    receipt.note_paths(folder);
     let after = config_hashes(&link).unwrap_or_default();
     receipt.say(format!("config.yaml hashes after:\n{after}"));
     let closed = link.close();
     receipt.say(format!("last link closed: {closed:?}"));
 
-    // The end: nothing answers on any control path, and no `ssh` is left.
-    seen_sockets.sort();
-    seen_sockets.dedup();
-    let mut answering = 0;
-    for name in &seen_sockets {
-        let control = folder.path().join(name);
-        let check = Command::new("/usr/bin/ssh")
-            .args(["-F", "none", "-o"])
-            .arg(format!("ControlPath={}", control.display()))
-            .args(["-O", "check", "--", "link.invalid"])
-            .output()
-            .expect("ssh");
-        let said = String::from_utf8_lossy(&check.stderr);
-        let said = said.lines().next().unwrap_or("").to_owned();
-        receipt.say(format!(
-            "ssh -O check on {}: exit {:?}: {said}",
-            control.display(),
-            check.status.code()
-        ));
-        answering += usize::from(check.status.success());
-    }
-    let left = masters(&folder);
-    receipt.say(format!("ssh processes naming the control folder: {left:?}"));
-    receipt.say(format!(
-        "entries left in the control folder: {:?}",
-        lab::entries(folder.path())
-    ));
-
-    // Nothing that subscribes or answers was written.
+    // What the run must have shown.
     let forbidden = [
         "session.resume",
         "session.detach",
@@ -408,18 +399,66 @@ fn a_real_far_machine_is_followed_and_only_read() {
         "a result frame",
     ];
     let wrote = |method: &&str| sent.contains_key(*method);
-    assert!(!forbidden.iter().any(wrote), "{sent:?}");
-    assert_eq!(answering, 0, "a master still answers");
-    assert_eq!(left, Vec::<String>::new(), "an ssh process is left");
-    assert_eq!(
-        seen_sockets.len(),
-        3,
-        "one control path for each of the three links"
-    );
-    assert!(
-        !before.is_empty() && before == after,
-        "the config hashes differ"
-    );
-    assert!(followed, "the machine was not followed: {standing:?}");
-    assert!(ready >= 2, "{ready} gateways ready");
+    if forbidden.iter().any(wrote) {
+        return Err(format!(
+            "a frame that subscribes or answers was written: {sent:?}"
+        ));
+    }
+    if before.is_empty() || before != after {
+        return Err("the config.yaml hashes differ, or were not read".to_owned());
+    }
+    if !followed {
+        return Err(format!("the machine was not followed: {standing:?}"));
+    }
+    if ready < 2 {
+        return Err(format!("{ready} gateways ready, where two were expected"));
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "reads a real far machine: run by hand"]
+fn a_real_far_machine_is_followed_and_only_read() {
+    let (Ok(host), Ok(out)) = (
+        std::env::var("AGENT_HUD_FAR_HOST"),
+        std::env::var("AGENT_HUD_FAR_RECEIPT"),
+    ) else {
+        eprintln!("skipped: AGENT_HUD_FAR_HOST and AGENT_HUD_FAR_RECEIPT name no machine");
+        return;
+    };
+    tap::read_only();
+    transcript::keep();
+    let out = PathBuf::from(out);
+    std::fs::create_dir_all(&out).unwrap();
+    let _ = std::fs::remove_file(out.join("receipt.txt"));
+    let mut receipt = Receipt {
+        folder: out,
+        paths: Vec::new(),
+    };
+    // A short folder of this test's own for the masters and the data.
+    let temp = tempfile::Builder::new()
+        .prefix("ahm")
+        .tempdir_in(lab::short_base())
+        .unwrap();
+    let folder = Folder::open(&temp.path().join("c")).expect("the control folder");
+    let data = temp.path().join("data");
+    crate::os::private_directory(&data).unwrap();
+    receipt.say(format!(
+        "# A real far machine, read only: host alias `{host}`"
+    ));
+    receipt.say(format!("HUD control folder: {}", folder.path().display()));
+    // Whichever way the run ends, a panic included, the proof is made.
+    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run(&mut receipt, &folder, &data, &host)
+    }));
+    let ended = match ran {
+        Ok(Ok(())) => "the run ended as it should".to_owned(),
+        Ok(Err(why)) => why,
+        Err(_) => "the run panicked".to_owned(),
+    };
+    receipt.say(format!("## How the run ended: {ended}"));
+    let clean = receipt.proof(&folder);
+    receipt.say(format!("## Clean: {clean}"));
+    assert!(clean, "something of the HUD's link is left");
+    assert_eq!(ended, "the run ended as it should");
 }

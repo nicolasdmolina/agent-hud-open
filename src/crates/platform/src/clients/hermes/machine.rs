@@ -287,7 +287,11 @@ impl Inner {
                     wait = soon;
                     self.follow(key);
                 }
-                Err(standing) => self.stand(standing),
+                // Not followed: nothing made to ask it is kept.
+                Err(standing) => {
+                    self.route.forget();
+                    self.stand(standing);
+                }
             }
             self.pause(wait);
             wait = (wait * 2).min(later);

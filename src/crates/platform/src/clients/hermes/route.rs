@@ -135,6 +135,11 @@ pub(crate) trait Route: Send + Sync {
     /// that instance is dialled.
     fn dial(&self, instance: &Instance) -> Result<TcpStream, Failure>;
 
+    /// The instance `instance`, by its id, is followed no more: its
+    /// follower ended. What the route kept for it (`prepare`) is let go.
+    /// It does not wait: whoever ends a follower holds the set of them.
+    fn release(&self, _instance: &str) {}
+
     /// Whether what answers on a socket just opened to `instance` is the
     /// machine this route leads to. Asked of every socket once it is
     /// open, before anything else is said on it, so nothing of a gateway

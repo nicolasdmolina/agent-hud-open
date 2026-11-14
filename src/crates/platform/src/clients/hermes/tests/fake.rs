@@ -162,6 +162,8 @@ pub struct World {
     pub slow_replay: Option<(String, Duration)>,
     /// When each `session.active_list` arrived: when each poll began.
     pub listed: Vec<Instant>,
+    /// Sessions the gateway holds and leaves out of its live list.
+    pub unlisted: Vec<String>,
 }
 
 impl World {
@@ -757,6 +759,7 @@ fn answer(world: &mut World, frame: &Value, subscribed: &mut Vec<String>) -> Opt
                 .streams
                 .iter()
                 .filter(|((of, _), _)| of == profile)
+                .filter(|((_, id), _)| !world.unlisted.contains(id))
                 .map(|((_, id), stream)| json!({"id": id, "session_key": id, "status": stream.status()}))
                 .collect();
             json!({ "sessions": rows })

@@ -2,9 +2,13 @@
 //! once and used by every socket to it, the polls' and each visit's.
 //!
 //! A forward is the instance's: a gateway that restarts is another
-//! instance, on a port that may be another, so its forward is made anew
-//! and the one of the instance that answered at that home before is
-//! cancelled. A forward lives on one link and is gone with it.
+//! instance, on a port that may be another, so its forward is made anew.
+//! The forward of an instance that is followed no more is cancelled: when
+//! its follower ends (`release`), when the machine is not followed at all
+//! (`release_all`), and when another instance answers at the home it
+//! answered at. A cancel that is owed is paid before the next forward is
+//! made, so no forward is in place beside the one it replaced. A forward
+//! lives on one link and is gone with it.
 //!
 //! Making one asks the master, which can take a moment. Whoever asked may
 //! stop meanwhile: the wait ends at once, and the forward, if it still
@@ -36,6 +40,8 @@ struct Held {
     by_instance: HashMap<String, Entry>,
     /// Numbers each making, so that one given up is known as that.
     makings: u64,
+    /// The forwards of instances followed no more, still to be cancelled.
+    owed: Vec<Forward>,
     /// How many forwards were ever made, for the tests.
     #[cfg(test)]
     made: u64,
@@ -90,6 +96,7 @@ impl Forwards {
         if held.link != number {
             // Whatever was on another link went with it.
             held.by_instance.clear();
+            held.owed.clear();
             held.link = number;
         }
         let mut ours = None;
@@ -148,9 +155,68 @@ impl Forwards {
         self.changed.notify_all();
     }
 
-    /// Makes the forward, on a thread of its own. The forward of another
-    /// instance that answered at the same home goes first.
+    /// The instance `id` is followed no more: its forward is cancelled,
+    /// on a thread of its own, and one still being made is given up.
+    pub(super) fn release(self: &Arc<Self>, link: Option<(Arc<Link>, u64)>, id: &str) {
+        let mut held = self.held();
+        if let Some(Entry {
+            state: Made::Ready(forward),
+            ..
+        }) = held.by_instance.remove(id)
+        {
+            held.owed.push(forward);
+        }
+        drop(held);
+        self.changed.notify_all();
+        self.pay(link);
+    }
+
+    /// No instance of the machine is followed: every forward is cancelled.
+    pub(super) fn release_all(self: &Arc<Self>, link: Option<(Arc<Link>, u64)>) {
+        let mut held = self.held();
+        let all: Vec<Entry> = held.by_instance.drain().map(|(_, entry)| entry).collect();
+        for entry in all {
+            if let Made::Ready(forward) = entry.state {
+                held.owed.push(forward);
+            }
+        }
+        drop(held);
+        self.changed.notify_all();
+        self.pay(link);
+    }
+
+    /// Cancels what is owed on the link that is open, on a thread of its
+    /// own: whoever let an instance go is not kept waiting on the master.
+    fn pay(self: &Arc<Self>, link: Option<(Arc<Link>, u64)>) {
+        let Some((link, number)) = link else {
+            return;
+        };
+        let all = self.clone();
+        let _ = thread::Builder::new()
+            .name("Hermes far forward".into())
+            .spawn(move || all.cancel_owed(&link, number));
+    }
+
+    /// Cancels every forward that is owed on the link `number`. Each is
+    /// taken off the list by the one that cancels it, so it goes once.
+    fn cancel_owed(&self, link: &Link, number: u64) {
+        let owed: Vec<Forward> = {
+            let mut held = self.held();
+            match held.link == number {
+                true => std::mem::take(&mut held.owed),
+                false => Vec::new(),
+            }
+        };
+        for forward in owed {
+            let _ = link.cancel(forward);
+        }
+    }
+
+    /// Makes the forward, on a thread of its own. What is owed goes
+    /// first, and so does the forward of another instance that answered
+    /// at the same home.
     fn make(&self, link: &Link, number: u64, id: &str, port: u16, making: u64) {
+        self.cancel_owed(link, number);
         let stale: Vec<Forward> = {
             let mut held = self.held();
             let home = held.by_instance.get(id).map(|entry| entry.home.clone());
