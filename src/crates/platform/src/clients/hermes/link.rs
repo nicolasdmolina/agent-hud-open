@@ -207,8 +207,9 @@ fn follow(shared: &Shared, socket: &mut Socket) -> Option<Failure> {
                 due = began + wait;
                 told.add(shared, &ran);
             }
-            // The model is no longer ready to poll: begin again.
-            Ok(None) => return Some(Failure::Unreachable),
+            // The model is no longer ready to poll: begin again. A poll
+            // dropped because the follower is ending is no lost socket.
+            Ok(None) => return shared.active().then_some(Failure::Unreachable),
             Err(failure) => return Some(failure),
         }
     }

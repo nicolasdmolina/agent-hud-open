@@ -44,6 +44,9 @@ struct State {
     /// The native requests a decision was taken for, each until its
     /// adapter sent it or gave the request back (`back.rs`).
     taken: HashMap<String, back::Taken>,
+    /// The waits of decisions that were taken back with their request
+    /// before they were handed over: handing one over does nothing.
+    back: HashSet<u64>,
     reviewers: HashMap<(String, String, String), Reviewer>,
     deliveries: VecDeque<Value>,
     /// What each native channel's readers say of their sessions.
@@ -97,6 +100,7 @@ impl Default for Requests {
                 pending: VecDeque::new(),
                 dismissed: HashSet::new(),
                 taken: HashMap::new(),
+                back: HashSet::new(),
                 reviewers: HashMap::new(),
                 deliveries: VecDeque::new(),
                 native: native::Readers::default(),

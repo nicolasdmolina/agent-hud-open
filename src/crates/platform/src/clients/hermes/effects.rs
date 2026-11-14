@@ -55,17 +55,21 @@ impl Shared {
                 }
                 Effect::Close { id, session, why } => {
                     self.log.line(&format!("close id={id} why={why:?}"));
-                    // A decision core handed over for it that nobody
-                    // picked up ends with the card, as one that is out.
-                    let handed = model.waiters.remove(&id).and_then(|waiter| {
-                        let said = waiter.response.try_recv();
-                        matches!(said, Ok(Some(_))).then_some(waiter.wait)
-                    });
+                    let waiter = model.waiters.remove(&id);
                     model.opened.remove(&id);
-                    let out = model.taken.remove(&id).or(handed);
                     // An answer to it that is being written is cut.
                     model.cut_writing(|request| request == Some(id.as_str()));
-                    self.requests.settle_native(&id);
+                    // Core ends the request and says, from what it took
+                    // under its own lock, whether a decision is on record
+                    // for it. One that never reached this follower ends
+                    // with the card as one that is out, and what waits in
+                    // the channel is not looked at: core hands over
+                    // nothing it has taken back here.
+                    let taken = self.requests.close_native(&id);
+                    let out = model.taken.remove(&id).or(taken);
+                    #[cfg(test)]
+                    super::answer::at_close(self, &id);
+                    drop(waiter);
                     self.closed(model, &id, &session.hud_id(), &why, out, now);
                 }
                 Effect::Unanswered { pending, why } => {

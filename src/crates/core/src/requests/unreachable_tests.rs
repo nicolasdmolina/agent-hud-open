@@ -359,3 +359,55 @@ fn a_decision_taken_before_its_request_was_marked_is_not_current() {
     requests.mark_native("native:9", marked());
     assert!(requests.views(6_500).is_empty());
 }
+
+/// Closing a request ends it as settling does, and tells of the decision
+/// that was taken for it: once, and never of one whose request was given
+/// back or that was told of before.
+#[test]
+fn closing_a_request_takes_back_the_decision_that_was_taken_for_it() {
+    let requests = Requests::default();
+    // A request that waits: it goes, nothing was taken, and it is not
+    // dismissed.
+    let waits = requests
+        .register_native("native:1".into(), question(), 1_000)
+        .unwrap();
+    assert_eq!(requests.close_native("native:1"), None);
+    assert_eq!(waits.response.recv().unwrap(), None);
+    assert!(requests.views(1_500).is_empty());
+    assert!(!dismissed(&requests, "native:1", 1_500));
+
+    // A request whose decision was taken and handed over.
+    let ticket = requests
+        .register_native("native:1".into(), question(), 2_000)
+        .unwrap();
+    requests.answer("native:1", &pick(), 2_500).unwrap();
+    assert_eq!(requests.close_native("native:1"), Some(ticket.wait));
+    assert_eq!(requests.close_native("native:1"), None, "told once");
+    assert!(!requests.current("native:1", ticket.wait));
+    assert!(requests
+        .put_back("native:1", ticket.wait, question(), 2_600)
+        .is_none());
+    assert!(!dismissed(&requests, "native:1", 2_600));
+    // The decision itself was handed over before, and is still there for
+    // whoever reads it; core has nothing more to hand.
+    assert_eq!(ticket.response.recv().unwrap(), Some(pick()));
+
+    // One whose request was given back is not told of, and the request
+    // that waits again goes like any other.
+    let ticket = requests
+        .register_native("native:1".into(), question(), 3_000)
+        .unwrap();
+    requests.answer("native:1", &pick(), 3_100).unwrap();
+    let back = requests
+        .put_back("native:1", ticket.wait, question(), 3_200)
+        .unwrap();
+    assert_eq!(requests.close_native("native:1"), None);
+    assert_eq!(back.response.recv().unwrap(), None);
+    // Left alone, nothing was to be sent: nothing is taken back.
+    let _left = requests
+        .register_native("native:1".into(), question(), 4_000)
+        .unwrap();
+    let leave = json!({"kind": "leave"});
+    requests.answer("native:1", &leave, 4_100).unwrap();
+    assert_eq!(requests.close_native("native:1"), None);
+}

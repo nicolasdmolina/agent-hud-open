@@ -118,7 +118,10 @@ impl Shared {
     /// back to a model that no longer takes anything.
     pub(super) fn apply(&self, input: Input<'_>) {
         let mut model = self.model();
-        if model.stopped {
+        // Ending says so first and takes the model after: a thread that
+        // gets here in between has seen the end, and what it brings (a
+        // poll that was dropped, read as a lost socket) is not news.
+        if model.stopped || !self.active() {
             return;
         }
         self.take(&mut model, input);

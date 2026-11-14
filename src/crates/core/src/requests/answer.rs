@@ -68,6 +68,7 @@ impl Requests {
                         created_ms: item.created_ms,
                         epoch: item.marks,
                         marks: item.marks,
+                        handed: false,
                     };
                     state.taken.insert(id.into(), taken);
                 }
@@ -77,7 +78,7 @@ impl Requests {
         };
         #[cfg(feature = "probes")]
         self.0.probes.accepted(id);
-        let delivered = item.sender.send(response).is_ok();
+        let delivered = self.hand_over(id, &item, response);
         self.wake();
         if delivered {
             Ok(())

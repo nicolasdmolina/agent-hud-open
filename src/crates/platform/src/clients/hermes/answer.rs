@@ -25,7 +25,9 @@ use agent_hud_core::l10n;
 #[cfg(test)]
 use probes::{at_apply, before_reply};
 #[cfg(test)]
-pub(super) use probes::{verifier27_written_with_wait, verifier3_written, AT_APPLY, BEFORE_REPLY};
+pub(super) use probes::{
+    at_close, verifier27_written_with_wait, verifier3_written, AT_APPLY, AT_CLOSE, BEFORE_REPLY,
+};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -282,6 +284,16 @@ mod probes {
     /// held from the look at the card. A test looks from another thread
     /// whether it is.
     pub(in super::super) static AT_APPLY: Probe = Probe::new(None);
+
+    /// Where a test may pause a card that is closing: core has ended the
+    /// request and said what it had taken for it, and the waiter is still
+    /// held (the fifth review of ticket 27). Core may hand a decision
+    /// over just then.
+    pub(in super::super) static AT_CLOSE: Probe = Probe::new(None);
+
+    pub(in super::super) fn at_close(shared: &Shared, id: &str) {
+        told(&AT_CLOSE, shared, id);
+    }
 
     /// A place a test may be told of: the observer, by address, and the request.
     pub(in super::super) type Probe = std::sync::RwLock<Option<fn(usize, &str)>>;

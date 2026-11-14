@@ -92,3 +92,42 @@ fn a_set_whose_session_ends_after_its_answer_was_written_has_one_receipt() {
     assert!(!lab.log().contains("why=Settled"), "{}", lab.log());
     assert!(lab.cards().is_empty());
 }
+
+/// Turning client hooks off leaves no receipt, and the stop itself is no
+/// lost connection. A follower says it is ending before it takes its
+/// model to end, and its own thread, seeing that, drops the poll it was
+/// in. That used to be read as a lost socket in the moment between: the
+/// card was marked, and an answer that was out got a receipt that said
+/// it failed (once in 22 runs of the suite, at load 70).
+#[test]
+fn a_follower_that_is_ending_reads_no_lost_connection_into_its_stop() {
+    use agent_hud_agents::hermes::gateway::{Failure, Input};
+    let mut lab = lab();
+    let gateway = started(&mut lab);
+    let id = asks(&lab, &gateway);
+    let shared = follower(&lab);
+    // The answer is out, and held back before it opens anything.
+    let held = Arc::new(Hold::default());
+    *lab.route.held.lock().unwrap() = Some(("prepare", held.clone()));
+    lab.requests.answer(&id, &red(), now()).unwrap();
+    until("the send is held back", || {
+        held.entered.load(Ordering::Acquire)
+    });
+    assert!(shared.model().taken.contains_key(&id));
+    // The follower has said it is ending, and has not taken its model yet.
+    shared.active.store(false, Ordering::Release);
+    shared.apply(Input::Lost(Failure::Unreachable));
+    {
+        let model = shared.model();
+        assert!(!model.gateway.marked(&id), "the stop was read as a loss");
+        assert!(model.taken.contains_key(&id));
+    }
+    lab.observer.take();
+    held.released.store(true, Ordering::Release);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(lab.requests.reviewer27_notes(&id).is_empty());
+    assert!(lab.cards().is_empty());
+    assert!(!lab.log().contains("undelivered"), "{}", lab.log());
+    assert!(!lab.log().contains("unreachable id="), "{}", lab.log());
+    assert!(gateway.world().calls("clarify.respond").is_empty());
+}

@@ -27,6 +27,8 @@ pub(super) struct Taken {
     pub(super) epoch: u64,
     /// Its mark count now: marks go on counting while it is taken.
     pub(super) marks: u64,
+    /// The decision was handed to its adapter (`hand_over`).
+    pub(super) handed: bool,
 }
 
 impl State {
@@ -139,5 +141,57 @@ impl Requests {
         let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
         let taken = state.taken.get(id);
         taken.is_some_and(|taken| taken.wait == wait && taken.epoch == taken.marks)
+    }
+
+    /// Hands the decision `answer` took from `item` to the adapter that
+    /// waits for it. `answer` takes a decision under the lock and comes
+    /// here after letting go of it, so the request can come to its end in
+    /// between. A decision its source took back with the request
+    /// (`close_native`) is not handed over: it is over, its source has
+    /// said what became of it, and this does nothing. Whether it was
+    /// taken back is looked at, and the decision handed over, in one
+    /// locked step, so the two can never both happen. Whether the
+    /// decision is delivered, or needs no delivery any more.
+    pub(super) fn hand_over(&self, id: &str, item: &Pending, response: Option<Value>) -> bool {
+        let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.back.remove(&item.wait) {
+            return true;
+        }
+        let taken = state.taken.get_mut(id);
+        if let Some(taken) = taken.filter(|taken| taken.wait == item.wait) {
+            taken.handed = true;
+        }
+        item.sender.send(response).is_ok()
+    }
+
+    /// Ends the native request `id`, which its source says is over, as
+    /// `settle_native` does, and takes back the decision that was taken
+    /// for it, if one is still on record: one whose adapter has not given
+    /// the request back. Returns the wait that decision was taken in.
+    /// All in one locked step: no decision can be taken for the request
+    /// after it, and one that was taken and not yet handed over never
+    /// will be (`hand_over`). So the adapter learns of every decision
+    /// core took for a request it closes, whether or not the decision
+    /// reached it, and can say once what became of it.
+    pub fn close_native(&self, id: &str) -> Option<u64> {
+        let (item, taken) = {
+            let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let taken = state.taken.remove(id);
+            if let Some(taken) = taken.as_ref().filter(|taken| !taken.handed) {
+                state.back.insert(taken.wait);
+            }
+            let waits = state.pending.iter().position(|p| p.id == id);
+            let item = waits.and_then(|index| state.pending.remove(index));
+            state.dismissed.remove(id);
+            if item.is_some() {
+                state.revision = state.revision.wrapping_add(1);
+            }
+            (item, taken.map(|taken| taken.wait))
+        };
+        if let Some(item) = item {
+            let _ = item.sender.send(None);
+            self.wake();
+        }
+        taken
     }
 }
