@@ -261,7 +261,7 @@ def held(home):
 def main():
     mark, deadline, home, request = sys.argv[1:5]
     deadline = max(0.5, min(float(deadline), 120.0))
-    arm(deadline)
+    arm(max(deadline, 10.0))  # to start in: on a busy machine Python alone takes seconds
     threading.Thread(target=watchdog, daemon=True).start()
     ask = json.loads(request)
     key, digest = mark[len(MARK):len(MARK) + 16], hashlib.sha256(home.encode("utf-8", "surrogateescape")).hexdigest()

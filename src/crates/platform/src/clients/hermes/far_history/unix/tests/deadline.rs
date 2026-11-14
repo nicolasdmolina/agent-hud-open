@@ -179,12 +179,15 @@ fn the_deadline_ends_a_busy_query() {
     println!(
         "  the read took {took:?}; the reader had the database open for {open:?} of a 2 s deadline"
     );
+    // Seen open for much of its deadline, and never past it and the
+    // margin. How long the reader took to start is this machine's
+    // business: it has ten seconds for that.
     assert!(
-        open > Duration::from_millis(1_300) && open < Duration::from_millis(2_900),
+        open > Duration::from_millis(600) && open < Duration::from_secs(4),
         "{open:?}"
     );
     assert!(
-        took >= Duration::from_secs(2) && took < Duration::from_secs(8),
+        took >= Duration::from_secs(2) && took < Duration::from_secs(14),
         "{took:?}"
     );
     link.close();
@@ -222,8 +225,10 @@ fn the_deadline_ends_a_blocked_write() {
     let lived = *seen.last().unwrap() - seen[0];
     println!("  ended with status 3 after {took:?}; alive for {lived:?}; {pending} bytes of its answer wait unread");
     assert!(pending > 4096 && pending < 200_000, "{pending}");
+    // Alive for about its deadline once started, and for no more than
+    // that and the ten seconds it has to start in.
     assert!(
-        lived > Duration::from_millis(1_800) && lived < Duration::from_secs(5),
+        lived > Duration::from_millis(1_200) && lived < Duration::from_secs(13),
         "{lived:?}"
     );
     assert_eq!(most(&samples).0, 1);

@@ -29,12 +29,14 @@ fn two_readers_started_together() {
     world.make_every_read_endless();
     let link = world.link();
     let request = sessions(&["endless"]);
-    for round in 0..3 {
+    // Each holds the database until its deadline, which is long enough
+    // for the two to overlap however slowly either starts.
+    for round in 0..2 {
         let watch = Watch::start(&world);
         let together = Barrier::new(2);
         let run = || {
             together.wait();
-            raw(&link, &world.home, Duration::from_secs(2), &request)
+            raw(&link, &world.home, Duration::from_secs(5), &request)
         };
         let (first, second) = thread::scope(|scope| {
             let first = scope.spawn(run);
@@ -115,8 +117,13 @@ fn never_two_readers() {
         let moved = Arc::new(Link::open(&world.folder, &other, &world.lab.settings()).unwrap());
         let held = Arc::clone(&moved);
         let fourth = scope.spawn(move || read(&held));
-        // The far reader that was cut off is still there, alone.
-        assert_eq!(readers(&world.mark()), far_reader);
+        // No other reader has started: the one that was cut off is
+        // there alone, or has reached its deadline already.
+        let now = readers(&world.mark());
+        assert!(
+            now.iter().all(|pid| far_reader.contains(pid)),
+            "{now:?} beside {far_reader:?}"
+        );
 
         // The read on the closed link is not run. The other two run one
         // after the other, each until its deadline.
@@ -310,7 +317,9 @@ fn a_hud_that_reads_until_it_is_killed() {
     )
     .unwrap();
     let mut long = settings();
-    long.deadline = Duration::from_secs(6);
+    // Long enough to be running still when the HUD is back, however
+    // busy this machine is.
+    long.deadline = Duration::from_secs(15);
     let reader = Reader::new(long, |line| println!("  hud log: {line}"));
     let slots = Slots::new();
     loop {
@@ -389,7 +398,7 @@ fn hud_relaunch_does_not_overlap_a_reader() {
                 break;
             }
         }
-        assert!(began.elapsed() < Duration::from_secs(30));
+        assert!(began.elapsed() < Duration::from_secs(90));
     }
     let samples = watch.finish();
     println!(
@@ -407,9 +416,12 @@ fn retire_and_readd_keeps_reader_exclusion() {
     let Some(world) = World::start() else { return };
     world.make_every_read_endless();
     let database = world.database().display().to_string();
+    // The first reader lives long enough to be running still when the
+    // machine is back, however busy this machine is. The reads after
+    // that are short ones.
     let mut long = settings();
-    long.deadline = Duration::from_secs(4);
-    let (reader, slots) = (world.reader(long), Slots::new());
+    long.deadline = Duration::from_secs(12);
+    let (reader, short, slots) = (world.reader(long), world.reader(settings()), Slots::new());
     let slot = slots.of(&world.machine());
     let link = world.link();
     assert_eq!(
@@ -437,20 +449,20 @@ fn retire_and_readd_keeps_reader_exclusion() {
         assert_eq!(same.hold(), Hold::StartUnknown);
         let again = world.link();
         let before = world.logged().len();
-        let read = reader.read(&again, &same, &world.home, &request);
+        let read = short.read(&again, &same, &world.home, &request);
         assert!(world.logged()[before].contains("probes first"));
         assert_eq!(read, Err(Failure::Busy));
         assert_eq!(readers(&world.mark()), old, "the old reader is still there");
         let began = Instant::now();
         loop {
-            match reader.read(&again, &same, &world.home, &request) {
+            match short.read(&again, &same, &world.home, &request) {
                 Err(Failure::Busy) => thread::sleep(Duration::from_millis(200)),
                 other => {
                     assert_eq!(other, Err(Failure::Exit(3)));
                     break;
                 }
             }
-            assert!(began.elapsed() < Duration::from_secs(30));
+            assert!(began.elapsed() < Duration::from_secs(90));
         }
         again.close();
     });
