@@ -39,6 +39,8 @@ pub(super) struct Followers {
     pub(super) route: Arc<dyn Route>,
     /// The machine the route leads to.
     pub(super) machine: Machine,
+    /// The label its cards carry: a far machine's, none for this one.
+    label: Option<String>,
     requests: Requests,
     wake: Wake,
     pub(super) log: log::Log,
@@ -56,21 +58,29 @@ pub(super) struct Followers {
 }
 
 impl Followers {
-    /// Follows the gateways of the machine `route` leads to, logging into
-    /// `data`.
+    /// Follows the gateways of `machine`, which `route` leads to, logging
+    /// into `data`. A far machine is one that was verified: its key names
+    /// every session and card of it, and `label` is what its cards say.
     pub(super) fn start(
         route: Arc<dyn Route>,
+        (machine, label): (Machine, Option<String>),
         data: &Path,
         requests: Requests,
         wake: Wake,
         pace: Pace,
     ) -> Result<Arc<Self>, String> {
+        // The lines of a far machine's followers begin with its key.
+        let who = match &machine {
+            Machine::This => None,
+            Machine::Far(key) => Some(key.as_str().to_owned()),
+        };
         let all = Arc::new(Self {
             route,
-            machine: Machine::This,
+            machine,
+            label,
             requests,
             wake,
-            log: log::Log::new(data),
+            log: log::Log::new(data).of(who.as_deref()),
             pace,
             active: AtomicBool::new(true),
             look: Arc::default(),
@@ -173,12 +183,14 @@ impl Followers {
             model: Mutex::new(model),
             stopping: (Mutex::new(()), Condvar::new()),
             reader,
+            label: self.label.clone(),
             asked: Mutex::new(asked),
             born: Mutex::new(born),
             found: Mutex::default(),
             gone: AtomicBool::new(false),
             awaits: AtomicU64::new(0),
             look: self.look.clone(),
+            apart: Default::default(),
             #[cfg(test)]
             ends: self.ends.clone(),
             #[cfg(test)]

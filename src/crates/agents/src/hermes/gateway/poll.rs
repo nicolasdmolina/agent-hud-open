@@ -86,6 +86,9 @@ pub struct Poll {
     pub(super) shown: BTreeMap<SessionRef, Shown>,
     /// The sessions a snapshot was taken of too recently to take another.
     pub(super) recent: BTreeSet<SessionRef>,
+    /// Set where this is no poll but a reading of one session apart from
+    /// the polls (`apart.rs`).
+    pub(super) apart: Option<Box<super::apart::Apart>>,
 }
 
 impl Poll {
@@ -103,7 +106,14 @@ impl Poll {
             sessions: BTreeMap::new(),
             shown,
             recent,
+            apart: None,
         }
+    }
+
+    /// The session this is a reading of, where it is one of a session
+    /// apart from the polls.
+    pub fn apart(&self) -> Option<&SessionRef> {
+        self.apart.as_ref().map(|apart| &apart.session)
     }
 
     /// What to ask now. Their order does not matter and they may be asked

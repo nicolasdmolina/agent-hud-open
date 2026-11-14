@@ -168,6 +168,8 @@ impl Socket {
     /// WebSocket, which would send it with whatever is written next: the
     /// stream is cut, so that nothing ever is.
     pub(super) fn write(&mut self, frame: &Value) -> Result<(), Failure> {
+        #[cfg(test)]
+        super::tap::written(frame);
         self.line.out_within(Some(self.budget));
         let sent = self.ws.send(Message::Text(frame.to_string().into()));
         self.line.out_within(None);
@@ -226,6 +228,19 @@ impl Socket {
             }
         }
         Ok(Reply::Late)
+    }
+
+    /// One call and its result, on a socket nothing else was said on yet:
+    /// what the gateway sends meanwhile is dropped.
+    pub(super) fn call(&mut self, command: &Command, wait: Duration) -> Result<Value, Failure> {
+        let id = self.send(command)?;
+        match self.reply(id, wait, &mut |_| {})? {
+            Reply::Frame(reply) => match result(&reply) {
+                Ok(told) => Ok(told.clone()),
+                Err(refused) => Err(Failure::Refused(format!("{refused:?}"))),
+            },
+            Reply::Late => Err(Failure::Unreachable),
+        }
     }
 
     /// Closes the socket, which ends whatever it subscribed to. The gateway

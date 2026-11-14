@@ -14,11 +14,11 @@ use std::{
     os::unix::{fs::PermissionsExt, net::UnixListener},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex, MutexGuard,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tungstenite::{
     handshake::server::{ErrorResponse, Request, Response},
@@ -154,6 +154,16 @@ pub struct World {
     pub mismatched: Vec<String>,
     /// The control sockets that were closed while the gateway runs.
     closed: Vec<PathBuf>,
+    /// What `profiles.list` reports as the install's id; None for an
+    /// answer that names none.
+    pub install: Option<Value>,
+    /// One session whose events are slow to read: each read of them is
+    /// held back this long.
+    pub slow_replay: Option<(String, Duration)>,
+    /// When each `session.active_list` arrived: when each poll began.
+    pub listed: Vec<Instant>,
+    /// Sessions the gateway holds and leaves out of its live list.
+    pub unlisted: Vec<String>,
 }
 
 impl World {
@@ -255,8 +265,14 @@ impl Fake {
         let mut workers = Vec::new();
         for path in &sockets {
             let _ = std::fs::remove_file(path);
-            let control = UnixListener::bind(path).unwrap();
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            // Bound under a short name and moved, so a home whose path is
+            // long (a far lab's) can still hold its socket.
+            static BOUND: AtomicUsize = AtomicUsize::new(0);
+            let short = home.join(format!(".s{}", BOUND.fetch_add(1, Ordering::Relaxed)));
+            let _ = std::fs::remove_file(&short);
+            let control = UnixListener::bind(&short).unwrap();
+            std::fs::set_permissions(&short, std::fs::Permissions::from_mode(0o600)).unwrap();
+            std::fs::rename(&short, path).unwrap();
             control.set_nonblocking(true).unwrap();
             let (world, running, path) = (world.clone(), running.clone(), path.clone());
             workers.push(thread::spawn(move || {
@@ -305,6 +321,12 @@ impl Fake {
     /// A question waits in a session of the profile at `profile`, in a
     /// turn under way.
     pub fn asks(&self, profile: &str, session: &str, prompt: &str) {
+        self.asks_quietly(profile, session, prompt);
+        self.say("sessions.changed");
+    }
+
+    /// The same, with no hint from the gateway that anything changed.
+    pub fn asks_quietly(&self, profile: &str, session: &str, prompt: &str) {
         let profile = &self.named(profile);
         let event = |kind: &str, seq: u64, payload: Value| {
             json!({"type": kind, "session_id": session, "replay_epoch": "epoch-1", "seq": seq,
@@ -321,8 +343,18 @@ impl Fake {
         }
         let next = stream.latest + 1;
         stream.publish(&event("clarify.request", next, asked));
-        drop(world);
-        self.say("sessions.changed");
+    }
+
+    /// One event in a session of the profile at `profile`, stamped as
+    /// Hermes stamps it, with no hint that anything changed: a request
+    /// settled in another window, a turn that ended.
+    pub fn tells_quietly(&self, profile: &str, session: &str, kind: &str, payload: Value) {
+        let profile = &self.named(profile);
+        let mut world = self.world();
+        let stream = world.stream_in(profile, session);
+        let event = json!({"type": kind, "session_id": session, "replay_epoch": "epoch-1",
+            "seq": stream.latest + 1, "execution_generation": 1, "payload": payload});
+        stream.publish(&event);
     }
 
     /// A session of the profile at `profile` is in a turn, or not.
@@ -618,13 +650,21 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
             let mut world = world.lock().unwrap();
             world.received.push((number, frame.clone()));
             if frame["method"] == "session.active_list" {
+                world.listed.push(Instant::now());
                 let profile = frame["params"]["profile"].as_str().unwrap_or("").to_owned();
                 let unanswered = world.listing.entry(profile).or_default();
                 *unanswered += 1;
                 let unanswered = *unanswered;
                 world.lists_at_once = world.lists_at_once.max(unanswered);
             }
-            world.slow
+            // The events of one session, slow to read where a test says so.
+            let replay = frame["method"] == "session.events.since"
+                && frame["params"].get("replay_epoch").is_some();
+            let held = |(session, _): &&(String, Duration)| {
+                replay && frame["params"]["session_id"] == session.as_str()
+            };
+            let slow = world.slow_replay.as_ref().filter(held);
+            world.slow + slow.map_or(Duration::ZERO, |(_, slow)| *slow)
         };
         thread::sleep(slow);
         let reply = {
@@ -639,6 +679,11 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
             let mut world = world.lock().unwrap();
             if world.hold_next.as_ref().is_some_and(|(method, _)| {
                 frame["method"] == *method
+                    // The first read of a session, which asks where its
+                    // stream is and names no epoch.
+                    || (*method == "stream-probe"
+                        && frame["method"] == "session.events.since"
+                        && frame["params"].get("replay_epoch").is_none())
                     || (*method == "nonempty-replay"
                         && frame["method"] == "session.events.since"
                         && reply.as_ref().is_some_and(|r| {
@@ -719,6 +764,7 @@ fn answer(world: &mut World, frame: &Value, subscribed: &mut Vec<String>) -> Opt
                 .streams
                 .iter()
                 .filter(|((of, _), _)| of == profile)
+                .filter(|((_, id), _)| !world.unlisted.contains(id))
                 .map(|((_, id), stream)| json!({"id": id, "session_key": id, "status": stream.status()}))
                 .collect();
             json!({ "sessions": rows })
@@ -743,6 +789,11 @@ fn answer(world: &mut World, frame: &Value, subscribed: &mut Vec<String>) -> Opt
                 "prompts": stream.prompts, "open_requests": stream.open, "messages": [],
             })
         }
+        // The install's own id, as `profiles.list` reports it.
+        "profiles.list" => match &world.install {
+            Some(install) => json!({"profiles": [], "install_id": install}),
+            None => json!({"profiles": []}),
+        },
         "session.detach" => {
             subscribed.retain(|held| *held != session);
             json!({"detached": true, "session_id": session, "subscription_id": params["subscription_id"]})

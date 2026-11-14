@@ -48,6 +48,7 @@ impl Gateway {
             return;
         }
         self.polls += 1;
+        self.changed();
         self.held.retain(|profile| !left(profile));
         self.listed.retain(|at, _| !left(&at.profile));
         self.snapshotted.retain(|at, _| !left(&at.profile));

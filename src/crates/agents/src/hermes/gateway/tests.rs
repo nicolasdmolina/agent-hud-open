@@ -6,6 +6,7 @@ use super::*;
 use serde_json::Value;
 use std::path::PathBuf;
 
+mod apart;
 mod boundaries;
 mod buttons;
 mod completeness;
@@ -14,6 +15,7 @@ mod decisions;
 mod fake;
 mod far;
 mod handshake;
+mod installs;
 mod live;
 mod machines;
 mod reach;

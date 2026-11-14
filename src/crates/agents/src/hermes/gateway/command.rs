@@ -39,6 +39,14 @@ pub fn active_list(profile: &Profile, scope: Scope) -> Command {
     Command::routed("session.active_list", json!({}), profile, scope)
 }
 
+/// The profiles of the install, for the one thing a far gateway is asked
+/// on its first socket: the install's own id (`machine::reported_install`).
+/// Without the sessions of each profile, which nothing here reads.
+pub fn profiles_list(profile: &Profile, scope: Scope) -> Command {
+    let params = json!({"include_sessions": false});
+    Command::routed("profiles.list", params, profile, scope)
+}
+
 /// What a session's stream holds after `cursor`. With none, the answer
 /// only tells the stream's epoch; the next read then starts at 0 in that
 /// epoch, which returns what is still held, a waiting request included.

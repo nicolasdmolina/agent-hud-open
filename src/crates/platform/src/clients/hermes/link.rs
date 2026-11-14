@@ -139,7 +139,7 @@ fn dial(shared: &Shared) -> Result<Socket, Next> {
 /// Runs polls on the socket until it is lost (the failure) or the observer
 /// stops (None). The first poll starts at once: at startup and after every
 /// reconnect.
-fn follow(shared: &Shared, socket: &mut Socket) -> Option<Failure> {
+fn follow(shared: &Arc<Shared>, socket: &mut Socket) -> Option<Failure> {
     let mut due = Instant::now();
     let mut last: Option<Instant> = None;
     let mut told = Told::default();

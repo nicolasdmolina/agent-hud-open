@@ -13,7 +13,8 @@
 //! a gateway is another `Route`, and nothing that follows a gateway
 //! changes for it.
 use super::control::Silent;
-use agent_hud_agents::hermes::gateway::{Failure, Instance, Profile};
+use agent_hud_agents::hermes::gateway::{Command, Failure, Instance, Profile};
+use serde_json::Value;
 use std::{
     borrow::Cow,
     net::TcpStream,
@@ -22,6 +23,11 @@ use std::{
 };
 
 pub(crate) mod local;
+pub(crate) mod ssh;
+
+/// One call on a socket that was just opened, for `Route::admit`: the
+/// call goes out and its result comes back, or why there is none.
+pub(crate) type Call<'a> = &'a mut dyn FnMut(&Command) -> Result<Value, Failure>;
 
 /// One Hermes home on the machine a route leads to. Only a route makes
 /// one and only a route reads where it is: the connection gets it from
@@ -69,10 +75,9 @@ impl Home {
 /// waits, and gives up as soon as this says stopped.
 pub(crate) trait Stop: Sync {
     /// Waits `time`, or less where the asker stops first, and says whether
-    /// it has stopped. No time at all only asks. Nothing here calls it
-    /// yet: the route to this machine has nothing to prepare, so nothing
-    /// to wait for.
-    #[allow(dead_code)]
+    /// it has stopped. No time at all only asks. The route to this
+    /// machine has nothing to prepare, so nothing to wait for; the route
+    /// over SSH looks here while a forward is made.
     fn wait(&self, time: Duration) -> bool;
 }
 
@@ -129,4 +134,20 @@ pub(crate) trait Route: Send + Sync {
     /// from a home of this route and `prepare` was asked for. Nothing but
     /// that instance is dialled.
     fn dial(&self, instance: &Instance) -> Result<TcpStream, Failure>;
+
+    /// The instance `instance`, by its id, is followed no more: its
+    /// follower ended. What the route kept for it (`prepare`) is let go.
+    /// It does not wait: whoever ends a follower holds the set of them.
+    fn release(&self, _instance: &str) {}
+
+    /// Whether what answers on a socket just opened to `instance` is the
+    /// machine this route leads to. Asked of every socket once it is
+    /// open, before anything else is said on it, so nothing of a gateway
+    /// is told before its machine is known. A route that has to ask the
+    /// gateway does so with `call`, on that very socket. The route to
+    /// this machine asks nothing: what answered a control socket of the
+    /// user's own, on this machine, is this machine.
+    fn admit(&self, _instance: &Instance, _call: Call<'_>) -> Result<(), Failure> {
+        Ok(())
+    }
 }

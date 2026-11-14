@@ -17,10 +17,12 @@
 //! checked and marked under the model's lock, and ending or closing cuts
 //! the socket of a write that is under way (`visit.rs`).
 use crate::hooks::Wake;
+use agent_hud_agents::hermes::gateway::Machine;
 use agent_hud_core::requests::Requests;
 use std::{path::Path, sync::Arc};
 
 mod answer;
+mod apart;
 mod asking;
 mod control;
 mod cost;
@@ -33,6 +35,7 @@ mod follower;
 mod followers;
 mod link;
 mod log;
+mod machine;
 mod model;
 mod opening;
 mod out;
@@ -42,10 +45,13 @@ mod route;
 mod settle;
 mod signal;
 mod socket;
+#[cfg(test)]
+mod tap;
 mod visit;
 mod wire;
 
 use follower::Shared;
+pub use machine::{FarEntry, FarObserver, Standing};
 use model::Model;
 pub(crate) use pace::Pace;
 pub(crate) use route::Route;
@@ -70,7 +76,8 @@ impl Observer {
         wake: Wake,
         pace: Pace,
     ) -> Result<Self, String> {
-        let all = followers::Followers::start(route, data, requests, wake, pace)?;
+        let this = (Machine::This, None);
+        let all = followers::Followers::start(route, this, data, requests, wake, pace)?;
         Ok(Self { all })
     }
 
