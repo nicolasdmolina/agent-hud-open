@@ -341,8 +341,9 @@ fn an_answer_that_cannot_be_sent_marks_its_card_until_a_poll_finds_it_waiting() 
     });
     gateway.world().grants = true;
     let said = |what: &str| lab.log().find(what).unwrap();
-    assert!(said("undelivered id=") < said("unreachable id="));
-    assert!(said("unreachable id=") < said("reached id="));
+    assert!(said("unreachable id=") < said("undelivered id="));
+    assert!(said("undelivered id=") < said("reached id="));
+    assert_eq!(lab.log().matches("undelivered id=").count(), 1);
     assert_eq!(lab.card(), card);
     assert_eq!(times(&lab, &card), before);
     assert_eq!(lab.delivery(&id)["state"], "failed");
@@ -389,7 +390,16 @@ fn an_answer_is_not_sent_on_a_connection_that_is_back_and_not_yet_read() {
             home: &home,
         };
         shared.take(&mut model, found);
-        assert!(matches!(model.gateway.connection(), Connection::Ready(_)));
+        assert!(
+            matches!(model.gateway.connection(), Connection::Ready(instance) if {
+                // The adapter's own two looks, each of which refuses a marked
+                // card on a gateway that is ready: before a socket is opened,
+                // and before a frame is written.
+                assert!(model.instance_of(&id).is_none(), "a socket would be opened");
+                assert!(!model.current(&id, instance), "a frame would be written");
+                true
+            })
+        );
         assert!(model.gateway.marked(&id), "ready, and not read since");
         open
     };

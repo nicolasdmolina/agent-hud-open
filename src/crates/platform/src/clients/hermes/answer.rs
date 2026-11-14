@@ -7,8 +7,10 @@
 //!
 //! Core refuses a decision for a card that is marked as out of reach, and
 //! the same rule holds here for a decision core took a moment before the
-//! mark: no socket is opened for it, nothing is written, and the card is
-//! given back to core as it was (`effects.rs`, `undelivered`).
+//! mark. The mark ends it (`out.rs`, `lost`): a write under way is cut,
+//! and the card is given back to core as it was. From then on that
+//! decision opens no socket and writes nothing, also once the gateway is
+//! back: the card takes a new answer, never the old one.
 use super::{
     effects::too_late,
     out::Out,
@@ -97,7 +99,7 @@ fn deliver(shared: &Shared, pending: Pending, decision: &Value, taken: u64) {
     // Nothing is sent for a card that closed meanwhile. One that still
     // shows with no gateway to send to, or that was marked as out of
     // reach since core took the decision, opens no socket and is put back.
-    let Some(instance) = shared.instance_of(&id) else {
+    let Some(instance) = shared.answering(&id, taken) else {
         return shared.undelivered(&pending, taken, unreachable());
     };
     let wait = shared.pace.answer * 2;
@@ -187,6 +189,10 @@ impl Going<'_> {
                 let why = out.closed.unwrap_or(Closed::Gone);
                 self.shared.receipt(&id, &session, &why, true, now);
             }
+            // Given back while its frame went out (the connection was
+            // lost under it): the frame may still be read, and nothing
+            // more is said of it here.
+            Some(out) if out.closed.is_none() && model.taken.get(&id) != Some(&self.taken) => {}
             Some(mut out) => {
                 out.written = true;
                 let open = out.closed.is_none();
@@ -280,7 +286,7 @@ impl Going<'_> {
     }
 }
 
-fn unreachable() -> String {
+pub(super) fn unreachable() -> String {
     l10n::text(
         "无法连接 Hermes 来送出这个回答",
         "Hermes could not be reached to send the answer.",

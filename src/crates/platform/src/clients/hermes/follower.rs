@@ -126,6 +126,23 @@ impl Model {
         let waits = self.gateway.pending(request).is_some() && !self.gateway.marked(request);
         !self.stopped && same && waits
     }
+
+    /// The instance to answer `request` on: the one that is ready, while
+    /// the follower runs, the request still has its card and that card is
+    /// not marked as out of reach. A gateway that restarted since the card
+    /// was answered closed the card, and its new instance never asked.
+    /// This is asked before any socket is opened for an answer: nothing
+    /// is sent through a connection that is lost.
+    pub(super) fn instance_of(&self, request: &str) -> Option<Instance> {
+        if self.stopped || self.gateway.marked(request) {
+            return None;
+        }
+        self.gateway.pending(request)?;
+        match self.gateway.connection() {
+            Connection::Ready(instance) => Some(instance.clone()),
+            _ => None,
+        }
+    }
 }
 
 /// Why a follower ends.
@@ -180,22 +197,11 @@ impl Shared {
         self.tell(&model.gateway, now);
     }
 
-    /// The instance to answer `request` on: the one that is ready, while
-    /// the follower runs, the request still has its card and that card is
-    /// not marked as out of reach. A gateway that restarted since the card
-    /// was answered closed the card, and its new instance never asked.
-    /// This is asked before any socket is opened for an answer: nothing
-    /// is sent through a connection that is lost.
+    /// The instance to answer `request` on, as it is now, for the tests
+    /// that ask from outside an answer (`Model::instance_of`).
+    #[cfg(test)]
     pub(super) fn instance_of(&self, request: &str) -> Option<Instance> {
-        let model = self.model();
-        if model.stopped || model.gateway.marked(request) {
-            return None;
-        }
-        model.gateway.pending(request)?;
-        match model.gateway.connection() {
-            Connection::Ready(instance) => Some(instance.clone()),
-            _ => None,
-        }
+        self.model().instance_of(request)
     }
 
     /// Whether an answer to `request` may still go to `instance`, for the

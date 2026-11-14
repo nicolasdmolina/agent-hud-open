@@ -91,8 +91,23 @@ pub fn outage(lab: &Lab, gateway: &mut Fake) {
 /// The same instance is back in the same home, with `through` of the
 /// recording played into it: the question still waiting, or settled.
 pub fn returns(lab: &Lab, through: &str) -> Fake {
+    returns_with(lab, |gateway| {
+        lab.hears(gateway, ASKED, through);
+    })
+}
+
+/// The same instance is back in the same home, holding what `seed` puts
+/// into it before its follower can poll it. The follower's model is held
+/// meanwhile: it takes no answer to who is there, so it begins no poll,
+/// until the gateway holds its session again. Without that a poll could
+/// find the gateway empty, close the card as a session that ended, and
+/// open it anew once the recording was in (the first review of ticket
+/// 27, finding 3).
+pub fn returns_with(lab: &Lab, seed: impl FnOnce(&Fake)) -> Fake {
+    let shared = follower(lab);
+    let _model = shared.model();
     let gateway = Fake::start(&lab.home, "instance-1");
-    lab.hears(&gateway, ASKED, through);
+    seed(&gateway);
     gateway
 }
 
@@ -372,9 +387,10 @@ fn hermes_timed_out_during_the_outage() {
     let id = lab.card()["id"].as_str().unwrap().to_owned();
     outage(&lab, &mut gateway);
     // Hermes's own wait ran out meanwhile: the whole recording.
-    let gateway = Fake::start(&lab.home, "instance-1");
-    gateway.play("question-timeout", None);
-    gateway.say("sessions.changed");
+    let _gateway = returns_with(&lab, |gateway| {
+        gateway.play("question-timeout", None);
+        gateway.say("sessions.changed");
+    });
     until("the card goes", || lab.cards().is_empty());
     let after = since_ready(&lab);
     assert!(

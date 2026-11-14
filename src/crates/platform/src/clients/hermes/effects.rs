@@ -46,7 +46,7 @@ impl Shared {
                 // Out of reach, or found waiting again: the same request,
                 // changed in place. Its time, its hold and whether it
                 // was dismissed are core's, and are not touched.
-                Effect::Marked(pending) => self.reach(model, &pending, "unreachable", now),
+                Effect::Marked(pending) => self.lost(model, &pending, now),
                 Effect::Unmarked(pending) => self.reach(model, &pending, "reached", now),
                 Effect::Close { id, session, why } => {
                     self.log.line(&format!("close id={id} why={why:?}"));
@@ -93,18 +93,22 @@ impl Shared {
             return;
         }
         let now = crate::hooks::now_ms();
-        self.log.line(&format!("undelivered id={id}"));
         // The gateway took no answer just now: the model marks the card
-        // until a poll finds the request waiting again.
+        // until a poll finds the request waiting again, and the mark
+        // gives the request back (`out.rs`, `lost`). A card that was
+        // marked already is given back here.
         self.take(&mut model, Input::Unsent { request: &id });
-        self.back(&mut model, pending, now);
+        if model.taken.contains_key(&id) {
+            self.log.line(&format!("undelivered id={id}"));
+            self.back(&mut model, pending, now);
+        }
         self.note(&id, &pending.session.hud_id(), "failed", Some(reason), now);
         (self.wake)();
     }
 
     /// Shows the card as the model has it now, marked or not, under the
     /// request it already has; `word` is what the log says of it.
-    fn reach(&self, model: &Model, pending: &Pending, word: &str, now: i64) {
+    pub(super) fn reach(&self, model: &Model, pending: &Pending, word: &str, now: i64) {
         let id = pending.id();
         self.log.line(&format!("{word} id={id}"));
         self.requests
@@ -141,7 +145,7 @@ impl Shared {
     /// again, which would start its hold anew. Nothing comes back where
     /// the request came to its end for core meanwhile (its hold ran out),
     /// or where the answer that is out is no longer this one.
-    fn back(&self, model: &mut Model, pending: &Pending, now: i64) {
+    pub(super) fn back(&self, model: &mut Model, pending: &Pending, now: i64) {
         let id = pending.id();
         let Some(wait) = model.taken.remove(&id) else {
             return;
@@ -250,7 +254,7 @@ fn refused(refusal: &Refusal) -> String {
     }
 }
 
-fn unconfirmed() -> String {
+pub(super) fn unconfirmed() -> String {
     l10n::text(
         "Hermes 没有确认收到这个回答",
         "Hermes did not confirm receipt of the answer.",
