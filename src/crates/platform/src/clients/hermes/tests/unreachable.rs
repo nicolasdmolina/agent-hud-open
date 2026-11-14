@@ -248,6 +248,11 @@ fn a_marked_card_takes_no_answer() {
     let told = gateway.world().identify.take();
     gateway.cut();
     until("the card is marked", || marked(&lab.card()));
+    // The follower has asked again and found nobody who says who is
+    // there: everything the loss itself told core is told by now.
+    until("the follower finds no way back", || {
+        lab.log().contains("connection failed reason=Invalid")
+    });
     let (sockets, tickets) = {
         let world = gateway.world();
         (world.sockets, world.granted.len())
