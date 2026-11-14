@@ -353,3 +353,67 @@ fn an_answer_that_cannot_be_sent_marks_its_card_until_a_poll_finds_it_waiting() 
         lab.delivery(&id)["state"] == "confirmed"
     });
 }
+
+/// The adapter's own rule, where nothing else would stop the answer. Core
+/// took the decision, the socket was lost, and the follower has already
+/// found its gateway again: it is ready, the same instance, and would
+/// give a ticket and take the answer. But no poll has read it since, so
+/// the card is still marked: what waits there now is not known. The
+/// adapter asks before it opens anything, and sends nothing.
+#[test]
+fn an_answer_is_not_sent_on_a_connection_that_is_back_and_not_yet_read() {
+    use agent_hud_agents::hermes::gateway::{identify_line, Connection};
+    let mut lab = lab();
+    let gateway = started(&mut lab);
+    let id = asks(&lab, &gateway);
+    let card = lab.card();
+    let before = times(&lab, &card);
+    let (shared, registered) = (follower(&lab), shows(&lab));
+    let said = super::ask(&lab.home, &identify_line(), Duration::from_secs(5)).unwrap();
+    let home = lab.home.to_string_lossy().into_owned();
+    // The next read of the session is kept back: no poll ends meanwhile.
+    let held = Arc::new(Hold::default());
+    let (sockets, tickets) = {
+        let mut model = shared.model();
+        lab.requests.answer(&id, &red(), now()).unwrap();
+        let mut world = gateway.world();
+        world.hold_next = Some(("session.events.since", held.clone()));
+        let open = (world.sockets, world.granted.len());
+        drop(world);
+        // Lost, and found again at once, as the follower's thread says it.
+        shared.take(&mut model, Input::Lost(Failure::Closed(1006)));
+        let found = Input::Identified {
+            answer: &said,
+            home: &home,
+        };
+        shared.take(&mut model, found);
+        assert!(matches!(model.gateway.connection(), Connection::Ready(_)));
+        assert!(model.gateway.marked(&id), "ready, and not read since");
+        open
+    };
+    until("the adapter gives the request back", || {
+        lab.log().contains("undelivered id=")
+    });
+    let back = lab.card();
+    assert!(marked(&back));
+    assert_eq!(plain(back), card);
+    assert_eq!(times(&lab, &card), before);
+    assert_eq!(shows(&lab), registered);
+    std::thread::sleep(Duration::from_millis(150));
+    let world = gateway.world();
+    assert!(world.calls("clarify.respond").is_empty(), "it was sent");
+    assert_eq!(world.sockets, sockets, "a socket was opened for it");
+    assert_eq!(world.granted.len(), tickets, "a ticket was asked for it");
+    assert!(world.calls("session.resume").is_empty());
+    drop(world);
+    // The poll reads at last and finds the request waiting: the same card
+    // takes the answer.
+    held.released.store(true, Ordering::Release);
+    until("the mark clears", || !marked(&lab.card()));
+    assert_eq!(lab.card(), card);
+    lab.requests.answer(&id, &red(), now()).unwrap();
+    until("the answer is confirmed", || {
+        lab.delivery(&id)["state"] == "confirmed"
+    });
+    assert_eq!(gateway.world().calls("clarify.respond").len(), 1);
+}
