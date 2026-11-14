@@ -481,3 +481,47 @@ fn turning_client_hooks_off_ends_every_follower_and_the_look_at_the_machine() {
     assert_eq!(asked(&lab, &[&default, &reports]), settled);
     assert_eq!(lab.said("stopped").len(), 1, "{}", lab.log());
 }
+
+/// Ticket 13's rule, for the look: it waits on a gateway with nothing
+/// locked. While a control socket holds its answer to the look, the set of
+/// followers and every follower's model are free, every follower polls on,
+/// and a hook's nudge returns at once.
+#[test]
+fn a_look_waits_on_a_gateway_with_nothing_locked() {
+    let mut lab = lab();
+    let (_default, _reports) = two(&mut lab, looking());
+    let held = Arc::new(Hold::default());
+    *lab.route.held.lock().unwrap() = Some(("exchange", held.clone()));
+    until("a look is waiting on a control socket", || {
+        held.entered.load(Ordering::Acquire)
+    });
+    let observer = lab.observer.as_ref().unwrap();
+    // A poll takes its follower's model for a moment now and then, so each
+    // is looked at twenty times: one held across the look's wait would be
+    // held every time.
+    let followers = observer.followers();
+    let mut free = vec![0; followers.len()];
+    for _ in 0..20 {
+        assert!(!observer.all.locked(), "the set is free");
+        for (follower, free) in followers.iter().zip(&mut free) {
+            *free += usize::from(follower.model.try_lock().is_ok());
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(free.iter().all(|free| *free >= 10), "{free:?}");
+    let asked = std::time::Instant::now();
+    observer.nudge();
+    assert!(asked.elapsed() < Duration::from_millis(250));
+    for reader in ["local", "local/reports"] {
+        let read = read_ms(&lab, reader).unwrap();
+        until("the follower polls on while the look waits", || {
+            read_ms(&lab, reader).is_some_and(|at| at > read)
+        });
+    }
+    assert!(held.entered.load(Ordering::Acquire) && !held.released.load(Ordering::Acquire));
+    // Turning hooks off does not wait for the look either.
+    let stopping = std::time::Instant::now();
+    lab.observer.take();
+    assert!(stopping.elapsed() < Duration::from_millis(250));
+    held.released.store(true, Ordering::Release);
+}

@@ -34,9 +34,9 @@ pub struct Way {
     /// A route that is shut tells of no home, as one whose machine cannot
     /// be reached.
     pub shut: AtomicBool,
-    /// Holds `prepare`, or a stream that `dial` has just got, until
-    /// released, whether or not the one who asked has stopped: a route
-    /// that does not listen.
+    /// Holds `prepare`, an `exchange`, or a stream that `dial` has just
+    /// got, until released, whether or not the one who asked has stopped:
+    /// a route that does not listen.
     pub held: Mutex<Option<(&'static str, Arc<Hold>)>>,
     /// Where `dial` leads in place of the gateway: somewhere that takes
     /// the stream and never says a word on it.
@@ -108,6 +108,7 @@ impl Route for Way {
         let said: Value = serde_json::from_slice(line).unwrap_or_default();
         let verb = said["verb"].as_str().unwrap_or("").to_owned();
         self.asked().verbs.push(verb);
+        self.hold("exchange");
         let slow = self.slow.lock().unwrap();
         if slow.iter().any(|name| name == home.profile().name()) {
             return Err(Silent::TimedOut);

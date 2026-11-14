@@ -106,6 +106,13 @@ impl Followers {
         self.set.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Whether the set is locked right now, for the test that looks while
+    /// a gateway is being asked.
+    #[cfg(test)]
+    pub(super) fn locked(&self) -> bool {
+        self.set.try_lock().is_err()
+    }
+
     /// A Hermes hook reported a turn started, waiting or ended: every
     /// gateway is polled now. A hook does not say which gateway it is of.
     pub(super) fn nudge(&self) {
