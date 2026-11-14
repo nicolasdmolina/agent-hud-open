@@ -116,13 +116,11 @@ fn a_list_on_a_home_may_let_others_read_it_and_nothing_more() {
     }
     // A write entry is found wherever it is in the list.
     allow(&home, "everyone allow add_file");
-    allow(&home, "everyone deny delete");
+    allow(&home, "daemon deny delete");
     allow(&home, &format!("{user} allow add_file"));
-    assert_eq!(
-        asked(&far, &lab, &home),
-        unchecked(Unchecked::HomeOpenToOthers)
-    );
+    let said = asked(&far, &lab, &home);
     clear(&home);
+    assert_eq!(said, unchecked(Unchecked::HomeOpenToOthers));
     assert_eq!(gate.connections(), 4);
 }
 
@@ -221,8 +219,10 @@ fn where_a_list_cannot_be_read_the_relay_refuses() {
         \x20       return getattr(self._library, name)\n\
         ctypes.CDLL = _WithoutLists\n";
     assert_eq!(refused(&far_with(SHORT, no_calls)), "permissions-unread");
-    // A list the relay reads and cannot make out.
-    allow(&home, "everyone deny delete");
+    // A list the relay reads and cannot make out. (The entry is for one
+    // other user: one for everyone would keep the lab's own folder from
+    // being removed when the test ends.)
+    allow(&home, "daemon deny delete");
     let odd_words = "import ctypes\n\
         ctypes.string_at = lambda said: b'!#acl 1\\nuser:0:someone:502:audit:read\\n'\n";
     assert_eq!(refused(&far_with(SHORT, odd_words)), "permissions-unread");
@@ -230,5 +230,7 @@ fn where_a_list_cannot_be_read_the_relay_refuses() {
     assert_eq!(refused(&far_with(SHORT, no_fields)), "permissions-unread");
     assert_eq!(gate.connections(), 0);
     // The relay as it is reads the same list and is let through.
-    assert_eq!(asked(&Far::default(), &lab, &home), Ok(()));
+    let said = asked(&Far::default(), &lab, &home);
+    clear(&home);
+    assert_eq!(said, Ok(()));
 }
