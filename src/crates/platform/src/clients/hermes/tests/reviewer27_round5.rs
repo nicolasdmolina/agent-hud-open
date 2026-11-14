@@ -19,6 +19,12 @@
 //! entered whatever was found. The probe's own text stands, with its
 //! imports and the one helper it called written out. Every assertion
 //! stands.
+//!
+//! And the gate was one slot for the whole process. The two tests run
+//! side by side with the rest, each set the slot and cleared it, and one
+//! took the other's: its close found no gate and went on (once in 19
+//! runs of the suite; the verifier ran them one at a time). Each
+//! observer has a slot of its own now.
 use super::super::{answer, follower::End};
 use super::unreachable::{asks, follower, red, started, ASKED};
 use super::{fake::Fake, fake::Hold, lab, until};
@@ -47,14 +53,14 @@ fn at_close(observer: usize, id: &str) {
 }
 
 // This gate pauses only the disposable copy immediately after Close's try_recv.
-static CLOSE_EMPTY: std::sync::Mutex<Option<(usize, String, Arc<Hold>)>> =
-    std::sync::Mutex::new(None);
+static CLOSE_EMPTY: std::sync::Mutex<Vec<(usize, String, Arc<Hold>)>> =
+    std::sync::Mutex::new(Vec::new());
 pub(in super::super) fn close_read_empty(observer: usize, id: &str, empty: bool) {
     let gate = CLOSE_EMPTY
         .lock()
         .unwrap()
-        .as_ref()
-        .filter(|(of, request, _)| *of == observer && request == id && empty)
+        .iter()
+        .find(|(of, request, _)| *of == observer && request == id && empty)
         .map(|(_, _, gate)| gate.clone());
     if let Some(gate) = gate {
         gate.entered.store(true, Ordering::Release);
@@ -88,11 +94,9 @@ fn successful_send_during_close(restart: bool) {
         accepted_gate.0.load(Ordering::Acquire)
     });
     let close_gate = Arc::new(Hold::default());
-    *CLOSE_EMPTY.lock().unwrap() = Some((
-        Arc::as_ptr(&shared) as usize,
-        id.clone(),
-        close_gate.clone(),
-    ));
+    let observer = Arc::as_ptr(&shared) as usize;
+    let gate = (observer, id.clone(), close_gate.clone());
+    CLOSE_EMPTY.lock().unwrap().push(gate);
     let ended = if restart {
         let shared = shared.clone();
         Some(std::thread::spawn(move || shared.end(End::Restarted)))
@@ -122,7 +126,8 @@ fn successful_send_during_close(restart: bool) {
     until("close released and card absent", || {
         shared.model().gateway.pending(&id).is_none()
     });
-    *CLOSE_EMPTY.lock().unwrap() = None;
+    let own = |(of, _, _): &(usize, String, Arc<Hold>)| *of != observer;
+    CLOSE_EMPTY.lock().unwrap().retain(own);
     std::thread::sleep(Duration::from_millis(150));
     let actual = lab.requests.reviewer27_notes(&id);
     let model = shared.model();

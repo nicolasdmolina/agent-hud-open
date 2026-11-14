@@ -107,6 +107,18 @@ impl Shared {
         self.model.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Whether the follower is ending, or has ended. Ending says so first
+    /// (`active`) and takes the model after, to end there (`stopped`). A
+    /// thread that has the model in between has seen the end, and what it
+    /// brings is not news: a poll that was dropped is no lost socket, and
+    /// an answer that found its way shut is not one that failed. So
+    /// everything a thread does to the cards asks this first, with the
+    /// model in hand: taking an input, giving a request back, noting a
+    /// receipt. Turning client hooks off leaves no receipt.
+    pub(super) fn ending(&self, model: &Model) -> bool {
+        model.stopped || !self.active()
+    }
+
     /// The profile whose home is asked.
     pub(super) fn asked(&self) -> Profile {
         let asked = self.asked.lock().unwrap_or_else(PoisonError::into_inner);
@@ -118,10 +130,7 @@ impl Shared {
     /// back to a model that no longer takes anything.
     pub(super) fn apply(&self, input: Input<'_>) {
         let mut model = self.model();
-        // Ending says so first and takes the model after: a thread that
-        // gets here in between has seen the end, and what it brings (a
-        // poll that was dropped, read as a lost socket) is not news.
-        if model.stopped || !self.active() {
+        if self.ending(&model) {
             return;
         }
         self.take(&mut model, input);
@@ -130,7 +139,15 @@ impl Shared {
     /// The model, already locked, takes what happened. What it says is
     /// done, and core is told what the sessions are doing whether or not
     /// anything changed: every input goes through here.
+    ///
+    /// Nothing is taken once the follower is ending: whichever thread
+    /// brings it has the model in hand before the end does, and the end
+    /// decides what becomes of the cards, not what a thread found a
+    /// moment before it.
     pub(super) fn take(&self, model: &mut Model, input: Input<'_>) {
+        if self.ending(model) {
+            return;
+        }
         let now = crate::hooks::now_ms();
         let effects = model.gateway.apply(input, now);
         self.carry(model, effects, now);

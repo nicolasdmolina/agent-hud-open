@@ -56,6 +56,8 @@ mod reviewer27_round3;
 mod reviewer27_round4;
 #[path = "tests/reviewer27_round5.rs"]
 mod reviewer27_round5;
+#[path = "tests/reviewer27_round6.rs"]
+mod reviewer27_round6;
 #[path = "tests/round3.rs"]
 mod round3;
 #[path = "tests/round4.rs"]

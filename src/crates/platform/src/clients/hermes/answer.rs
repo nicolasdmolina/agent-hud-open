@@ -154,7 +154,7 @@ impl Going<'_> {
         // A follower that ended takes nothing more. One that ended with
         // its gateway (`follower.rs`) kept the answers whose cards it
         // closed, and the reply still gives each its receipt.
-        if model.stopped && !closed {
+        if self.shared.ending(&model) && !closed {
             return;
         }
         // The card of this answer came back since (its socket was lost

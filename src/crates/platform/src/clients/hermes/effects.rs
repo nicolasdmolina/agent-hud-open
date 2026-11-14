@@ -98,7 +98,7 @@ impl Shared {
         let mut model = self.model();
         let id = pending.id();
         let out = model.taken.get(&id) == Some(&wait);
-        if model.stopped || model.gateway.pending(&id).is_none() || !out {
+        if self.ending(&model) || model.gateway.pending(&id).is_none() || !out {
             return;
         }
         let now = crate::hooks::now_ms();

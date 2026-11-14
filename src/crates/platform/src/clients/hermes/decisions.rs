@@ -62,6 +62,11 @@ pub(super) fn watch(shared: Arc<Shared>) {
 /// delivered.
 fn decided(shared: &Shared) -> Vec<(Pending, Value, u64)> {
     let mut model = shared.model();
+    // A follower that is ending takes no decision: the end has what
+    // waits for it, and says nothing of it.
+    if shared.ending(&model) {
+        return Vec::new();
+    }
     let (mut arrived, mut over) = (Vec::new(), Vec::new());
     for (id, waiter) in &model.waiters {
         match waiter.response.try_recv() {
