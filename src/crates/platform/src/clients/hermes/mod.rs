@@ -33,6 +33,7 @@ mod answer;
 mod control;
 mod effects;
 pub mod far;
+pub mod far_history;
 mod link;
 mod log;
 mod opening;

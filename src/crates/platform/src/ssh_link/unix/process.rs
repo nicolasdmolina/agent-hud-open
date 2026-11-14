@@ -44,10 +44,22 @@ impl Drop for Reaped {
 }
 
 pub(super) fn run(
+    command: Command,
+    input: Option<&[u8]>,
+    limit: Duration,
+    most_output: usize,
+) -> io::Result<Finished> {
+    run_watched(command, input, limit, most_output, &mut |_| {})
+}
+
+/// The same, with `watch` given the standard output so far each time more
+/// of it has arrived.
+pub(super) fn run_watched(
     mut command: Command,
     input: Option<&[u8]>,
     limit: Duration,
     most_output: usize,
+    watch: &mut dyn FnMut(&[u8]),
 ) -> io::Result<Finished> {
     command
         .stdin(if input.is_some() {
@@ -102,8 +114,12 @@ pub(super) fn run(
                 Err(_) => input = &[],
             }
         }
+        let had = done.stdout.len();
         drain(&mut stdout, &mut done.stdout, most_output.saturating_add(1));
         drain(&mut stderr, &mut done.stderr, MOST_ERROR);
+        if done.stdout.len() > had {
+            watch(&done.stdout[..done.stdout.len().min(most_output)]);
+        }
         if done.stdout.len() > most_output {
             done.stdout.truncate(most_output);
             done.cut = Some(Cut::TooMuchOutput);

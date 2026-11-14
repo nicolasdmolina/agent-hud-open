@@ -1,6 +1,8 @@
 //! The link on macOS and Linux: one `ssh` master this process owns, and
 //! short-lived clients that speak to its control socket.
-use super::{Closed, Cut, End, Failure, FarCommand, Forward, Lost, Ran, Refused, Settings, Target};
+use super::{
+    Closed, Cut, End, Failure, FarCommand, Forward, Lost, Ran, Refused, Settings, Target, Watch,
+};
 use std::{
     net::{Ipv4Addr, SocketAddr, TcpListener},
     process::{Child, Command, Stdio},
@@ -162,11 +164,19 @@ impl Link {
     /// status. `CutOff` means this side stopped waiting: the far program
     /// may still be running, and the caller must count it so.
     pub fn run(&self, command: &FarCommand) -> Result<Ran, Failure> {
+        self.run_watched(command, &mut |_| {})
+    }
+
+    /// [`Link::run`], with `watch` given the standard output so far each
+    /// time more of it arrives: when the far program said what is known
+    /// while it still runs.
+    pub fn run_watched(&self, command: &FarCommand, watch: Watch<'_>) -> Result<Ran, Failure> {
         self.usable()?;
         let line = words::far_line(command.script, command.args)?;
         let mut client = Command::new(&self.settings.program);
         client.args(args::client(&self.control, Ask::Session(&line)));
-        let done = process::run(client, command.stdin, command.limit, command.most_output)
+        let (limit, most) = (command.limit, command.most_output);
+        let done = process::run_watched(client, command.stdin, limit, most, watch)
             .map_err(|_| Refused::Unavailable)?;
         let end = match (done.cut, done.status.and_then(|status| status.code())) {
             (Some(cut), _) => End::CutOff(cut),
