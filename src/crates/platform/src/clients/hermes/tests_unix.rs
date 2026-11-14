@@ -2,13 +2,17 @@
 //! speaks the frames Hermes 0.22.5 was recorded sending (`fake.rs`), and,
 //! when asked for by hand, a real one in a Hermes home of its own
 //! (`live.rs`).
-use super::{Observer, Pace};
+use super::{
+    control::{self, Silent},
+    route::{local::Local, Route},
+    Observer, Pace,
+};
 use agent_hud_agents::hermes::AGENT;
 use agent_hud_core::requests::Requests;
 use fake::Fake;
 use serde_json::Value;
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -30,6 +34,14 @@ mod live;
 mod reconnect;
 #[path = "tests/replies.rs"]
 mod replies;
+#[path = "tests/reverify25.rs"]
+mod reverify25;
+#[path = "tests/reverify3.rs"]
+mod reverify3;
+#[path = "tests/route.rs"]
+mod route;
+#[path = "tests/script.rs"]
+mod script;
 #[path = "tests/stalled.rs"]
 mod stalled;
 #[path = "tests/states.rs"]
@@ -38,6 +50,8 @@ mod states;
 mod verifier;
 #[path = "tests/verifier2.rs"]
 mod verifier2;
+#[path = "tests/verifier25.rs"]
+mod verifier25;
 #[path = "tests/verifier3.rs"]
 mod verifier3;
 #[path = "tests/verifier4.rs"]
@@ -62,10 +76,11 @@ fn quick() -> Pace {
     }
 }
 
-/// A Hermes home and an app data folder of the user's own, and the
-/// requests the connection registers its cards with.
+/// A Hermes home and an app data folder of the user's own, the route to
+/// that home, and the requests the connection registers its cards with.
 struct Lab {
     home: PathBuf,
+    route: Arc<route::Way>,
     data: PathBuf,
     requests: Requests,
     observer: Option<Observer>,
@@ -79,6 +94,7 @@ fn lab() -> Lab {
     crate::os::private_directory(&home).unwrap();
     crate::os::private_directory(&data).unwrap();
     Lab {
+        route: Arc::new(route::Way::to(&home)),
         home,
         data,
         requests: Requests::default(),
@@ -91,8 +107,8 @@ impl Lab {
     /// Starts following the gateway of the home, as turning hooks on does.
     fn follow(&mut self) {
         let wake = Arc::new(|| {});
-        let observer = Observer::start_at(
-            self.home.clone(),
+        let observer = Observer::start_on(
+            self.route.clone(),
             &self.data,
             self.requests.clone(),
             wake,
@@ -145,6 +161,14 @@ impl Drop for Lab {
             eprintln!("the connection's log:\n{}", self.log());
         }
     }
+}
+
+/// Asks the control socket of the Hermes home at `home` one question, as
+/// the route to this machine does.
+fn ask(home: &Path, line: &Value, wait: Duration) -> Result<Value, Silent> {
+    let route = Local::at(home);
+    let home = route.homes()?.remove(0);
+    control::ask(&route, &home, line, wait)
 }
 
 /// Waits for `met`, which takes hundredths of a second; the limit is for a

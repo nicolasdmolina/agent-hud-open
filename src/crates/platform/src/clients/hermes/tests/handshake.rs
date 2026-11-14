@@ -2,7 +2,7 @@
 //! build is left to the hooks, one that starts is waited for, the control
 //! socket is asked only where it is the user's own, and no ticket is ever
 //! written down.
-use super::super::control::{self, Silent};
+use super::super::{control::Silent, route::local};
 use super::{fake::fixture, fake::Fake, lab, until};
 use serde_json::{json, Value};
 use std::{
@@ -197,7 +197,7 @@ fn answering(path: &Path) {
 fn the_control_socket_is_asked_only_where_it_is_the_users_own() {
     let lab = lab();
     let wait = Duration::from_secs(10);
-    let ask = |home: &Path| control::ask(home, &json!({"verb": "identify"}), wait);
+    let ask = |home: &Path| super::ask(home, &json!({"verb": "identify"}), wait);
     // No socket and no pointer: no gateway.
     assert_eq!(ask(&lab.home), Err(Silent::Absent));
     let socket = lab.home.join("gateway.sock");
@@ -234,10 +234,10 @@ fn a_pointer_file_is_followed_only_to_the_folder_hermes_makes_for_that_home() {
     let home = beside.join("home");
     crate::os::private_directory(&home).unwrap();
     let wait = Duration::from_secs(10);
-    let ask = |home: &Path| control::ask(home, &json!({"verb": "identify"}), wait);
+    let ask = |home: &Path| super::ask(home, &json!({"verb": "identify"}), wait);
     // Where a home cannot hold a socket, Hermes listens in a private
     // folder named after the home and leaves a pointer to it.
-    let folder = beside.join(control::folder_of(&home));
+    let folder = beside.join(local::folder_of(&home));
     crate::os::private_directory(&folder).unwrap();
     let socket = folder.join("control.sock");
     answering(&socket);

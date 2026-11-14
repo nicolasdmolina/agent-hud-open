@@ -115,7 +115,7 @@ fn an_answer_the_gateway_does_not_take_gives_up_and_its_card_comes_back() {
 
 #[test]
 fn what_a_failed_write_left_unsent_is_never_sent_with_a_later_frame() {
-    use super::super::{control, socket::Socket};
+    use super::super::socket::Socket;
     use agent_hud_agents::hermes::gateway::{
         granted, identify, identify_line, resume, ticket_line, GatewayId, Identified, Machine,
         Profile, Scope, SessionRef,
@@ -124,12 +124,13 @@ fn what_a_failed_write_left_unsent_is_never_sent_with_a_later_frame() {
     let gateway = Fake::start(&lab.home, "instance-1");
     let id = gateway.play("question-answered-elsewhere", Some("clarify.request"));
     let wait = Duration::from_secs(5);
-    let told = control::ask(&lab.home, &identify_line(), wait).unwrap();
+    let told = super::ask(&lab.home, &identify_line(), wait).unwrap();
     let Identified::Ready(instance) = identify(&told, lab.home.to_str().unwrap()) else {
         panic!("not ready")
     };
-    let grant = control::ask(&lab.home, &ticket_line(&instance, Scope::Host), wait).unwrap();
-    let mut socket = Socket::open(&instance, granted(&grant, &instance).unwrap()).unwrap();
+    let grant = super::ask(&lab.home, &ticket_line(&instance, Scope::Host), wait).unwrap();
+    let ticket = granted(&grant, &instance).unwrap();
+    let mut socket = Socket::open(&*lab.route, &instance, ticket).unwrap();
     socket.write_within(Duration::from_millis(300));
     // Subscribed, and from then on the gateway reads nothing.
     let stalled = Arc::new(Hold::default());
