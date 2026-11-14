@@ -8,6 +8,7 @@ use super::{
     fake::{home_of, Fake},
     lab, quick, until, Lab,
 };
+use agent_hud_agents::hermes::gateway::Profile;
 use serde_json::Value;
 use std::{
     sync::{atomic::Ordering, Arc},
@@ -404,4 +405,151 @@ fn a_profile_two_instances_claim_gets_no_card_until_a_fresh_discovery_agrees() {
         said,
         ["contested profiles=[alpha]", "contested profiles=[]"]
     );
+}
+
+/// Two gateways that both claim `alpha`, each with a question waiting
+/// there and one in a profile of its own. The second is named by `alpha`
+/// and asked in the home of `beta`, where its socket is.
+fn contest(lab: &mut Lab) -> (Fake, Fake) {
+    let first = Fake::serving(&lab.home, "aaaaaaaa-first", &["default", "alpha"]);
+    let second = Fake::serving(&lab.home, "bbbbbbbb-second", &["beta"]);
+    second.serve(&["beta", "alpha"]);
+    first.asks("alpha", "s-alpha-first", "p1");
+    second.asks("alpha", "s-alpha-second", "p4");
+    first.asks("default", "s-default", "p2");
+    second.asks("beta", "s-beta", "p3");
+    lab.follow_all();
+    let rest = [
+        "hermes:local/alpha:beta:s-beta:p3",
+        "hermes:local:default:s-default:p2",
+    ];
+    until("the cards of the other profiles show", || {
+        lab.shown() == rest
+    });
+    until("the contest is known", || {
+        lab.said("contested") == ["contested profiles=[alpha]"]
+    });
+    lab.looks(3);
+    assert_eq!(lab.shown(), rest, "neither opens a card for alpha");
+    (first, second)
+}
+
+/// How many times the observer was started and stopped, by its log:
+/// once and never where client hooks were turned on and left on.
+fn turned(lab: &Lab) -> (usize, usize) {
+    let said = lab.said("");
+    let lines = |word: &str| said.iter().filter(|line| *line == word).count();
+    (lines("started"), lines("stopped"))
+}
+
+/// A gateway that stopped for good claims nothing more. Its follower
+/// stays, with its cards, and goes on asking; the contest it was part of
+/// ends at the next whole look, and the gateway that still serves the
+/// profile opens its card. Client hooks are never turned off for it.
+#[test]
+fn a_contest_ends_when_one_claimant_is_truly_stopped_and_no_hooks_are_toggled() {
+    let mut lab = lab();
+    let (first, second) = contest(&mut lab);
+    let followers = lab.observer.as_ref().unwrap().followers();
+    let stopped = lab.follower("local/alpha");
+    let card = |id: &str| lab.cards().into_iter().find(|card| card["id"] == id);
+    let (kept, untouched) = (
+        card("hermes:local/alpha:beta:s-beta:p3"),
+        card("hermes:local:default:s-default:p2"),
+    );
+
+    // The second gateway stops: its sockets close and nobody listens at
+    // its control socket any more.
+    second.kill();
+    let opened = "hermes:local:alpha:s-alpha-first:p1";
+    until("the gateway that still serves alpha opens its card", || {
+        lab.shown().contains(&opened.to_owned())
+    });
+    lab.looks(3);
+    let all = [
+        "hermes:local/alpha:beta:s-beta:p3",
+        opened,
+        "hermes:local:default:s-default:p2",
+    ];
+    assert_eq!(lab.shown(), all);
+    assert_eq!(lab.said("s-alpha-first:p1").len(), 1, "opened once");
+    assert_eq!(
+        lab.said("contested"),
+        ["contested profiles=[alpha]", "contested profiles=[]"]
+    );
+    // Nothing ended and nothing was turned off: the same observer, the
+    // same two followers. The stopped gateway's follower found its
+    // gateway gone, keeps its card as it was, and goes on asking.
+    let now = lab.observer.as_ref().unwrap().followers();
+    assert_eq!(now.len(), 2);
+    for (was, is) in followers.iter().zip(&now) {
+        assert!(Arc::ptr_eq(was, is));
+    }
+    assert!(lab.observer.as_ref().unwrap().ends().is_empty());
+    assert!(stopped.active() && stopped.gone.load(Ordering::Acquire));
+    assert_eq!(card("hermes:local/alpha:beta:s-beta:p3"), kept);
+    assert_eq!(card("hermes:local:default:s-default:p2"), untouched);
+    let alpha = Profile::named("alpha").unwrap();
+    assert!(
+        stopped.model().gateway.holds().contains(&alpha),
+        "nothing retired"
+    );
+    assert!(lab.said("retired").is_empty(), "{}", lab.log());
+    assert_eq!(turned(&lab), (1, 0), "{}", lab.log());
+    assert!(first.world().mismatched.is_empty());
+
+    // It comes back as a new instance that claims alpha again: a restart
+    // for its follower, and a contest again. The card that shows stays,
+    // and the new instance's question there gets none.
+    let again = Fake::serving(&lab.home, "cccccccc-second", &["beta"]);
+    again.serve(&["beta", "alpha"]);
+    again.asks("alpha", "s-alpha-again", "p5");
+    until("the contest is back", || lab.said("contested").len() == 3);
+    lab.looks(3);
+    assert_eq!(lab.shown(), [opened, "hermes:local:default:s-default:p2"]);
+    assert_eq!(lab.observer.as_ref().unwrap().ends(), ["local/alpha"]);
+}
+
+/// The same contest, ended the other way a gateway is known to be gone:
+/// it comes back as another instance, which ends its follower, and that
+/// instance does not claim the profile.
+#[test]
+fn a_contest_ends_when_one_claimant_comes_back_as_an_instance_without_the_profile() {
+    let mut lab = lab();
+    let (_first, second) = contest(&mut lab);
+    let old = lab.follower("local/alpha");
+    second.kill();
+    let again = Fake::serving(&lab.home, "cccccccc-second", &["beta"]);
+    again.asks("beta", "s-beta-again", "p6");
+    let all = [
+        "hermes:local/beta:beta:s-beta-again:p6",
+        "hermes:local:alpha:s-alpha-first:p1",
+        "hermes:local:default:s-default:p2",
+    ];
+    until(
+        "alpha's card opens and the new instance is followed",
+        || lab.shown() == all,
+    );
+    assert!(!old.active(), "its follower ended with it");
+    assert_eq!(lab.observer.as_ref().unwrap().ends(), ["local/alpha"]);
+    assert_eq!(lab.readers(), ["local", "local/beta"]);
+    assert_eq!(lab.said("s-alpha-first:p1").len(), 1, "opened once");
+    assert_eq!(turned(&lab), (1, 0), "{}", lab.log());
+}
+
+/// And the two that keep a claim: a gateway whose control socket is
+/// gone while its follower's socket stays open, and one that stalls.
+/// Neither is gone, so the contest stands (the reviews' probes are in
+/// `verifier26.rs` and `reverify26.rs`; here the follower's own word).
+#[test]
+fn a_gateway_that_stalls_or_only_lost_its_control_socket_is_not_gone() {
+    let mut lab = lab();
+    let (_first, _second) = contest(&mut lab);
+    let follower = lab.follower("local/alpha");
+    let before = lab.shown();
+    std::fs::remove_file(home_of(&lab.home, "beta").join("gateway.sock")).unwrap();
+    lab.looks(6);
+    assert!(follower.active() && !follower.gone.load(Ordering::Acquire));
+    assert_eq!(lab.shown(), before);
+    assert_eq!(lab.said("contested"), ["contested profiles=[alpha]"]);
 }

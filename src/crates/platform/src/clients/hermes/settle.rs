@@ -19,7 +19,11 @@
 //! either. The claims are what each instance that answered says it
 //! serves, and what each follower whose instance did not answer still
 //! holds. A contest ends when a look hears every claimant and one of
-//! them alone still claims the profile.
+//! them alone still claims the profile. A gateway that is gone is no
+//! claimant: its follower lost its socket and found nobody listening at
+//! its control socket. That follower stays, with its cards, and goes on
+//! asking; a gateway that only stalls, or only lost its control socket,
+//! is not gone and keeps its claims.
 //!
 //! A gateway that would be named as a living follower already is (that
 //! follower kept its id after its anchor profile left it) is told apart
@@ -35,7 +39,7 @@ use agent_hud_agents::hermes::gateway::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, PoisonError},
+    sync::{atomic::Ordering, Arc, PoisonError},
 };
 
 /// A follower that ended in this look: its reader, and why.
@@ -111,7 +115,10 @@ impl Followers {
     /// whose instance did not answer, and whose home did not answer as
     /// another, claims what it still holds: no socket there is not its
     /// word that it let go. A look that missed a reply, or did not hear a
-    /// follower's instance, ends no contest there was.
+    /// follower's instance, ends no contest there was. A follower whose
+    /// gateway is gone (`Shared::gone`) is the one exception: a gateway
+    /// that runs no more claims nothing, so a contest it was part of ends
+    /// at the next whole look, with no one having to turn hooks off.
     fn contest(&self, set: &[Arc<Shared>], seen: &Seen) -> BTreeSet<Profile> {
         let mut claims: BTreeMap<Profile, usize> = BTreeMap::new();
         let mut claim = |profile: &Profile| *claims.entry(profile.clone()).or_default() += 1;
@@ -123,6 +130,11 @@ impl Followers {
             let model = follower.model();
             let heard = |bound: &str| seen.instances.contains_key(bound);
             if model.gateway.instance().is_none_or(heard) {
+                continue;
+            }
+            // Its gateway is gone, as the follower found for itself: it
+            // claims nothing, and it is no claimant left to hear.
+            if follower.gone.load(Ordering::Acquire) {
                 continue;
             }
             whole = false;

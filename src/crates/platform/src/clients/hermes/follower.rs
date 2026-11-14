@@ -53,6 +53,14 @@ pub(super) struct Shared {
     /// it follows. What that means is not its to say: the gateway may have
     /// restarted, or the profile may be another gateway's now.
     pub(super) found: Mutex<Option<String>>,
+    /// Its gateway is gone, as the follower itself found: it has no socket
+    /// open on it, and when it last asked, nobody listened at its control
+    /// socket. Not so while its socket is open, whatever became of the
+    /// control socket, nor where the control socket is there and did not
+    /// answer in time: those gateways may run. The follower goes on asking
+    /// and keeps its cards; what a gateway that is gone claimed, it
+    /// claims no more (`settle.rs`).
+    pub(super) gone: AtomicBool,
     /// Asks for a look at every gateway of the machine.
     pub(super) look: Arc<Signal>,
     /// Every reader that was ended in core, for the tests that count them.

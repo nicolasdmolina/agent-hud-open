@@ -237,6 +237,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         asked: Mutex::new(Profile::Default),
         born: Mutex::default(),
         found: Mutex::default(),
+        gone: AtomicBool::new(false),
         look: Arc::default(),
         ends: Arc::default(),
     };

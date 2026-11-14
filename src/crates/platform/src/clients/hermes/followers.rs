@@ -175,6 +175,7 @@ impl Followers {
             asked: Mutex::new(asked),
             born: Mutex::new(born),
             found: Mutex::default(),
+            gone: AtomicBool::new(false),
             look: self.look.clone(),
             #[cfg(test)]
             ends: self.ends.clone(),

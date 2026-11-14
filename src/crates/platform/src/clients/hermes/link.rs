@@ -23,7 +23,7 @@ use agent_hud_agents::hermes::gateway::{
 };
 use serde_json::Value;
 use std::{
-    sync::{Arc, PoisonError},
+    sync::{atomic::Ordering, Arc, PoisonError},
     time::{Duration, Instant},
 };
 
@@ -100,7 +100,13 @@ fn born(shared: &Shared) -> std::sync::MutexGuard<'_, Option<Value>> {
 /// only was slow: identify can stall on a busy gateway and answer at once
 /// the next time. The answer comes with the home that was asked. A
 /// follower made from an answer takes that one first.
+///
+/// This is where a follower learns that its gateway is gone: its socket
+/// is lost, or it would not be asking, and nobody listens at the control
+/// socket of its home. A home that cannot be told of, and a control
+/// socket that is there and does not answer, say no such thing.
 fn asked(shared: &Shared) -> Result<(Value, Home), Silent> {
+    shared.gone.store(false, Ordering::Release);
     let home = home(shared)?;
     if let Some(answer) = born(shared).take() {
         return Ok((answer, home));
@@ -110,8 +116,10 @@ fn asked(shared: &Shared) -> Result<(Value, Home), Silent> {
     let answer = match ask() {
         Err(Silent::TimedOut) => ask(),
         answer => answer,
-    }?;
-    Ok((answer, home))
+    };
+    let nobody = matches!(answer, Err(Silent::Absent));
+    shared.gone.store(nobody, Ordering::Release);
+    Ok((answer?, home))
 }
 
 /// Whether `answer` is another instance than the one this follower
