@@ -2,27 +2,21 @@
 
 It is sent on standard input (`python3 -I - MARK DEADLINE HOME REQUEST`)
 and is never a file on the far disk. It reads `HOME/state.db` where that
-file is, with its write-ahead log, through a connection that cannot change
-it, and runs nothing but a SELECT. It imports nothing of Hermes's.
-
-Order of work, which is the contract `far_history.rs` checks:
+file is, through a connection that cannot change it, and runs nothing but
+a SELECT. It imports nothing of Hermes's. `far_history.rs` has the rest.
 
 1. One reader at a time for a home. MARK is one of this process's own
-   arguments, so the process list shows every reader. Another one with a
-   lower process id is alive: answer `busy` and open nothing. Only ones
-   with a higher id: they leave when they see this one, so wait for that,
-   and answer `busy` if they stay. The database is opened only after a
-   listing that showed no other reader.
-2. Write `started`. The deadline counts from here, by this clock.
+   arguments, so the process list shows every reader. One with a lower
+   process id is alive: answer `busy` and open nothing. Only ones with a
+   higher id: wait for them to leave, as they do when they see this one.
+2. Write `started`. The deadline counts from here: a watchdog thread ends
+   the process then whatever it is doing, and a system timer stands behind.
 3. Read, with everything kept in memory, and close the database.
 4. Only then write the rows and the last line, which carries their counts.
 
-A watchdog thread ends the process at the deadline whatever it is doing,
-a query or a blocked write included, and a timer of the system's stands
-behind it. A write that fails means the channel is gone: end at once. The
-end of this text on standard input is how the program arrives, not that.
-Exit status: 0 said what it had to; 1 crashed (one line on standard
-error, with no row text); 3 the deadline; 4 the channel was gone.
+A write that fails means the channel is gone: end at once. Exit status: 0
+said what it had to; 1 crashed (one line on standard error, with no row
+text); 3 the deadline; 4 the channel was gone.
 """
 import hashlib
 import json
@@ -43,13 +37,11 @@ TIE_WAIT = 3.0  # how long a reader waits for higher process ids to leave
 TOKENS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
 SESSION = ("title", "cwd", "source", "model", "billing_provider", "billing_base_url",
            "billing_mode") + TOKENS + ("ended_at", "last_activity_at", "profile_name")
-USAGE = ("model", "billing_provider", "billing_base_url", "billing_mode", "task") \
-    + TOKENS + ("first_seen", "last_seen")
+USAGE = ("model", "billing_provider", "billing_base_url", "billing_mode", "task") + TOKENS + ("first_seen", "last_seen")
 END = [0.0]  # when the watchdog ends this process, on the monotonic clock
-
-
-class TooLarge(Exception):
-    """What was read does not fit the output bound."""
+NONE = [0, 0, 0, 0]
+ERRORS = (("locked", "db-locked"), ("unable to open", "db-open"), ("no such", "db-schema"),
+          ("malformed", "db-corrupt"), ("not a database", "db-corrupt"))
 
 
 def watchdog():
@@ -62,8 +54,7 @@ def watchdog():
 
 def arm(seconds):
     END[0] = time.monotonic() + seconds
-    if hasattr(signal, "setitimer"):
-        signal.setitimer(signal.ITIMER_REAL, seconds + 1.0)
+    signal.setitimer(signal.ITIMER_REAL, seconds + 1.0)
 
 
 def line(parts):
@@ -112,10 +103,6 @@ def cell(value):
     return value
 
 
-def columns(cursor, table):
-    return {row[0] for row in cursor.execute("SELECT name FROM pragma_table_info(?)", (table,))}
-
-
 def col(have, alias, key, fallback="NULL"):
     return "%s.%s" % (alias, key) if key in have else fallback
 
@@ -159,22 +146,23 @@ def prints(cursor, ask, s, u, most):
             body.append(line(["p", rowid, name, counts]))
             size += len(body[-1])
             if size > most:
-                raise TooLarge()
+                return None
     return body, [len(body), 0, looked, last]
 
 
 def sessions(cursor, ask, s, u, most):
     """Each asked session's row and every one of its usage rows, in one
     statement, so both are of one moment. A session with more usage rows
-    than the HUD's reader accepts is named as skipped, with no row of it."""
-    ids = [name for name in ask.get("ids", []) if isinstance(name, str)][:200]
+    than the HUD's reader accepts is named as skipped, with no row of it.
+    None where they do not fit the output bound."""
+    ids = list(dict.fromkeys(name for name in ask.get("ids", []) if isinstance(name, str)))[:200]
     marks = ",".join("?" * len(ids))
     sql = "SELECT 0,s.rowid,s.id,s.started_at,%s,%s FROM sessions s WHERE s.id IN (%s)" % (
         ",".join(col(s, "s", key) for key in SESSION), print_sql(s, u), marks)
     args = list(ids)
     if "session_id" in u and "model" in u:
-        sql += " UNION ALL SELECT 1,NULL,u.session_id,%s,NULL,NULL,NULL,NULL,NULL FROM session_model_usage u WHERE u.session_id IN (%s)" % (
-            ",".join(col(u, "u", key) for key in USAGE), marks)
+        sql += (" UNION ALL SELECT 1,NULL,u.session_id,%s,NULL,NULL,NULL,NULL,NULL FROM session_model_usage u"
+                " WHERE u.session_id IN (%s)") % (",".join(col(u, "u", key) for key in USAGE), marks)
         args += ids
     rows, usage, skipped, size = {}, {}, set(), 0
     for row in cursor.execute(sql, args):
@@ -192,7 +180,7 @@ def sessions(cursor, ask, s, u, most):
             usage[name].append(made)
         size += len(made)
         if size > most:
-            raise TooLarge()
+            return None
     body, told, counted = [], 0, 0
     for name in ids:
         if name in skipped and name in rows:
@@ -205,37 +193,33 @@ def sessions(cursor, ask, s, u, most):
 
 
 def database(ask, home, sqlite3, most):
-    """One read of `state.db`. The database is closed when this returns."""
-    path, none = os.path.join(home, "state.db"), [0, 0, 0, 0]
+    """One read of `state.db`, with its write-ahead log, through one
+    connection that cannot write. It is closed when this returns."""
+    path = os.path.join(home, "state.db")
     if not os.path.isfile(path):
-        return [], "no-database", none
+        return [], "no-database", NONE
+    db = cursor = None
     try:
         db = sqlite3.connect("file:" + urllib.parse.quote(path) + "?mode=ro", uri=True, timeout=2.0)
-    except sqlite3.Error:
-        return [], "db-open", none
-    cursor = None
-    try:
         db.text_factory = lambda raw: raw.decode("utf-8", "replace")
         cursor = db.cursor()
-        s, u = columns(cursor, "sessions"), columns(cursor, "session_model_usage")
-        if "id" not in s or "started_at" not in s:
-            return [], "db-schema", none
-        body, counts = (prints if ask["k"] == "prints" else sessions)(cursor, ask, s, u, most)
-        return body, "ok", counts
-    except TooLarge:
-        return [], "too-large", none
+        names = [{row[0] for row in cursor.execute("SELECT name FROM pragma_table_info(?)", (table,))}
+                 for table in ("sessions", "session_model_usage")]
+        if "id" not in names[0] or "started_at" not in names[0]:
+            return [], "db-schema", NONE
+        read = prints if ask["k"] == "prints" else sessions
+        found = read(cursor, ask, names[0], names[1], most)
+        # None: what was read does not fit the output bound.
+        return (found[0], "ok", found[1]) if found else ([], "too-large", NONE)
     except sqlite3.Error as error:
-        for word, name in (("locked", "db-locked"), ("unable to open", "db-open"), ("no such", "db-schema"),
-                           ("malformed", "db-corrupt"), ("not a database", "db-corrupt")):
-            if word in str(error):
-                return [], name, none
-        return [], "db-error", none
+        return [], next((name for word, name in ERRORS if word in str(error)), "db-error"), NONE
     finally:
         # The statement is let go before the connection: an unfinished one
         # would keep its read transaction past `close`.
         if cursor is not None:
             cursor.close()
-        db.close()
+        if db is not None:
+            db.close()
 
 
 def held(home):
@@ -245,20 +229,15 @@ def held(home):
     try:
         handle = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
         try:
-            if not stat.S_ISREG(os.fstat(handle).st_mode):
-                raise ValueError("kind")
-            raw, more = b"", b"-"
-            while more and len(raw) <= MOST_HELD:
-                more = os.read(handle, MOST_HELD + 1 - len(raw))
-                raw += more
+            raw = os.read(handle, MOST_HELD + 1) if stat.S_ISREG(os.fstat(handle).st_mode) else b""
         finally:
             os.close(handle)
         text = raw.decode("utf-8")
         if len(raw) > MOST_HELD or json.loads(text) is None:
             raise ValueError("size")
     except (OSError, ValueError):
-        return [], "none", [0, 0, 0, 0]
-    return [line(["held", text])], "ok", [0, 0, 0, 0]
+        return [], "none", NONE
+    return [line(["held", text])], "ok", NONE
 
 
 def main():
@@ -284,7 +263,7 @@ def main():
     arm(deadline)
     say(line(["started", os.getpid()]))
     most = max(1024, min(int(ask.get("most", 1 << 20)), 8 << 20))
-    body, status, counts = [], "ok", [0, 0, 0, 0]
+    body, status, counts = [], "ok", NONE
     if ask["k"] == "held":
         body, status, counts = held(home)
     elif ask["k"] != "probe":

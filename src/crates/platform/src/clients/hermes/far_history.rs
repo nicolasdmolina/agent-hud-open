@@ -262,6 +262,13 @@ impl Reader {
         } else {
             slot.ended(round);
         }
+        // The far program's own word for a crash is one line that names
+        // the kind of error. Any other text is counted and dropped.
+        let crash = ran.stderr.trim_end().strip_prefix("far-history: crash ");
+        let crash = crash.filter(|kind| kind.chars().all(|c| c.is_ascii_alphanumeric()));
+        let crash = crash
+            .map(|kind| format!(" crash={kind}"))
+            .unwrap_or_default();
         let bytes = ran.stdout.len();
         match &answer {
             Ok(reply) => self.say(format!(
@@ -269,7 +276,7 @@ impl Reader {
                 batches::counts(reply)
             )),
             Err(failure) => self.say(format!(
-                "history {kind} failed exit={exit} stderr={} B {ms} ms: {failure}",
+                "history {kind} failed exit={exit} stderr={} B{crash} {ms} ms: {failure}",
                 ran.stderr.len()
             )),
         }

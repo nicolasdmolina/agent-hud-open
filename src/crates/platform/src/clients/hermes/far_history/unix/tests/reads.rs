@@ -1,7 +1,6 @@
 //! Each kind of read against the lab database, and what is too large.
 use super::super::{Failure, Hold, Skip, Slots};
 use super::world::{direct, machine, sessions, settings, sort, World};
-use agent_hud_agents::hermes::far_history::Far;
 use agent_hud_agents::hermes::far_history::{self as far, Reply, Request, MOST_USAGE_ROWS};
 use std::{fs, time::Instant};
 
@@ -337,54 +336,6 @@ fn no_far_command_line_is_longer_than_the_limit() {
     assert_eq!(read.skipped.len(), 3);
     assert!(read.skipped.iter().all(|(_, why)| *why == Skip::Id));
     assert_eq!(read.stopped, None::<Failure>);
-    link.close();
-}
-
-/// A database in write-ahead mode that no process has open, as a profile
-/// whose gateway is stopped leaves it. The reader never opens a database
-/// as one that cannot change, so what it can do here is up to the far
-/// Python's SQLite: Apple's refuses to open it and makes no file; others
-/// open it and leave a write-ahead log and a shared memory file behind.
-#[test]
-#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
-fn a_database_nobody_has_open_is_read_or_named_as_not_opened() {
-    let Some(world) = World::start() else { return };
-    world.add_session(&world.db(), "s1", 2);
-    world.stop_hermes();
-    let files = || {
-        let mut names: Vec<String> = fs::read_dir(&world.home)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        names
-    };
-    assert_eq!(files(), ["state.db"]);
-    let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
-    let read = reader.sessions(&link, &slot, &world.home, &owned(&["s1"]));
-    println!(
-        "  read {} session(s), stopped: {:?}; the home now holds {:?}",
-        read.read.len(),
-        read.stopped,
-        files()
-    );
-    match read.stopped {
-        Some(failure) => {
-            assert_eq!(failure, Failure::Far(Far::Open));
-            assert_eq!(failure.to_string(), "state.db could not be opened");
-            assert!(read.read.is_empty());
-            assert_eq!(read.unread, ["s1"]);
-            // Nothing was made beside the database.
-            assert_eq!(files(), ["state.db"]);
-        }
-        None => assert_eq!(read.read.len(), 1),
-    }
-    // Once Hermes has it open again, it is read.
-    let _hermes = world.db();
-    world.add_session(&_hermes, "s2", 1);
-    let read = reader.sessions(&link, &slot, &world.home, &owned(&["s1", "s2"]));
-    assert_eq!((read.read.len(), read.stopped), (2, None));
     link.close();
 }
 

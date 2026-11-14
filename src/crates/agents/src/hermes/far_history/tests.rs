@@ -61,7 +61,7 @@ fn the_program_is_one_short_file_of_the_standard_library_that_only_reads() {
     }
     assert_eq!(imported.len(), allowed.len(), "{imported:?}");
 
-    // No `immutable`, and the one connection cannot write.
+    // No `immutable` anywhere, and the one connection cannot write.
     assert!(!PROGRAM.to_lowercase().contains("immutable"));
     assert_eq!(PROGRAM.matches("sqlite3.connect(").count(), 1);
     assert!(PROGRAM

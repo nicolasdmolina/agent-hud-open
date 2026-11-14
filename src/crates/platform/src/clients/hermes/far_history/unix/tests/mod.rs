@@ -12,6 +12,7 @@
 //! `cargo test -p agent-hud-platform --lib clients::hermes::far_history::tests -- --ignored --nocapture`.
 mod deadline;
 mod exclusion;
+mod idle;
 mod reads;
 mod refusals;
 mod schema;

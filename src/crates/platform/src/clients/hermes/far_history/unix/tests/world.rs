@@ -126,6 +126,22 @@ impl World {
         let _ = fs::remove_file(self.lab.at(BIN).join("python3"));
     }
 
+    /// The names in the far home, sorted.
+    pub(super) fn files(&self) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(&self.home)
+            .expect("the far home")
+            .map(|entry| {
+                entry
+                    .expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
     /// Replaces the `sessions` table with one whose every read never
     /// ends: a query made slow on purpose, which holds the database open
     /// until something ends the reader.

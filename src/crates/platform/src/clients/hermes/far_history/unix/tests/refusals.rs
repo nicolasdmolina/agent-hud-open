@@ -4,7 +4,9 @@
 use super::super::{Failure, Slots};
 use super::world::{machine, sessions, settings, World, PYTHON};
 use crate::ssh_link::unix::tests::lab::{Lab, BIN};
-use agent_hud_agents::hermes::far_history::{Rejected, Reply, Request};
+use crate::ssh_link::{End, FarCommand};
+use agent_hud_agents::hermes::far_history::{self as far, No, Rejected, Reply, Request};
+use std::time::Duration;
 
 const SECRET: &str = "SECRET-ROW-TEXT";
 
@@ -132,5 +134,78 @@ fn a_machine_with_no_python3_is_no_history_on_this_machine() {
         line.contains("exit=127") && line.ends_with("no history on this machine"),
         "{line}"
     );
+    link.close();
+}
+
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_home_that_is_not_its_own_canonical_path_is_refused() {
+    let Some(world) = World::start() else { return };
+    let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
+    let slot = slots.of(&machine());
+    // The same folder, reached through a link.
+    let linked = world.lab.at("another-way").display().to_string();
+    std::os::unix::fs::symlink(&world.home, &linked).unwrap();
+    let read = reader.read(&link, &slot, &linked, &Request::Probe);
+    assert_eq!(read, Err(Failure::Refused(No::Request)));
+    assert_ne!(far::mark(&linked), far::mark(&world.home));
+    assert_eq!(
+        reader.read(&link, &slot, &world.home, &Request::Probe),
+        Ok(Reply::Probed)
+    );
+    link.close();
+}
+
+/// The program's own crash, made with a request the caller cannot build:
+/// its one line names the kind of error, and nothing of what it held.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_crash_says_its_kind_and_no_row_text() {
+    let Some(world) = World::start() else { return };
+    let link = world.link();
+    let request = format!("{{\"k\":\"prints\",\"after\":\"{SECRET}\"}}");
+    let ran = link
+        .run(&FarCommand {
+            script: far::SCRIPT,
+            args: &[&far::mark(&world.home), "5.000", &world.home, &request],
+            stdin: Some(far::PROGRAM.as_bytes()),
+            limit: Duration::from_secs(30),
+            most_output: 64 * 1024,
+        })
+        .unwrap();
+    assert_eq!(ran.end, End::Ended(1));
+    assert_eq!(ran.stderr, "far-history: crash ValueError\n");
+    let said = String::from_utf8(ran.stdout).unwrap();
+    assert!(
+        said.starts_with("[\"started\",") && said.lines().count() == 1,
+        "{said}"
+    );
+    // The caller logs that word and the status, and still nothing else.
+    let (reader, slots) = (world.reader(settings()), Slots::new());
+    let slot = slots.of(&machine());
+    world.stand_in(&answers(
+        "printf '%s\\n' '[\"started\",1]'; echo 'far-history: crash ValueError' >&2; exit 1",
+    ));
+    let read = reader.read(&link, &slot, &world.home, &sessions(&["s1"]));
+    assert_eq!(read, Err(Failure::Exit(1)));
+    let line = world.logged().pop().unwrap();
+    assert!(
+        line.contains("exit=1 stderr=30 B crash=ValueError"),
+        "{line}"
+    );
+    // A line that is not the program's own is only counted.
+    world.stand_in(&answers(&format!(
+        "echo 'far-history: crash {SECRET} and more' >&2; exit 1"
+    )));
+    assert_eq!(
+        reader.read(&link, &slot, &world.home, &sessions(&["s1"])),
+        Err(Failure::Exit(1))
+    );
+    let line = world.logged().pop().unwrap();
+    assert!(
+        line.contains("exit=1 stderr=44 B ") && !line.contains("crash"),
+        "{line}"
+    );
+    assert!(world.logged().iter().all(|line| !line.contains("SECRET")));
     link.close();
 }
