@@ -58,7 +58,7 @@ fn three() -> Homes {
 fn only_identify_and_session_ticket_can_be_asked() {
     // The two requests are all the type has, and each is the line Hermes's
     // own client sends.
-    let said = identify(&identified("one", &[ROOT, OPS]), OPS, ROOT);
+    let said = identify(&identified("one", &[ROOT, OPS]), OPS);
     let Identified::Ready(instance) = said else {
         panic!("{said:?}");
     };

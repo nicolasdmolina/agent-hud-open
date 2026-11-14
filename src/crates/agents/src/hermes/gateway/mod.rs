@@ -31,8 +31,8 @@ mod ticket;
 pub use ask::{Approval, Ask, Batch, BatchQuestion, Choice, Locked, Pending, Prompt, Question};
 pub use command::{active_list, detach, events_since, resume, Command};
 pub use connection::{
-    identify, refused, Connection, Denied, Failure, Identified, Instance, Served, Unsupported,
-    SESSION_AUTHORITY,
+    identify, refused, served_homes, Connection, Denied, Failure, Identified, Instance, Served,
+    Unsupported, SESSION_AUTHORITY,
 };
 pub use decision::{Answer, NotOffered, Reply};
 pub use effect::{Closed, Effect, Input, Status};

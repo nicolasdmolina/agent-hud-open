@@ -46,13 +46,8 @@ impl Status {
 pub enum Input<'a> {
     /// The control socket is being asked.
     Dialing,
-    /// The control socket answered `identify` for the gateway under `home`,
-    /// on a machine whose Hermes root home is `root`.
-    Identified {
-        answer: &'a Value,
-        home: &'a str,
-        root: &'a str,
-    },
+    /// The control socket answered `identify` for the gateway under `home`.
+    Identified { answer: &'a Value, home: &'a str },
     /// The gateway this model followed is gone: its home answers as another
     /// instance. Nothing it asked survives; whoever follows the new
     /// instance starts from nothing (`served.rs`).

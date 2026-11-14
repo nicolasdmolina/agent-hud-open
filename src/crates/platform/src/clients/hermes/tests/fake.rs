@@ -199,10 +199,12 @@ impl Fake {
         Self::listening(home, instance, &[home.to_path_buf()], &[root, named], None)
     }
 
-    /// Starts a gateway in the Hermes root `root` that serves `profiles`
-    /// and nothing else, by name (`default` is the root home), with a
-    /// control socket in the home of each. A machine with one gateway for
-    /// each profile runs several of these in one root.
+    /// Starts a gateway in the Hermes home `root` that serves the homes at
+    /// `profiles` and nothing else, each by its place there (`default` is
+    /// `root` itself, any other name `root/profiles/<name>`), with a
+    /// control socket in each. A machine with one gateway for each profile
+    /// runs several of these in one root. What it calls each profile on
+    /// the wire is what Hermes calls it (`hermes_name`).
     pub fn serving(root: &Path, instance: &str, profiles: &[&str]) -> Self {
         let homes: Vec<PathBuf> = profiles.iter().map(|name| home_of(root, name)).collect();
         for home in &homes {
@@ -212,7 +214,7 @@ impl Fake {
             .iter()
             .map(|home| home.to_string_lossy().into_owned())
             .collect();
-        let names = profiles.iter().map(|name| (*name).to_owned()).collect();
+        let names = homes.iter().map(|home| hermes_name(home)).collect();
         Self::listening(root, instance, &homes, &served, Some(names))
     }
 
@@ -285,7 +287,7 @@ impl Fake {
             .collect();
         let mut world = self.world();
         world.identify.as_mut().unwrap()["result"]["served_profiles"] = json!(served);
-        world.serves = Some(profiles.iter().map(|name| (*name).to_owned()).collect());
+        world.serves = Some(homes.iter().map(|home| hermes_name(home)).collect());
         let kept = |socket: &&PathBuf| {
             !homes
                 .iter()
@@ -295,8 +297,15 @@ impl Fake {
         world.closed.extend(closed);
     }
 
-    /// A question waits in a session of `profile`, in a turn under way.
+    /// What the gateway calls the profile whose home is at `place`.
+    pub fn named(&self, place: &str) -> String {
+        hermes_name(&home_of(&self.home, place))
+    }
+
+    /// A question waits in a session of the profile at `profile`, in a
+    /// turn under way.
     pub fn asks(&self, profile: &str, session: &str, prompt: &str) {
+        let profile = &self.named(profile);
         let event = |kind: &str, seq: u64, payload: Value| {
             json!({"type": kind, "session_id": session, "replay_epoch": "epoch-1", "seq": seq,
                 "execution_generation": 1, "payload": payload})
@@ -316,8 +325,9 @@ impl Fake {
         self.say("sessions.changed");
     }
 
-    /// A session of `profile` is in a turn, or not.
+    /// A session of the profile at `profile` is in a turn, or not.
     pub fn runs(&self, profile: &str, session: &str, running: bool) {
+        let profile = &self.named(profile);
         {
             let mut world = self.world();
             let stream = world.stream_in(profile, session);
@@ -406,7 +416,29 @@ impl Fake {
     }
 }
 
-/// The home of the profile `name` in the Hermes root `root`.
+/// What Hermes calls the profile whose home is `home`, and so the only
+/// name it takes for it in a call: `<name>` for a home at
+/// `…/profiles/<name>`, and `default` for any other. Hermes takes the
+/// folder above `profiles` for the root of such a home wherever it lies,
+/// so a home configured at `/x/profiles/work` is the profile `work` to
+/// it, and never `default` (`hermes_constants.py`, `_hermes_root_of`;
+/// `hermes_cli/profiles.py`, `get_profile_dir`, `profile_matches_home`;
+/// traced and run against Hermes 0.22.5 in the second review of ticket
+/// 26, `evidence/26/verifier-files-2/hermes-routing-source.txt`).
+pub fn hermes_name(home: &Path) -> String {
+    let inside = home.parent().and_then(Path::file_name);
+    let name = home.file_name().and_then(|name| name.to_str());
+    let plain = |name: &&str| {
+        let letters = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c);
+        !name.is_empty() && name.chars().all(letters) && *name != "default"
+    };
+    match name.filter(plain) {
+        Some(name) if inside.is_some_and(|folder| folder == "profiles") => name.to_owned(),
+        _ => "default".to_owned(),
+    }
+}
+
+/// The home at the place `name` in the Hermes home `root`.
 pub fn home_of(root: &Path, name: &str) -> PathBuf {
     match name {
         "default" => root.to_path_buf(),

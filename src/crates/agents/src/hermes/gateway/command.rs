@@ -50,7 +50,7 @@ pub fn events_since(session: &SessionRef, cursor: Option<&Cursor>, scope: Scope)
     if let Some(cursor) = cursor {
         params["replay_epoch"] = json!(cursor.epoch);
     }
-    Command::routed("session.events.since", params, session.route(), scope)
+    Command::routed("session.events.since", params, &session.profile, scope)
 }
 
 /// Subscribes to a session and returns its snapshot: every prompt and
@@ -60,7 +60,7 @@ pub fn resume(session: &SessionRef, scope: Scope) -> Command {
     Command::routed(
         "session.resume",
         json!({"session_id": session.id()}),
-        session.route(),
+        &session.profile,
         scope,
     )
 }
@@ -71,7 +71,7 @@ pub fn detach(session: &SessionRef, subscription: &str, scope: Scope) -> Command
     Command::routed(
         "session.detach",
         json!({"session_id": session.id(), "subscription_id": subscription}),
-        session.route(),
+        &session.profile,
         scope,
     )
 }

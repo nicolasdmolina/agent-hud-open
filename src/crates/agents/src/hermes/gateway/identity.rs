@@ -8,6 +8,7 @@
 //! where they are made, so no id of this machine can be a far machine's.
 use super::machine::{canonical, Machine, StoredKey};
 use crate::hermes::AGENT;
+use sha2::{Digest, Sha256};
 use std::fmt;
 use std::path::Path;
 
@@ -18,11 +19,34 @@ use std::path::Path;
 pub struct GatewayId {
     machine: Machine,
     anchor: Profile,
+    /// What sets it apart from another gateway of the machine that goes
+    /// by the same anchor (`apart`); none for nearly every gateway.
+    apart: Option<u32>,
 }
 
 impl GatewayId {
     pub fn new(machine: Machine, anchor: Profile) -> Self {
-        Self { machine, anchor }
+        let apart = None;
+        Self {
+            machine,
+            anchor,
+            apart,
+        }
+    }
+    /// The id of a gateway whose anchor is already the name of another
+    /// gateway that is followed: that one kept the name after the profile
+    /// left it, and keeps it. This one is told apart by the first four
+    /// bytes of the SHA-256 of `instance`, the run it was found as: the
+    /// same for as long as it is followed, and no other gateway's.
+    pub fn apart(machine: Machine, anchor: Profile, instance: &str) -> Self {
+        let digest = Sha256::digest(instance.as_bytes());
+        let start = [digest[0], digest[1], digest[2], digest[3]];
+        let apart = Some(u32::from_be_bytes(start));
+        Self {
+            machine,
+            anchor,
+            apart,
+        }
     }
     pub fn machine(&self) -> &Machine {
         &self.machine
@@ -35,13 +59,20 @@ impl GatewayId {
 /// The gateway as its request ids and its reader name write it: `local`
 /// for this machine's gateway anchored at the default profile,
 /// `local/<anchor>` for another of this machine's, `<key>/<anchor>` for a
-/// far one. A key is hex, so it is never `local`.
+/// far one. A key is hex, so it is never `local`. One told apart from a
+/// gateway of the same anchor ends in `~` and eight hex characters
+/// (`local/<anchor>~<8 hex>`): a profile's name holds no `~`, so that is
+/// never another gateway's id.
 impl fmt::Display for GatewayId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (&self.machine, &self.anchor) {
-            (Machine::This, Profile::Default) => f.write_str("local"),
+            (Machine::This, Profile::Default) if self.apart.is_none() => f.write_str("local"),
             (Machine::This, anchor) => write!(f, "local/{}", anchor.name()),
             (Machine::Far(key), anchor) => write!(f, "{}/{}", key.as_str(), anchor.name()),
+        }?;
+        match self.apart {
+            Some(apart) => write!(f, "~{apart:08x}"),
+            None => Ok(()),
         }
     }
 }
@@ -206,12 +237,7 @@ fn write(key: Option<&str>, profile: &Profile, id: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionRef {
     pub gateway: GatewayId,
-    /// The profile the session's ids are made of (`Served::profile`).
     pub profile: Profile,
-    /// Hermes routes a call for it to its default profile, whatever its
-    /// ids call that profile (`Served::route`): the one way the two names
-    /// of a profile differ, for a root that lies in a `profiles` folder.
-    rooted: bool,
     /// Checked when the session is named (`new`), so every id made of it
     /// can be written.
     id: String,
@@ -221,29 +247,12 @@ impl SessionRef {
     /// The session the gateway calls `id` in `profile`. None for an id
     /// that can be no session's.
     pub fn new(gateway: GatewayId, profile: Profile, id: &str) -> Option<Self> {
-        let route = profile.clone();
-        Self::routed(gateway, profile, route, id)
-    }
-    /// The same, where Hermes routes to the profile as `route`, which is
-    /// another name than its sessions' ids hold only for a root that lies
-    /// in a `profiles` folder: Hermes calls that one `default`.
-    pub fn routed(gateway: GatewayId, profile: Profile, route: Profile, id: &str) -> Option<Self> {
         let id = names_a_session(id).then(|| id.to_owned())?;
-        let rooted = route == Profile::Default;
         Some(Self {
             gateway,
             profile,
-            rooted,
             id,
         })
-    }
-    /// The profile Hermes routes a call for this session by.
-    pub fn route(&self) -> &Profile {
-        static ROOT: Profile = Profile::Default;
-        match self.rooted {
-            true => &ROOT,
-            false => &self.profile,
-        }
     }
     /// The gateway's `session_id`, which is `sessions.id` in the profile's
     /// `state.db` and `session_id` in its hook payloads.

@@ -117,7 +117,6 @@ fn verifier3_idle_visits_cannot_write_or_resume_after_stop_close_or_instance_cha
                 shared.apply(Input::Identified {
                     answer: &identity,
                     home: lab.home.to_str().unwrap(),
-                    root: lab.home.to_str().unwrap(),
                 });
             }
             _ => unreachable!(),
@@ -213,7 +212,6 @@ fn verifier3_instance_change_cuts_a_backpressured_answer() {
     shared.apply(Input::Identified {
         answer: &identity,
         home: lab.home.to_str().unwrap(),
-        root: lab.home.to_str().unwrap(),
     });
     assert!(began.elapsed() < Duration::from_millis(250));
     assert!(!shared.current(&id, &instance));

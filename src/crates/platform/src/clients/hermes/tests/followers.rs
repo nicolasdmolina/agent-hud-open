@@ -324,7 +324,6 @@ fn a_late_end_does_not_clear_the_replacement() {
     // The old follower's end arrives again, late, in every form.
     let (cards, flags) = (lab.cards(), lab.waiting());
     old.end(End::Restarted);
-    old.end(End::Replaced);
     old.end(End::Off);
     old.stop();
     // The replacement's states, flags and cards are all still in core.

@@ -81,10 +81,7 @@ pub struct Poll {
     /// newest when it comes back is dropped.
     pub(super) number: u64,
     /// Whether each served profile was listed; None until it answers.
-    /// By the name Hermes routes to it.
     pub(super) profiles: BTreeMap<Profile, Option<bool>>,
-    /// The profile each one's sessions are named by, in their ids.
-    pub(super) named: BTreeMap<Profile, Profile>,
     pub(super) sessions: BTreeMap<SessionRef, Look>,
     pub(super) shown: BTreeMap<SessionRef, Shown>,
     /// The sessions a snapshot was taken of too recently to take another.
@@ -95,16 +92,14 @@ impl Poll {
     pub(super) fn new(
         gateway: GatewayId,
         number: u64,
-        served: impl Iterator<Item = (Profile, Profile)>,
+        served: impl Iterator<Item = Profile>,
         shown: BTreeMap<SessionRef, Shown>,
         recent: BTreeSet<SessionRef>,
     ) -> Self {
-        let named: BTreeMap<Profile, Profile> = served.collect();
         Self {
             gateway,
             number,
-            profiles: named.keys().map(|route| (route.clone(), None)).collect(),
-            named,
+            profiles: served.map(|profile| (profile, None)).collect(),
             sessions: BTreeMap::new(),
             shown,
             recent,
@@ -191,9 +186,7 @@ impl Poll {
                 continue;
             };
             // A row whose id can be no session's is not followed.
-            let named = self.named.get(profile).unwrap_or(profile).clone();
-            let (gateway, route) = (self.gateway.clone(), profile.clone());
-            let Some(session) = SessionRef::routed(gateway, named, route, id) else {
+            let Some(session) = SessionRef::new(self.gateway.clone(), profile.clone(), id) else {
                 continue;
             };
             // A word Hermes adds later is taken as working: the session is read.

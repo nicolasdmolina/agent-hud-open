@@ -5,9 +5,11 @@
 //! the reader and the hook named its session `hermes:<name>:<id>`, and the
 //! gateway, which knew the root, `hermes:<id>`.
 //!
-//! This is that probe. Two things in it are changed, neither an
-//! assertion: its scratch folder is a temporary one, and the schema is
-//! read from the crate's own fixtures.
+//! This is that probe. Three things in it are changed, none an
+//! assertion: its scratch folder is a temporary one, the schema is read
+//! from the crate's own fixtures, and `identify` is no longer told the
+//! root, since the second review showed that Hermes itself names such a
+//! home by its path.
 use super::*;
 use agent_hud_agents::hermes::gateway::{
     identify, Ask, GatewayId, Identified, Machine, Pending, Profile, SessionRef, SESSION_AUTHORITY,
@@ -56,7 +58,7 @@ fn a_profile_shaped_root_is_one_row_with_its_card() {
         "authority_epoch":1,"api_origin":"http://127.0.0.1:54321",
         "capabilities":[SESSION_AUTHORITY],
         "served_profiles":[{"profile_id":home,"home":home}]});
-    let Identified::Ready(instance) = identify(&answer, home, home) else {
+    let Identified::Ready(instance) = identify(&answer, home) else {
         panic!("ready")
     };
     let session = SessionRef::new(

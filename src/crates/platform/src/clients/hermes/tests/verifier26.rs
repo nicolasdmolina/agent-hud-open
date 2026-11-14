@@ -7,8 +7,9 @@
 //!
 //! - The two reclaim probes waited until the question showed under a new
 //!   follower's name, and read that new card's deadline. They now wait for
-//!   three looks at the machine, and read the deadline of the card that
-//!   was there. The newcomer's name is said in the log instead.
+//!   looks at the machine, and read the deadline of the card that was
+//!   there. The newcomer is followed under a name of its own (the second
+//!   review; `reverify26.rs`).
 //! - The partial probe waited until the incomplete look had released the
 //!   contested profile. It now waits for four looks.
 use super::super::Shared;
@@ -16,7 +17,10 @@ use super::{
     fake::{home_of, Fake, Hold},
     lab, until,
 };
-use agent_hud_agents::{hermes::gateway::Profile, parse_event};
+use agent_hud_agents::{
+    hermes::gateway::{GatewayId, Machine, Profile},
+    parse_event,
+};
 use agent_hud_core::{AgentHudCore, SourceRoot};
 use serde_json::{json, Value};
 use std::sync::{atomic::Ordering, Arc};
@@ -72,7 +76,6 @@ fn reclaims(dismiss: bool) {
         "control: retained its name after retirement"
     );
     let newcomer = Fake::serving(&lab.home, "zzzzzzzz-new-alpha", &["alpha"]);
-    newcomer.asks("alpha", "s-alpha", "p9");
     lab.looks(3);
     lab.looks(3);
     let after = needs(&snapshot(&mut core));
@@ -93,11 +96,10 @@ fn reclaims(dismiss: bool) {
     );
     assert!(Arc::ptr_eq(&follower, &lab.follower("local/alpha")));
     assert!(ends.is_empty(), "{ends:?}");
-    assert_eq!(lab.readers(), ["local", "local/alpha"]);
-    assert_eq!(
-        lab.said("gateway waits"),
-        ["gateway waits id=local/alpha instance=zzzzzzzz"]
-    );
+    // The newcomer is followed too, under a name of its own.
+    let alpha = Profile::named("alpha").unwrap();
+    let apart = GatewayId::apart(Machine::This, alpha, "zzzzzzzz-new-alpha").to_string();
+    assert_eq!(lab.readers(), ["local", "local/alpha", apart.as_str()]);
     if dismiss {
         assert!(
             lab.cards().is_empty(),
@@ -246,7 +248,7 @@ fn verifier26_a_custom_root_card_matches_its_stored_session_and_hook() {
         "gateway card must match the stored reader and hook's session id"
     );
     // One row, the stored one, and the gateway was asked for the profile
-    // by the name Hermes routes to it, which no call was refused for.
+    // by the name Hermes calls it, which no call was refused for.
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(card["id"], "hermes:local:work:s1:p1");
     assert_eq!(lab.waiting(), ["hermes:work:s1"]);

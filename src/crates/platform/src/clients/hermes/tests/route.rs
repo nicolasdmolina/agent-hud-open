@@ -360,11 +360,7 @@ fn an_origin_that_is_not_this_machine_is_refused_before_any_dial() {
     let gateway = Fake::start(&lab.home, "instance-1");
     let wait = Duration::from_secs(5);
     let told = super::ask(&lab.home, &identify_line(), wait).unwrap();
-    let Identified::Ready(ready) = identify(
-        &told,
-        lab.home.to_str().unwrap(),
-        lab.home.to_str().unwrap(),
-    ) else {
+    let Identified::Ready(ready) = identify(&told, lab.home.to_str().unwrap()) else {
         panic!("not ready")
     };
     // Something that would take the dial, were one made: a listener on

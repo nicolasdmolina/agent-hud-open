@@ -119,11 +119,7 @@ fn verifier2_non_http_or_non_loopback_origins_never_get_tickets() {
         gateway.world().identify.as_mut().unwrap()["result"]["api_origin"] = json!(origin);
         let answer = gateway.world().identify.clone().unwrap();
         assert_eq!(
-            identify(
-                &answer,
-                lab.home.to_str().unwrap(),
-                lab.home.to_str().unwrap()
-            ),
+            identify(&answer, lab.home.to_str().unwrap()),
             Identified::Unsupported(Unsupported::Origin),
             "{origin}"
         );

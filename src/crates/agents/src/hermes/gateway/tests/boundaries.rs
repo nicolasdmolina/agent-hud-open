@@ -282,34 +282,30 @@ fn a_listed_session_with_no_session_id_is_not_followed() {
 }
 
 #[test]
-fn a_served_home_in_a_folder_that_is_no_profiles_is_not_served() {
+fn a_served_home_in_a_folder_that_is_no_profiles_is_the_default_profile() {
     let mut answer = super::fake::ready("instance-1", &["default", "verify"]);
     let served = answer["served_profiles"].as_array_mut().unwrap();
     let home = format!("/synthetic/profiles/{SRV_KEY}:default");
     served.push(json!({"profile_id": home, "home": home}));
-    let root = "/synthetic";
-    let Identified::Ready(instance) = identify(&answer, root, root) else {
+    let Identified::Ready(instance) = identify(&answer, "/synthetic") else {
         panic!("ready");
     };
-    // The root says which homes are its profiles (ticket 26). A folder in
-    // its `profiles` that is no profile's names nothing and is left out;
-    // by its path alone it was taken for a second default profile. No name
-    // made here holds a colon or a slash.
+    // Every home has a profile, and none takes its name from a folder
+    // that is no profile's: no name made here holds a colon or a slash.
     let profiles: Vec<&str> = instance.served.iter().map(|s| s.profile.name()).collect();
-    assert_eq!(profiles, ["default", "verify"]);
+    assert_eq!(profiles, ["default", "verify", "default"]);
 }
 
 // ---- Round 2: a root in any folder is still followed, read and reported ----
 // (`evidence/22/verifier-2-files/custom-roots.rs`, `persistence.rs`)
 
-/// A gateway that is ready and serves `home` alone, on a machine whose
-/// Hermes root is `root`.
-fn serving(root: &str, home: &str) -> Instance {
+/// A gateway that is ready and serves `home` alone.
+fn serving(home: &str) -> Instance {
     let answer = json!({"runtime_protocol": 1, "state": "ready", "instance_id": "synthetic",
         "authority_epoch": 1, "api_origin": "http://127.0.0.1:54321",
         "capabilities": [SESSION_AUTHORITY],
         "served_profiles": [{"profile_id": home, "home": home}]});
-    let Identified::Ready(instance) = identify(&answer, home, root) else {
+    let Identified::Ready(instance) = identify(&answer, home) else {
         panic!("ready: {home}");
     };
     instance
@@ -354,7 +350,7 @@ fn custom_roots_remain_followed_read_and_hooked() {
     ];
     for home in roots {
         // Followed: its one home is served, as the default profile.
-        let served = serving(home, home).served;
+        let served = serving(home).served;
         assert_eq!(served.len(), 1, "{home}");
         assert_eq!(served[0].profile, Profile::Default, "{home}");
         // Read, and reported, as the same session.
@@ -372,9 +368,7 @@ fn a_home_in_a_profiles_folder_with_a_profiles_name_stays_named() {
         ("/srv/profiles/hud-spike", "hud-spike"),
         ("/srv/profiles/9_lives", "9_lives"),
     ] {
-        // A profile's home, in the root it is a profile of.
-        let root = home.rsplitn(3, '/').nth(2).unwrap();
-        let served = serving(root, home).served;
+        let served = serving(home).served;
         assert_eq!(served[0].profile.name(), name, "{home}");
         assert_eq!(
             read_in(home).unwrap(),
@@ -388,23 +382,13 @@ fn a_home_in_a_profiles_folder_with_a_profiles_name_stays_named() {
             Some(format!("hermes:{name}:s1"))
         );
     }
-    // A root that is itself at `…/profiles/<name>` reads as that named
-    // profile by its path alone, which is all the hooks and the reader
-    // have, and so do the ids of its gateway's sessions (ticket 26): one
-    // session has one id. Whoever knows the root is not misled about what
-    // Hermes calls it: the gateway is anchored at the default profile and
-    // its calls are routed to `default`.
+    // What is left open: a root that is itself at `…/profiles/<name>` reads
+    // as that named profile, by its path. Whoever knows the root is not
+    // misled, and ticket 26 does.
     let root = "/srv/profiles/work";
-    let work = Profile::named("work").unwrap();
     assert_eq!(anchor(root, [root]), Some(Profile::Default));
     assert_eq!(Profile::in_root(root, root), Some(Profile::Default));
-    assert_eq!(Profile::of_home(root), work);
-    let instance = serving(root, root);
-    assert_eq!(instance.served[0].profile, work);
-    assert_eq!(instance.served[0].route, Profile::Default);
-    assert_eq!(instance.anchor(), Some(Profile::Default));
-    assert_eq!(read_in(root).unwrap(), ["hermes:work:s1"]);
-    assert_eq!(hook_in(root).as_deref(), Some("hermes:work:s1"));
+    assert_eq!(Profile::of_home(root), Profile::named("work").unwrap());
 }
 
 #[test]

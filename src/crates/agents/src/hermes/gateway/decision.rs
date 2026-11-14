@@ -84,7 +84,7 @@ impl Question {
                 "execution_generation": self.prompt.generation,
                 "answer": answer.as_str(),
             }),
-            session.route(),
+            &session.profile,
             scope,
         )
     }
@@ -108,7 +108,7 @@ impl Approval {
                 "execution_generation": self.prompt.generation,
                 "choice": choice.word(),
             }),
-            session.route(),
+            &session.profile,
             scope,
         ))
     }

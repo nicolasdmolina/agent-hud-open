@@ -35,9 +35,7 @@ fn a_granted_ticket_and_everything_around_it() {
     let far = Far::default();
     let told = far.exchange(&lab.link, text(&home), Request::Identify);
     println!("identify: {told:?}");
-    let Identified::Ready(instance) =
-        identify(told.said.unwrap().value(), text(&home), text(&home))
-    else {
+    let Identified::Ready(instance) = identify(told.said.unwrap().value(), text(&home)) else {
         panic!("no instance");
     };
     let asked = Request::Ticket {

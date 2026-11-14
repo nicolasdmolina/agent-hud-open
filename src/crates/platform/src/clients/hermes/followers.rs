@@ -47,11 +47,8 @@ pub(super) struct Followers {
     pub(super) look: Arc<Signal>,
     /// The followers there are.
     set: Mutex<Vec<Arc<Shared>>>,
-    /// The profiles two instances claim, as far as the looks so far know.
+    /// The profiles two gateways claim, as far as the looks so far know.
     pub(super) contested: Mutex<BTreeSet<Profile>>,
-    /// The instances that wait for a name a living follower has, each
-    /// said once.
-    pub(super) waiting: Mutex<BTreeSet<String>>,
     /// Every reader that was ended in core, for the tests that count them.
     #[cfg(test)]
     pub(super) ends: Arc<Mutex<Vec<String>>>,
@@ -78,7 +75,6 @@ impl Followers {
             look: Arc::default(),
             set: Mutex::default(),
             contested: Mutex::default(),
-            waiting: Mutex::default(),
             #[cfg(test)]
             ends: Arc::default(),
         });

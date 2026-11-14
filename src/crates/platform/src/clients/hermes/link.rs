@@ -19,7 +19,7 @@ use super::{
     Shared,
 };
 use agent_hud_agents::hermes::gateway::{
-    hints, identify, identify_line, Connection, Failure, Identified, Input, Instance, Profile,
+    hints, identify, identify_line, Connection, Failure, Identified, Input, Instance,
 };
 use serde_json::Value;
 use std::{
@@ -80,19 +80,14 @@ pub(super) fn work(shared: Arc<Shared>) {
     }
 }
 
-/// The home whose gateway is followed, as it is now, and the root home
-/// of its machine: the homes of the profile this follower asks and of the
-/// default profile, among the ones the route tells of.
-fn homes(shared: &Shared) -> Result<(Home, Home), Silent> {
-    let homes = shared.route.homes()?;
-    let of = |profile: &Profile| homes.iter().find(|home| home.profile() == profile);
-    let (asked, root) = (of(&shared.asked()), of(&Profile::Default));
-    asked.cloned().zip(root.cloned()).ok_or(Silent::Absent)
-}
-
-/// The home whose gateway is followed.
+/// The home whose gateway is followed, as it is now: the one this
+/// follower asks, among the homes the route tells of.
 pub(super) fn home(shared: &Shared) -> Result<Home, Silent> {
-    homes(shared).map(|(home, _)| home)
+    let (homes, asked) = (shared.route.homes()?, shared.asked());
+    let mut homes = homes.into_iter();
+    homes
+        .find(|home| *home.profile() == asked)
+        .ok_or(Silent::Absent)
 }
 
 /// The answer this follower was made from, until its first identify
@@ -103,12 +98,12 @@ fn born(shared: &Shared) -> std::sync::MutexGuard<'_, Option<Value>> {
 
 /// Asks the control socket of that home who is there, once more where it
 /// only was slow: identify can stall on a busy gateway and answer at once
-/// the next time. The answer comes with the home that was asked and the
-/// root home. A follower made from an answer takes that one first.
-fn asked(shared: &Shared) -> Result<(Value, Home, Home), Silent> {
-    let (home, root) = homes(shared)?;
+/// the next time. The answer comes with the home that was asked. A
+/// follower made from an answer takes that one first.
+fn asked(shared: &Shared) -> Result<(Value, Home), Silent> {
+    let home = home(shared)?;
     if let Some(answer) = born(shared).take() {
-        return Ok((answer, home, root));
+        return Ok((answer, home));
     }
     let line = identify_line();
     let ask = || control::ask(&*shared.route, &home, &line, shared.pace.answer);
@@ -116,13 +111,13 @@ fn asked(shared: &Shared) -> Result<(Value, Home, Home), Silent> {
         Err(Silent::TimedOut) => ask(),
         answer => answer,
     }?;
-    Ok((answer, home, root))
+    Ok((answer, home))
 }
 
 /// Whether `answer` is another instance than the one this follower
 /// follows. It is kept, and a look at the whole machine is asked for.
-fn elsewhere(shared: &Shared, answer: &Value, home: &str, root: &str) -> bool {
-    let Identified::Ready(now) = identify(answer, home, root) else {
+fn elsewhere(shared: &Shared, answer: &Value, home: &str) -> bool {
+    let Identified::Ready(now) = identify(answer, home) else {
         return false;
     };
     let follows = |bound: &str| bound != now.id;
@@ -145,7 +140,7 @@ pub(super) fn silent(silent: Silent) -> Failure {
 /// Identifies the gateway and tells the model, which says whether it is
 /// one to connect to.
 fn identified(shared: &Shared) -> Result<Instance, Next> {
-    let (answer, home, root) = match asked(shared) {
+    let (answer, home) = match asked(shared) {
         Ok(answered) => answered,
         Err(why) => {
             shared.apply(Input::Lost(silent(why)));
@@ -154,17 +149,15 @@ fn identified(shared: &Shared) -> Result<Instance, Next> {
     };
     // The home is compared as the gateway wrote it, links resolved, and
     // resolved after the answer came: a home that leads elsewhere by then
-    // is not the one this gateway serves. The root home says which
-    // profile each served home is.
-    let (home, root) = (shared.route.named(&home), shared.route.named(&root));
-    if elsewhere(shared, &answer, &home, &root) {
+    // is not the one this gateway serves.
+    let home = shared.route.named(&home);
+    if elsewhere(shared, &answer, &home) {
         return Err(Next::Soon);
     }
     let held = shared.model().gateway.holds().clone();
     shared.apply(Input::Identified {
         answer: &answer,
         home: &home,
-        root: &root,
     });
     let model = shared.model();
     // The gateway serves other profiles than it did: which gateway has

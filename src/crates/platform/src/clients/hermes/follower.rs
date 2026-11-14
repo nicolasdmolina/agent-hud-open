@@ -111,9 +111,6 @@ pub(super) enum End {
     Off,
     /// Its home answers as another instance: its cards close as a restart.
     Restarted,
-    /// Nothing is left for it to follow, or its id is another gateway's
-    /// now: whatever it still shows closes as retired.
-    Replaced,
 }
 
 /// What a route waits on beside its own work: the follower ending.
@@ -245,15 +242,6 @@ impl Shared {
         let closing = match why {
             End::Off => None,
             End::Restarted => Some(model.gateway.apply(Input::Restarted, now)),
-            End::Replaced => {
-                let held = model.gateway.holds().clone();
-                let shown = model
-                    .gateway
-                    .waiting()
-                    .map(|card| card.session.profile.clone());
-                let all = held.into_iter().chain(shown).collect();
-                Some(model.gateway.apply(Input::Retired(&all), now))
-            }
         };
         match closing {
             // Closed as the model says, so an answer that is out keeps the

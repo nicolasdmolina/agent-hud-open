@@ -125,11 +125,7 @@ fn what_a_failed_write_left_unsent_is_never_sent_with_a_later_frame() {
     let id = gateway.play("question-answered-elsewhere", Some("clarify.request"));
     let wait = Duration::from_secs(5);
     let told = super::ask(&lab.home, &identify_line(), wait).unwrap();
-    let Identified::Ready(instance) = identify(
-        &told,
-        lab.home.to_str().unwrap(),
-        lab.home.to_str().unwrap(),
-    ) else {
+    let Identified::Ready(instance) = identify(&told, lab.home.to_str().unwrap()) else {
         panic!("not ready")
     };
     let grant = super::ask(&lab.home, &ticket_line(&instance, Scope::Host), wait).unwrap();
