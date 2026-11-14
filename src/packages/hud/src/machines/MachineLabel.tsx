@@ -1,0 +1,60 @@
+import type { CSSProperties } from "react";
+import { Server } from "lucide-react";
+import { machineLabelText, oneLine } from "./machine-label";
+
+/** Where a session runs when that is not this machine: the far machine's
+ * label in a small outlined tag, its own element beside the client. It keeps
+ * its room while the client's name gives way, and is cut itself only past
+ * 24 characters, or where the row has no room left; the whole label shows on
+ * hover. */
+export function MachineLabel({
+  label,
+  ink,
+  edge,
+  size = 10,
+  style,
+}: {
+  label: string;
+  /** The tag's text and icon colour. */
+  ink: string;
+  /** Its outline. */
+  edge: string;
+  size?: number;
+  style?: CSSProperties;
+}) {
+  return (
+    <span
+      className="machine-label"
+      title={oneLine(label)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 3,
+        flex: "0 1 auto",
+        minWidth: 0,
+        maxWidth: "100%",
+        padding: "0 4px",
+        borderRadius: 4,
+        boxShadow: `inset 0 0 0 1px ${edge}`,
+        color: ink,
+        fontSize: size,
+        fontWeight: 500,
+        lineHeight: `${size + 5}px`,
+        whiteSpace: "nowrap",
+        ...style,
+      }}
+    >
+      <Server
+        size={size - 2}
+        strokeWidth={2.4}
+        aria-hidden="true"
+        style={{ flexShrink: 0 }}
+      />
+      <span
+        style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}
+      >
+        {machineLabelText(label)}
+      </span>
+    </span>
+  );
+}

@@ -30,9 +30,9 @@ test("an open card with a summary keeps its label whole up to a share of the row
 
 test("the row head takes its label's width from rowHeadLabel", () => {
   const source = readFileSync(
-    new URL("../src/alerts/PendingEventRows.tsx", import.meta.url),
+    new URL("../src/alerts/PermissionRowHead.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /\.\.\.rowHeadLabel\(open, hideSummary\)/);
+  assert.match(source, /: rowHeadLabel\(open, hideSummary\)\),/);
   assert.doesNotMatch(source, /maxWidth: (hideSummary \? undefined : )?150/);
 });

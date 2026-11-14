@@ -1,4 +1,5 @@
 import { useMemo, useState, type CSSProperties } from "react";
+import { MachineLabel } from "@agent-hud/hud/machines/MachineLabel";
 import type { Session } from "@agent-hud/protocol";
 import { stackTurnBars } from "../lib/session-charts";
 import { sessionHelp, sessionWhere } from "../lib/sessions";
@@ -161,9 +162,23 @@ export function SessionRow({
         <strong style={{ ...clipped, fontSize: 13, fontWeight: 600 }}>
           {session.title || (zh ? "未命名会话" : "Untitled session")}
         </strong>
-        <span style={{ ...line, ...clipped }}>
-          {sessionWhere(session, client).join(" · ")}
-        </span>
+        {session.machine ? (
+          // Where it runs, its own tag: the line before it gives way first.
+          <span style={{ ...line, ...row, gap: 6 }}>
+            <span style={{ ...clipped, flex: "0 1000 auto" }}>
+              {sessionWhere(session, client).join(" · ")}
+            </span>
+            <MachineLabel
+              label={session.machine}
+              ink={theme.secondary}
+              edge={theme.divider}
+            />
+          </span>
+        ) : (
+          <span style={{ ...line, ...clipped }}>
+            {sessionWhere(session, client).join(" · ")}
+          </span>
+        )}
         <span style={{ ...line, ...clipped }}>
           {statusLine(session, now, zh)}
         </span>

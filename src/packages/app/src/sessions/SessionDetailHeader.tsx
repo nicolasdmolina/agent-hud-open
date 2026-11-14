@@ -1,4 +1,6 @@
+import { Server } from "lucide-react";
 import { HUDArtwork as HUDLogo } from "@agent-hud/hud/HUDArtwork";
+import { oneLine } from "@agent-hud/hud/machines/machine-label";
 import type { Session, SessionDetail } from "@agent-hud/protocol";
 import { sessionWhere } from "../lib/sessions";
 import {
@@ -166,6 +168,29 @@ export function DetailHeader({
           ].join(" · ")}
         </span>
       </div>
+      {session.machine ? (
+        // Where it runs, whole: the rows cut a long label, this page does not.
+        <div
+          className="session-statistics-machine"
+          style={{
+            ...row,
+            alignItems: "flex-start",
+            gap: 6,
+            fontSize: 12,
+            color: theme.secondary,
+          }}
+        >
+          <Server
+            size={12}
+            strokeWidth={2.2}
+            aria-hidden="true"
+            style={{ flexShrink: 0, marginTop: 2 }}
+          />
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+            {oneLine(session.machine)}
+          </span>
+        </div>
+      ) : null}
       <OriginTags session={session} theme={theme} />
     </div>
   );

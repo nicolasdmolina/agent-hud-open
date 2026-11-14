@@ -6,6 +6,8 @@ import { PermissionToolCard } from "./permissions/PermissionToolCard";
 import { useGround } from "./ground";
 import { alertText } from "./tokens";
 import { cardColumn } from "./card-column";
+import { mayDecide, outOfReach } from "./permissions/answer-gate";
+import { Unplug } from "lucide-react";
 
 export interface RequestActionsProps {
   request: Approval;
@@ -36,8 +38,11 @@ export function RequestActions({
     ? alertText("warning", ground)
     : "#e9a16d";
 
+  // A card whose client is out of reach takes no answer, from any button or
+  // key, and keeps what was typed until it can be answered again.
+  const unreachable = outOfReach(request);
   const answer = async (decision: RequestDecision) => {
-    if (!onDecision || pending) return;
+    if (!onDecision || pending || !mayDecide(request, decision)) return;
     setPending(true);
     setError(null);
     try {
@@ -49,7 +54,8 @@ export function RequestActions({
     }
   };
 
-  const disabled = !onDecision || pending;
+  const canDismiss = Boolean(onDecision) && !pending;
+  const disabled = !canDismiss || Boolean(unreachable);
   const isQuestion = request.kind === "question";
   const isPlan = request.kind === "plan";
 
@@ -59,10 +65,36 @@ export function RequestActions({
       data-request-id={request.id}
       style={{ ...cardColumn(9), fontSize: 12 }}
     >
+      {unreachable && (
+        <p
+          role="status"
+          className="hud-request-unreachable"
+          style={{
+            margin: 0,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 5,
+            color: errorColor,
+            fontSize: 11,
+            fontWeight: 500,
+            lineHeight: 1.4,
+            overflowWrap: "anywhere",
+          }}
+        >
+          <Unplug
+            size={11}
+            strokeWidth={2.2}
+            aria-hidden="true"
+            style={{ flexShrink: 0, marginTop: 2 }}
+          />
+          {unreachable}
+        </p>
+      )}
       {isQuestion ? (
         <PermissionQuestionCard
           request={request}
           disabled={disabled}
+          canDismiss={canDismiss}
           pending={pending}
           light={light}
           zh={zh}
@@ -73,6 +105,7 @@ export function RequestActions({
         <PermissionPlanCard
           request={request}
           disabled={disabled}
+          canDismiss={canDismiss}
           light={light}
           zh={zh}
           answer={answer}

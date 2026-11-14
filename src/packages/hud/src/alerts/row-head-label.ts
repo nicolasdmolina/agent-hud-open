@@ -17,3 +17,9 @@ export function rowHeadLabel(
   if (hideSummary) return { flexShrink: 1, minWidth: 0 };
   return { flexShrink: 0, maxWidth: OPEN_LABEL_SHARE };
 }
+
+/** "Who" beside a far machine's label: as wide as {@link rowHeadLabel} lets it, but it gives way first, so the
+ * machine's label stays readable where the row is narrow; a few letters of it stay. */
+export function whoBesideMachine(style: CSSProperties): CSSProperties {
+  return { ...style, flexShrink: 1000, minWidth: 24 };
+}
