@@ -195,6 +195,9 @@ export function SourceSessions({
               ink={colors.secondary}
               edge={colors.divider}
               size={10}
+              // A long label is cut before the title is: it never takes
+              // more than about half the row.
+              style={{ maxWidth: "55%" }}
             />
           ) : null}
           <span

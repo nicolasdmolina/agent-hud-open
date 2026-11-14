@@ -90,36 +90,47 @@ export function RequestActions({
           {unreachable}
         </p>
       )}
-      {isQuestion ? (
-        <PermissionQuestionCard
-          request={request}
-          disabled={disabled}
-          canDismiss={canDismiss}
-          pending={pending}
-          light={light}
-          zh={zh}
-          answer={answer}
-          openSettings={onOpenSettings}
-        />
-      ) : isPlan ? (
-        <PermissionPlanCard
-          request={request}
-          disabled={disabled}
-          canDismiss={canDismiss}
-          light={light}
-          zh={zh}
-          answer={answer}
-        />
-      ) : (
-        <PermissionToolCard
-          request={request}
-          disabled={disabled}
-          pending={pending}
-          light={light}
-          zh={zh}
-          answer={answer}
-        />
-      )}
+      {/* Off while out of reach, and looks it; the same element either way,
+          so what was typed stays. */}
+      <div
+        className="hud-request-controls"
+        aria-disabled={unreachable ? true : undefined}
+        style={{
+          opacity: unreachable ? 0.45 : undefined,
+          transition: "opacity 160ms ease",
+        }}
+      >
+        {isQuestion ? (
+          <PermissionQuestionCard
+            request={request}
+            disabled={disabled}
+            canDismiss={canDismiss}
+            pending={pending}
+            light={light}
+            zh={zh}
+            answer={answer}
+            openSettings={onOpenSettings}
+          />
+        ) : isPlan ? (
+          <PermissionPlanCard
+            request={request}
+            disabled={disabled}
+            canDismiss={canDismiss}
+            light={light}
+            zh={zh}
+            answer={answer}
+          />
+        ) : (
+          <PermissionToolCard
+            request={request}
+            disabled={disabled}
+            pending={pending}
+            light={light}
+            zh={zh}
+            answer={answer}
+          />
+        )}
+      </div>
       {!onDecision && (
         <p style={{ margin: 0, fontSize: 11, opacity: 0.6 }}>
           {t("Approval delivery is not connected.", "尚未连接审批处理。")}

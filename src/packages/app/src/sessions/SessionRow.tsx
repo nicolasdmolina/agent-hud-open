@@ -165,13 +165,14 @@ export function SessionRow({
         {session.machine ? (
           // Where it runs, its own tag: the line before it gives way first.
           <span style={{ ...line, ...row, gap: 6 }}>
-            <span style={{ ...clipped, flex: "0 1000 auto" }}>
+            <span style={{ ...clipped, flex: "0 1000 auto", minWidth: 32 }}>
               {sessionWhere(session, client).join(" · ")}
             </span>
             <MachineLabel
               label={session.machine}
               ink={theme.secondary}
               edge={theme.divider}
+              style={{ maxWidth: "70%" }}
             />
           </span>
         ) : (
