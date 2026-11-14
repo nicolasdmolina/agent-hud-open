@@ -80,7 +80,6 @@ def say(data):
         os._exit(4)
 
 def others(mark):
-    """This user's other readers of the same machine, or of the same home."""
     ps = "/bin/ps" if os.path.exists("/bin/ps") else "/usr/bin/ps"
     listed = subprocess.run(
         [ps, "-A", "-ww", "-o", "pid=,uid=,args="], stdin=subprocess.DEVNULL,
@@ -227,6 +226,8 @@ def database(ask, home, sqlite3, most):
                  for table in ("sessions", "session_model_usage")]
         if "id" not in names[0] or "started_at" not in names[0]:
             return [], "db-schema", NONE
+        if {name.lower() for name in names[0] | names[1]} & {"rowid", "_rowid_", "oid"}:
+            return [], "db-rowid", NONE  # a column of that name would stand in for a row's own number
         read = sessions if ask["k"] == "sessions" else prints
         found = read(cursor, ask, names[0], names[1], most)
         # None: what was read does not fit the output bound.

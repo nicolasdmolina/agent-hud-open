@@ -106,6 +106,10 @@ pub enum Far {
     Locked,
     Schema,
     Corrupt,
+    /// A table declares a column named `rowid`, `_rowid_` or `oid`, which
+    /// SQLite reads in place of a row's own number. Hermes's schema has
+    /// none, and nothing is read from one that has.
+    Rowid,
     Error,
 }
 
@@ -117,6 +121,7 @@ impl Far {
             Self::Locked => "state.db is locked",
             Self::Schema => "state.db has no sessions table this reader knows",
             Self::Corrupt => "state.db is not a readable database",
+            Self::Rowid => "state.db declares a column that hides its row numbers",
             Self::Error => "the read failed",
         }
     }

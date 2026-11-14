@@ -187,7 +187,8 @@ impl Reader {
     /// A page that cannot be read is asked again in halves. One row that
     /// cannot be read (the far reader ended itself over a value too long
     /// to hold) is named by a read of rowids alone, which loads nothing of
-    /// a row, and comes back as a page that holds no fingerprint and that
+    /// a row, then read once more by itself, and if it still cannot be
+    /// read it comes back as a page that holds no fingerprint and that
     /// rowid as skipped. So the next page starts after it and a sweep goes
     /// on. Nothing of the row is read or logged but its rowid.
     pub fn prints(
@@ -213,23 +214,42 @@ impl Reader {
                 _ => return Err(Failure::Rejected(Rejected::Status)),
             }
         }
+        // Which row that was is asked next, in a read of its own, and
+        // a writer may have removed the row in between: the one named
+        // now can be the healthy one after it. So the named row is read
+        // once more, by itself, and skipped only if it cannot be read
+        // either. One row, one more read: nothing here goes round again.
         let next = Request::Rowids { after, limit: 1 };
         let Reply::Rowids(found) = self.read(link, slot, home, &next)? else {
             return Err(Failure::Rejected(Rejected::Status));
         };
-        let mut page = Prints {
-            last: after,
-            ended: found.is_empty(),
-            ..Prints::default()
+        let Some(&rowid) = found.first() else {
+            return Ok(Prints {
+                last: after,
+                ended: true,
+                ..Prints::default()
+            });
         };
-        if let Some(rowid) = found.first() {
-            self.say(format!(
-                "history prints quarantines rowid {rowid}: too large to read, and stepped over"
-            ));
-            page.skipped.push(*rowid);
-            (page.seen, page.last) = (1, *rowid);
+        let alone = Request::Prints {
+            after: rowid - 1,
+            limit: 1,
+            since,
+        };
+        match self.read(link, slot, home, &alone)? {
+            Reply::Prints(page) => Ok(page),
+            Reply::TooLarge => {
+                self.say(format!(
+                    "history prints quarantines rowid {rowid}: too large to read, and stepped over"
+                ));
+                Ok(Prints {
+                    skipped: vec![rowid],
+                    seen: 1,
+                    last: rowid,
+                    ..Prints::default()
+                })
+            }
+            _ => Err(Failure::Rejected(Rejected::Status)),
         }
-        Ok(page)
     }
 
     /// The far `runtime/active_sessions.json` as it is, to be read as

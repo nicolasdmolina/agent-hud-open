@@ -4,7 +4,7 @@
 //! the answer's own tests in the agents crate.
 use super::super::{Hold, Settings, Slots};
 use super::schema;
-use super::world::{kill, open, raw, readers, sessions, settings, World};
+use super::world::{kill, open, raw, readers, sessions, settings, World, PYTHON};
 use crate::ssh_link::unix::tests::lab::until;
 use crate::ssh_link::{End, Link, Ran};
 use agent_hud_agents::hermes::far_history::{self as far, Reply, Request};
@@ -45,11 +45,10 @@ fn v_readded_machine_must_exclude_an_old_reader_of_another_profile() {
     let other = Connection::open(format!("{second}/state.db")).unwrap();
     other.execute_batch(schema::HERMES).unwrap();
     other
-        .execute_batch(
-            "PRAGMA journal_mode=WAL; DROP TABLE sessions;
-             CREATE VIEW sessions AS WITH RECURSIVE spin(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM spin)
-             SELECT n AS rowid, 'endless' AS id, 1.0 AS started_at FROM spin WHERE n < 0;",
-        )
+        .execute_batch(&format!(
+            "PRAGMA journal_mode=WAL; {}",
+            super::world::ENDLESS
+        ))
         .unwrap();
     let long = Settings {
         deadline: Duration::from_secs(10),
@@ -492,4 +491,209 @@ fn poison_stamp_must_not_stop_the_whole_history_sweep() {
     );
     link.close();
     assert!(readers(&world.mark()).is_empty());
+}
+
+/// The probe of the third review (`evidence/36/verifier-report-3.md`,
+/// finding 1). The read that fails and the read that names the row are
+/// two processes. A writer deletes the poison row between them, so the
+/// row named is the healthy one after it, and that one was skipped and
+/// logged as too large.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn deleting_a_poison_row_between_reads_must_not_quarantine_its_healthy_neighbor() {
+    let Some(world) = World::start() else { return };
+    let db = world.db();
+    for id in ["good-before", "poison", "good-after"] {
+        world.add_session(&db, id, 1);
+    }
+    db.execute_batch(
+        "UPDATE sessions SET last_activity_at=replace(hex(zeroblob(33554432)),'0','x') WHERE id='poison';
+         PRAGMA wal_checkpoint(TRUNCATE)",
+    )
+    .unwrap();
+    // The far `python3` is a parent that runs the real reader and, once
+    // that one has ended itself over the poison row, deletes the row, as
+    // a far writer would, before the caller can ask anything more.
+    let at = |name: &str| world.lab.at(name).display().to_string();
+    let parent = [
+        "import subprocess, sys, sqlite3".to_owned(),
+        format!("args = open({:?}).read().split('\\n')[:-1]", at("race-arguments")),
+        format!("reader = subprocess.Popen([{PYTHON:?}] + args, stdin=sys.stdin)"),
+        "reader.wait()".to_owned(),
+        "if reader.returncode == 5:".to_owned(),
+        format!("    db = sqlite3.connect({:?})", world.database().display().to_string()),
+        "    db.execute(\"DELETE FROM sessions WHERE id='poison'\")".to_owned(),
+        "    db.commit()".to_owned(),
+        "    db.close()".to_owned(),
+        format!("    open({:?}, 'a').write('deleted the poison row after the reader ended with status 5\\n')", at("race-trace")),
+        "sys.exit(reader.returncode)".to_owned(),
+    ];
+    std::fs::write(at("race-parent.py"), parent.join("\n") + "\n").unwrap();
+    world.stand_in(&format!(
+        "printf '%s\\n' \"$@\" > '{}'\nexec {PYTHON} -I '{}'",
+        at("race-arguments"),
+        at("race-parent.py")
+    ));
+    let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
+    let slot = slots.of(&world.machine());
+    let got = reader.prints(&link, &slot, &world.home, 1, 1, None);
+    let trace = std::fs::read_to_string(at("race-trace")).unwrap_or_default();
+    println!("  writer: {}", trace.trim());
+    println!("  page after the deletion => {got:?}");
+    world.no_stand_in();
+    assert_eq!(
+        trace.lines().count(),
+        1,
+        "the row was deleted once, between the two reads"
+    );
+    // The row named was read by itself before anything was said of it,
+    // and it reads: it is a fingerprint like any other, not a skip.
+    let page = got.unwrap();
+    assert!(
+        !page.skipped.contains(&3),
+        "deleting the poison between the failed read and rowids lookup quarantined healthy rowid 3 and advanced beyond it"
+    );
+    assert_eq!(page.skipped, Vec::<i64>::new());
+    let ids: Vec<&str> = page.prints.iter().map(|print| print.id.as_str()).collect();
+    assert_eq!(
+        (ids.as_slice(), page.seen, page.last),
+        (&["good-after"][..], 1, 3)
+    );
+    assert!(world
+        .logged()
+        .iter()
+        .all(|line| !line.contains("quarantines")));
+    // Nothing went round: three reads for the page, which are the one
+    // that failed, the rowids, and the row by itself.
+    let log = world.logged();
+    let reads: Vec<&String> = log.iter().filter(|line| !line.contains("probe")).collect();
+    assert_eq!(reads.len(), 3, "{reads:?}");
+    assert!(
+        reads[0].starts_with("history prints ok exit=5") && reads[0].ends_with("too large"),
+        "{reads:?}"
+    );
+    assert!(
+        reads[1].starts_with("history rowids ok exit=0"),
+        "{reads:?}"
+    );
+    assert!(
+        reads[2].starts_with("history prints ok exit=0"),
+        "{reads:?}"
+    );
+    // The sweep ends after it.
+    let after = reader
+        .prints(&link, &slot, &world.home, 3, 100, None)
+        .unwrap();
+    assert_eq!(
+        (after.prints.len(), after.skipped.len(), after.ended),
+        (0, 0, true)
+    );
+    link.close();
+}
+
+/// The probes of the same review's finding 2. SQLite reads a declared
+/// column named `rowid` in place of a row's own number, so a database
+/// with such a column chose the "rowid" that was skipped and logged, and
+/// with a long text in it, made the read of rowids alone load that text.
+/// Hermes's schema declares no such column, and a table that does is not
+/// read at all.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_shadow_rowid_column_must_not_forge_a_quarantined_rowid() {
+    use super::super::Failure;
+    for (column, kind, value) in [
+        (
+            "rowid",
+            "INTEGER",
+            "CASE id WHEN 'poison' THEN 9001 ELSE 2 END",
+        ),
+        ("_ROWID_", "INTEGER", "9001"),
+        ("Oid", "INTEGER", "9001"),
+        // A text in its place, 64 MiB of it.
+        ("rowid", "TEXT", "replace(hex(zeroblob(33554432)),'0','x')"),
+    ] {
+        let Some(world) = World::start() else { return };
+        let db = world.db();
+        world.add_session(&db, "poison", 1);
+        world.add_session(&db, "good-after", 1);
+        db.execute_batch(&format!(
+            "ALTER TABLE sessions ADD COLUMN {column} {kind}; UPDATE sessions SET {column}={value};
+             UPDATE sessions SET last_activity_at=replace(hex(zeroblob(33554432)),'0','x') WHERE id='poison';
+             PRAGMA wal_checkpoint(TRUNCATE)"
+        ))
+        .unwrap();
+        world.measure_memory();
+        let link = world.link();
+        let ask = Request::Rowids {
+            after: 0,
+            limit: 10,
+        };
+        let ran = raw(&link, &world.home, Duration::from_secs(5), &ask);
+        let said = String::from_utf8_lossy(&ran.stdout).into_owned();
+        println!(
+            "  a column {column} {kind}: rowids => {:?}, {:?}",
+            ran.end,
+            said.lines().last()
+        );
+        assert_eq!(ran.end, End::Ended(0));
+        assert_eq!(
+            far::parse(&ask, &ran.stdout),
+            Ok(Reply::Failed(far::Far::Rowid))
+        );
+        let (reader, slots) = (world.reader(settings()), Slots::new());
+        let slot = slots.of(&world.machine());
+        for after in [0, 2] {
+            let got = reader.prints(&link, &slot, &world.home, after, 1, None);
+            println!("  the caller from {after} => {got:?}");
+            assert!(
+                !matches!(got, Ok(ref page) if page.skipped.contains(&9001)),
+                "a database column named rowid forged quarantined rowid 9001; its real rowid is 1, and cursor 2 is already past the table"
+            );
+            assert_eq!(got, Err(Failure::Far(far::Far::Rowid)));
+        }
+        // Nothing of such a table is read by id either, and no reader
+        // came near the long values: the names of a table's columns are
+        // all that was looked at.
+        let read = reader.sessions(&link, &slot, &world.home, &["good-after".to_owned()]);
+        assert_eq!(read.stopped, Some(Failure::Far(far::Far::Rowid)));
+        assert!(read.read.is_empty());
+        let log = world.logged();
+        assert!(
+            log.iter()
+                .all(|line| !line.contains("quarantines") && !line.contains("9001")),
+            "{log:?}"
+        );
+        assert!(log
+            .iter()
+            .any(|line| line.ends_with("state.db declares a column that hides its row numbers")));
+        let peaks = world.peaks();
+        println!(
+            "  whole-life peaks of its {} readers: at most {} KiB",
+            peaks.len(),
+            peaks.iter().max().unwrap()
+        );
+        assert!(peaks.iter().all(|peak| *peak < MOST_MEMORY), "{peaks:?}");
+        link.close();
+    }
+    // The usage table is held to the same.
+    let Some(world) = World::start() else { return };
+    let db = world.db();
+    world.add_session(&db, "s1", 1);
+    db.execute_batch("ALTER TABLE session_model_usage ADD COLUMN oid INTEGER")
+        .unwrap();
+    let link = world.link();
+    let ask = sessions(&["s1"]);
+    let ran = raw(&link, &world.home, Duration::from_secs(5), &ask);
+    assert_eq!(
+        far::parse(&ask, &ran.stdout),
+        Ok(Reply::Failed(far::Far::Rowid))
+    );
+    // And Hermes's own schema, which declares none, is read.
+    db.execute_batch("ALTER TABLE session_model_usage DROP COLUMN oid")
+        .unwrap();
+    let ran = raw(&link, &world.home, Duration::from_secs(5), &ask);
+    assert!(
+        matches!(far::parse(&ask, &ran.stdout), Ok(Reply::Sessions(batch)) if batch.sessions.len() == 1)
+    );
+    link.close();
 }

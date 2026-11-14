@@ -101,6 +101,7 @@ pub fn parse(request: &Request, stdout: &[u8]) -> Result<Reply, Rejected> {
             "db-locked" if read => Ok(Reply::Failed(Far::Locked)),
             "db-schema" if read => Ok(Reply::Failed(Far::Schema)),
             "db-corrupt" if read => Ok(Reply::Failed(Far::Corrupt)),
+            "db-rowid" if read => Ok(Reply::Failed(Far::Rowid)),
             "db-error" if read => Ok(Reply::Failed(Far::Error)),
             _ => Err(Rejected::Status),
         };

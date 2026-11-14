@@ -811,3 +811,26 @@ fn a_page_of_rowids_and_an_old_sqlite_are_read_as_what_they_are() {
     assert!(PROGRAM.contains("if sqlite3.sqlite_version_info < (3, 43):\n        return say(line([\"no\", \"sqlite-old\"]))"));
     assert_eq!(OLDEST_SQLITE, "3.43");
 }
+
+/// A table that declares a column in the place of its row numbers is
+/// read by no kind of read (third review, finding 2).
+#[test]
+fn a_table_that_hides_its_row_numbers_is_named_as_not_read() {
+    let page = Request::Prints {
+        after: 0,
+        limit: 1,
+        since: None,
+    };
+    let end = answer(&[STARTED, r#"["end","db-rowid",0,0,0,0]"#]);
+    for request in [Request::Rowids { after: 0, limit: 1 }, ids(&["s1"]), page] {
+        assert_eq!(parse(&request, &end), Ok(Reply::Failed(Far::Rowid)));
+    }
+    assert_eq!(parse(&Request::Probe, &end), Err(Rejected::Status));
+    assert_eq!(
+        Far::Rowid.reason(),
+        "state.db declares a column that hides its row numbers"
+    );
+    assert!(PROGRAM.contains(
+        r#"if {name.lower() for name in names[0] | names[1]} & {"rowid", "_rowid_", "oid"}:"#
+    ));
+}

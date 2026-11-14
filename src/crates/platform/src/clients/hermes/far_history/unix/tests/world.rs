@@ -27,6 +27,13 @@ pub(super) const BIN: &str = "bin";
 /// its own programs.
 pub(super) const PATH: &str = "{lab}/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
+/// What makes every read of a session's usage endless, for a database
+/// with Hermes's schema.
+pub(super) const ENDLESS: &str = "DROP TABLE session_model_usage;
+    CREATE VIEW session_model_usage AS WITH RECURSIVE spin(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM spin)
+    SELECT 'endless' AS session_id, 'model' AS model FROM spin WHERE n < 0;
+    INSERT OR IGNORE INTO sessions (id, source, started_at) VALUES ('endless', 'lab', 1.0);";
+
 /// The system's Python, which a stand-in `python3` hands over to.
 pub(super) const PYTHON: &str = "/usr/bin/python3";
 
@@ -202,17 +209,12 @@ impl World {
         names
     }
 
-    /// Replaces the `sessions` table with one whose every read never
-    /// ends: a query made slow on purpose, which holds the database open
-    /// until something ends the reader.
+    /// Makes every read of a session's usage never end, and adds the
+    /// session `endless`: a query made slow on purpose, which holds the
+    /// database open until something ends the reader. The usage table
+    /// goes behind a view that counts for ever.
     pub(super) fn make_every_read_endless(&self) {
-        self.db()
-            .execute_batch(
-                "DROP TABLE sessions;
-                 CREATE VIEW sessions AS WITH RECURSIVE spin(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM spin)
-                 SELECT n AS rowid, 'endless' AS id, 1.0 AS started_at FROM spin WHERE n < 0;",
-            )
-            .expect("the endless view");
+        self.db().execute_batch(ENDLESS).expect("the endless view");
     }
 
     /// A session with `usage` usage rows, each with a task and a base URL
