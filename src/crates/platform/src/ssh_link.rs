@@ -178,6 +178,10 @@ pub struct FarCommand<'a> {
     pub most_output: usize,
 }
 
+/// What is given a far command's standard output so far, each time more
+/// of it has arrived (`Link::run_watched`).
+pub type Watch<'a> = &'a mut dyn FnMut(&[u8]);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ran {
     pub end: End,

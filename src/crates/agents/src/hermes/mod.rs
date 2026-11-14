@@ -1,6 +1,7 @@
 //! Hermes.
 pub mod account;
 pub mod connections;
+pub mod far_history;
 pub mod gateway;
 mod hooks;
 mod mirror;

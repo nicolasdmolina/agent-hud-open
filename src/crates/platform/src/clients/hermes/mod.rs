@@ -26,6 +26,7 @@ mod cost;
 mod discovery;
 mod effects;
 pub mod far;
+pub mod far_history;
 mod follower;
 mod followers;
 mod link;

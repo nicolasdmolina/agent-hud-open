@@ -3,7 +3,9 @@
 //! An adapter here would hold one `ssh` process for each forward and each
 //! command, under a job object. Until then every entry point says so, and
 //! no folder is made and no process is started.
-use super::{Closed, Failure, FarCommand, Forward, Lost, Ran, Refused, Settings, Swept, Target};
+use super::{
+    Closed, Failure, FarCommand, Forward, Lost, Ran, Refused, Settings, Swept, Target, Watch,
+};
 use std::{net::SocketAddr, path::Path};
 
 pub const PROGRAM: &str = "ssh.exe";
@@ -28,6 +30,9 @@ pub struct Link(());
 
 impl Link {
     pub fn open(_folder: &Folder, _target: &Target, _settings: &Settings) -> Result<Self, Failure> {
+        Err(NOT_IMPLEMENTED)
+    }
+    pub fn run_watched(&self, _command: &FarCommand, _watch: Watch<'_>) -> Result<Ran, Failure> {
         Err(NOT_IMPLEMENTED)
     }
     pub fn run(&self, _command: &FarCommand) -> Result<Ran, Failure> {
