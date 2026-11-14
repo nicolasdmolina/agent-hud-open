@@ -1,7 +1,7 @@
 //! The reader closes the database before it answers, and its own deadline
 //! ends it whatever it is doing.
 use super::super::{Failure, Slots};
-use super::world::{machine, most, open, raw, readers, sessions, settings, Watch, World, PYTHON};
+use super::world::{most, open, raw, readers, sessions, settings, Watch, World, PYTHON};
 use crate::ssh_link::unix::tests::lab::until;
 use crate::ssh_link::End;
 use agent_hud_agents::hermes::far_history::{self as far, Reply, Request};
@@ -154,7 +154,7 @@ fn the_deadline_ends_a_busy_query() {
     let Some(world) = World::start() else { return };
     world.make_every_read_endless();
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     assert_eq!(
         reader.read(&link, &slot, &world.home, &Request::Probe),
         Ok(Reply::Probed)

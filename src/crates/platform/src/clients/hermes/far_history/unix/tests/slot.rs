@@ -1,7 +1,7 @@
 //! The caller's slot: what holds it, and what frees it.
 use super::super::{Failure, Hold, Slots};
 use super::world::{
-    clients, kill, machine, most, readers, sessions, settings, Watch, World, PYTHON,
+    clients, kill, machine_of, most, readers, sessions, settings, Watch, World, PYTHON,
 };
 use crate::ssh_link::unix::tests::lab::until;
 use crate::ssh_link::Cut;
@@ -18,7 +18,7 @@ fn a_cut_off_reader_holds_the_slot() {
     let Some(world) = World::start() else { return };
     world.make_every_read_endless();
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     assert_eq!(
         reader.read(&link, &slot, &world.home, &Request::Probe),
         Ok(Reply::Probed)
@@ -99,7 +99,7 @@ fn cutoff_before_started_is_never_freed_by_time() {
     short.deadline = Duration::from_millis(500);
     short.local_wait = Duration::from_millis(1_500);
     let (link, reader, slots) = (world.link(), world.reader(short), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     assert_eq!(
         reader.read(&link, &slot, &world.home, &Request::Probe),
         Ok(Reply::Probed)
@@ -144,7 +144,7 @@ fn two_requests_at_once() {
     let Some(world) = World::start() else { return };
     world.add_session(&world.db(), "s1", 2);
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     assert_eq!(
         reader.read(&link, &slot, &world.home, &Request::Probe),
         Ok(Reply::Probed)
@@ -199,8 +199,8 @@ fn two_requests_at_once() {
 /// The slot by itself, with no reader run.
 #[test]
 fn a_slot_starts_held_and_a_retired_machine_keeps_its_slot() {
-    let slots = Slots::new();
-    let slot = slots.of(&machine());
+    let (slots, machine) = (Slots::new(), machine_of("/far/.hermes"));
+    let slot = slots.of(&machine);
     // Nothing is known at launch.
     assert_eq!(slot.hold(), Hold::StartUnknown);
     let (round, before) = slot.begin();
@@ -220,17 +220,17 @@ fn a_slot_starts_held_and_a_retired_machine_keeps_its_slot() {
 
     // The machine is retired while it is held: nothing is known any
     // more, and what the old reader's caller learns later changes nothing.
-    slots.retired(&machine());
+    slots.retired(&machine);
     assert_eq!(slot.hold(), Hold::StartUnknown);
     slot.ended(round);
     slot.started(round, until);
     assert_eq!(slot.hold(), Hold::StartUnknown);
-    assert!(std::sync::Arc::ptr_eq(&slot, &slots.of(&machine())));
+    assert!(std::sync::Arc::ptr_eq(&slot, &slots.of(&machine)));
 
     // A slot that was free when its machine was retired stays free.
     let (round, _) = slot.begin();
     slot.ended(round);
-    slots.retired(&machine());
+    slots.retired(&machine);
     assert_eq!(slot.hold(), Hold::Free);
     // A read that the link refused before it ran `ssh` leaves the slot
     // as it was, and one told "busy" knows nothing of the other reader.

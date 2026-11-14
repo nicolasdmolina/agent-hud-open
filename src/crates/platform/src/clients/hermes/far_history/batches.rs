@@ -7,6 +7,7 @@ use crate::ssh_link::{quote, Link};
 use agent_hud_agents::hermes::far_history::{
     self as far, Prints, Rejected, Reply, Request, Session,
 };
+use agent_hud_agents::hermes::gateway::MachineKey;
 use std::collections::{HashSet, VecDeque};
 
 /// The longest far command line a read is sent as. The link refuses one
@@ -77,11 +78,22 @@ impl Reader {
     /// The ids in reads of at most `batch` sessions, each short enough to
     /// send. An id that alone is too long still gets a read of its own,
     /// which the link refuses.
-    pub(super) fn reads(&self, home: &str, ids: Vec<String>) -> VecDeque<Vec<String>> {
+    pub(super) fn reads(
+        &self,
+        machine: &MachineKey,
+        home: &str,
+        ids: Vec<String>,
+    ) -> VecDeque<Vec<String>> {
         let settings = self.settings();
         let fits = |ids: &[String]| {
             let request = Request::Sessions { ids: ids.to_vec() };
-            let args = far::arguments(home, settings.deadline, settings.most_output, &request);
+            let args = far::arguments(
+                machine,
+                home,
+                settings.deadline,
+                settings.most_output,
+                &request,
+            );
             ids.len() <= settings.batch.max(1) && line_length(&args) <= LONGEST_LINE
         };
         let mut reads = VecDeque::new();
@@ -117,7 +129,7 @@ impl Reader {
                 out.skipped.push((id.clone(), Skip::Id));
             }
         }
-        let mut reads = self.reads(home, usable);
+        let mut reads = self.reads(slot.machine(), home, usable);
         while let Some(ids) = reads.pop_front() {
             let request = Request::Sessions { ids };
             let answer = self.read(link, slot, home, &request);

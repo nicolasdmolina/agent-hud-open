@@ -106,6 +106,16 @@ pub fn parse(request: &Request, stdout: &[u8]) -> Result<Reply, Rejected> {
             .ok_or(Rejected::Line(index + 2))
     });
     let rows = rows.collect::<Result<Vec<_>, _>>()?;
+    // A probe and the held file count nothing, and a sessions read counts
+    // no page: every number of the last line says what came, or is zero.
+    let counted = match request {
+        Request::Probe | Request::Held => 0,
+        Request::Sessions { .. } => 2,
+        Request::Prints { .. } => 4,
+    };
+    if counts[counted..].iter().any(|count| *count != 0) {
+        return Err(Rejected::Counts);
+    }
     match request {
         Request::Probe if rows.is_empty() => Ok(Reply::Probed),
         Request::Probe => Err(Rejected::Line(2)),
@@ -155,6 +165,9 @@ fn prints(
         || seen < count
         || seen > i64::from(page)
         || counts[3] < last
+        // Rowids only go up from `after`, one or more for each row seen.
+        || (seen == 0 && counts[3] != after)
+        || after.checked_add(seen).is_none_or(|least| counts[3] < least)
     {
         return Err(Rejected::Counts);
     }

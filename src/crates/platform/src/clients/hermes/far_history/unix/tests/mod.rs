@@ -17,6 +17,7 @@ mod reads;
 mod refusals;
 mod schema;
 mod slot;
+mod verifier;
 mod world;
 
 #[test]

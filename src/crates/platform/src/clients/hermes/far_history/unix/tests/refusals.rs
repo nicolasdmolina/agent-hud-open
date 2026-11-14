@@ -2,7 +2,7 @@
 //! error or answers in the wrong shape, and a machine with no history
 //! reader. Each stand-in holds a made-up "row" that must never be logged.
 use super::super::{Failure, Slots};
-use super::world::{machine, sessions, settings, World, PYTHON};
+use super::world::{sessions, settings, World, PYTHON};
 use crate::ssh_link::unix::tests::lab::{Lab, BIN};
 use crate::ssh_link::{End, FarCommand};
 use agent_hud_agents::hermes::far_history::{self as far, No, Rejected, Reply, Request};
@@ -23,7 +23,7 @@ fn answers(rest: &str) -> String {
 fn a_bad_exit_text_on_stderr_and_a_wrong_shape_are_each_rejected_and_logged_without_row_text() {
     let Some(world) = World::start() else { return };
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let asked = sessions(&["s1"]);
     let whole = format!(
         "printf '%s\\n' '[\"started\",1]' '[\"s\",1,\"s1\",1.0,\"{SECRET}\",null,null,null,null,null,null,1,2,3,4,null,null,null,\"p\"]' '[\"end\",\"ok\",1,0,0,0]'"
@@ -95,7 +95,7 @@ fn a_bad_exit_text_on_stderr_and_a_wrong_shape_are_each_rejected_and_logged_with
 fn a_python_without_sqlite_is_no_history_on_this_machine() {
     let Some(world) = World::start() else { return };
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     // The system's Python, with its `sqlite3` module made unimportable.
     world.stand_in(&format!(
         "shift 2\nexec {PYTHON} -I -c 'import sys; sys.modules[\"sqlite3\"] = None; exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
@@ -126,7 +126,7 @@ fn a_machine_with_no_python3_is_no_history_on_this_machine() {
     std::os::unix::fs::symlink("/bin/sh", lab.at(BIN).join("sh")).unwrap();
     let Some(world) = World::on(lab) else { return };
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let read = reader.read(&link, &slot, &world.home, &sessions(&["s1"]));
     assert_eq!(read, Err(Failure::NoHistory));
     let line = world.logged().pop().unwrap();
@@ -142,13 +142,16 @@ fn a_machine_with_no_python3_is_no_history_on_this_machine() {
 fn a_home_that_is_not_its_own_canonical_path_is_refused() {
     let Some(world) = World::start() else { return };
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     // The same folder, reached through a link.
     let linked = world.lab.at("another-way").display().to_string();
     std::os::unix::fs::symlink(&world.home, &linked).unwrap();
     let read = reader.read(&link, &slot, &linked, &Request::Probe);
     assert_eq!(read, Err(Failure::Refused(No::Request)));
-    assert_ne!(far::mark(&linked), far::mark(&world.home));
+    assert_ne!(
+        far::mark(&world.machine(), &linked),
+        far::mark(&world.machine(), &world.home)
+    );
     assert_eq!(
         reader.read(&link, &slot, &world.home, &Request::Probe),
         Ok(Reply::Probed)
@@ -167,7 +170,7 @@ fn a_crash_says_its_kind_and_no_row_text() {
     let ran = link
         .run(&FarCommand {
             script: far::SCRIPT,
-            args: &[&far::mark(&world.home), "5.000", &world.home, &request],
+            args: &[&world.mark(), "5.000", &world.home, &request],
             stdin: Some(far::PROGRAM.as_bytes()),
             limit: Duration::from_secs(30),
             most_output: 64 * 1024,
@@ -182,7 +185,7 @@ fn a_crash_says_its_kind_and_no_row_text() {
     );
     // The caller logs that word and the status, and still nothing else.
     let (reader, slots) = (world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     world.stand_in(&answers(
         "printf '%s\\n' '[\"started\",1]'; echo 'far-history: crash ValueError' >&2; exit 1",
     ));

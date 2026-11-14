@@ -1,6 +1,7 @@
 //! The request and the answer, with no process run. The program itself
 //! runs in the platform crate's lab (`clients/hermes/far_history`).
 use super::*;
+use crate::hermes::gateway::machine_key;
 use std::time::Duration;
 
 fn answer(lines: &[&str]) -> Vec<u8> {
@@ -38,6 +39,7 @@ fn the_program_is_one_short_file_of_the_standard_library_that_only_reads() {
         "json",
         "math",
         "os",
+        "resource",
         "signal",
         "sqlite3",
         "stat",
@@ -97,9 +99,9 @@ fn the_program_is_one_short_file_of_the_standard_library_that_only_reads() {
         .into_iter()
         .filter(|text| text.contains(" FROM "))
         .collect();
-    assert_eq!(sql.len(), 6, "{sql:?}");
+    assert_eq!(sql.len(), 7, "{sql:?}");
     for text in sql {
-        let starts = ["SELECT ", "(SELECT ", " UNION ALL SELECT "];
+        let starts = ["SELECT ", "(SELECT ", "+(SELECT ", " UNION ALL SELECT "];
         assert!(starts.iter().any(|start| text.starts_with(start)), "{text}");
     }
 
@@ -120,19 +122,32 @@ fn the_program_is_one_short_file_of_the_standard_library_that_only_reads() {
 #[test]
 fn a_request_is_four_short_arguments() {
     let home = "/Users/far/.hermes";
-    let mark = mark(home);
-    assert_eq!(mark.len(), MARK.len() + 16);
-    assert!(mark[MARK.len()..]
+    let machine = machine_key(Some("0123456789abcdef0123456789abcdef"), home).unwrap();
+    let other = machine_key(Some("fedcba9876543210fedcba9876543210"), home).unwrap();
+    let mark = mark(&machine, home);
+    // The machine's key, a colon, and sixteen hex characters for the home.
+    let (key, named) = mark[MARK.len()..].split_once(':').unwrap();
+    assert_eq!(key, machine.as_str());
+    assert_eq!(named.len(), 16);
+    assert!(named
         .chars()
         .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
-    assert_ne!(mark, super::mark("/Users/far/.hermes/profiles/reports"));
+    // Two homes of one machine share the start of the mark, by which a
+    // reader of one finds a reader of the other. Two machines do not.
+    let profile = super::mark(&machine, "/Users/far/.hermes/profiles/reports");
+    assert_ne!(mark, profile);
+    assert_eq!(profile.split_once(named), None);
+    assert!(profile.starts_with(&format!("{MARK}{key}:")));
+    assert!(!super::mark(&other, home).starts_with(&format!("{MARK}{key}:")));
+    assert!(super::mark(&other, home).ends_with(&format!(":{named}")));
 
     let request = Request::Prints {
         after: 7,
         limit: 100,
         since: Some(1_760_000_000.5),
     };
-    let [first, deadline, at, asked] = arguments(home, Duration::from_secs(20), 4096, &request);
+    let [first, deadline, at, asked] =
+        arguments(&machine, home, Duration::from_secs(20), 4096, &request);
     assert_eq!(
         (first, deadline.as_str(), at.as_str()),
         (mark, "20.000", home)
@@ -142,7 +157,13 @@ fn a_request_is_four_short_arguments() {
         asked,
         serde_json::json!({"k": "prints", "after": 7, "n": 100, "since": 1_760_000_000.5, "most": 4096})
     );
-    let [.., asked] = arguments(home, Duration::from_millis(2500), 9, &ids(&["a", "b\"c"]));
+    let [.., asked] = arguments(
+        &machine,
+        home,
+        Duration::from_millis(2500),
+        9,
+        &ids(&["a", "b\"c"]),
+    );
     assert_eq!(asked, r#"{"ids":["a","b\"c"],"k":"sessions","most":9}"#);
     assert_eq!(Request::Probe.kind(), "probe");
     assert_eq!(request.kind(), "prints-since");
@@ -532,4 +553,126 @@ fn a_fingerprint_is_the_stamps_and_the_readers_own_counts() {
     );
     assert_eq!(prints[1].print, format!("1760000700.0//{}", own("b")));
     assert_eq!(local_prints(&db, 1, 10).unwrap().len(), 1);
+}
+
+/// The verifier's probe of the first review of this reader
+/// (`evidence/36/verifier-report.md`, finding 3): the last line's counts
+/// were not looked at for a probe or the held file, and a sessions read
+/// took any page numbers. Every number of the last line now says what
+/// came, for every kind of answer.
+#[test]
+fn v_completion_counts_are_checked_for_every_kind() {
+    let start = "[\"started\",42]\n";
+    let cases = [
+        (
+            "probe",
+            Request::Probe,
+            "[\"end\",\"ok\",7,9,0,0]\n".to_owned(),
+        ),
+        (
+            "held",
+            Request::Held,
+            "[\"held\",\"{}\"]\n[\"end\",\"ok\",7,9,0,0]\n".to_owned(),
+        ),
+        (
+            "sessions",
+            ids(&[]),
+            "[\"end\",\"ok\",0,0,-1,-9]\n".to_owned(),
+        ),
+    ];
+    let mut accepted = Vec::new();
+    for (kind, ask, rest) in cases {
+        let answer = format!("{start}{rest}");
+        let got = parse(&ask, answer.as_bytes());
+        println!("{kind} malformed counts -> {got:?}");
+        if got.is_ok() {
+            accepted.push(kind);
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "accepted mismatched completion counts: {accepted:?}"
+    );
+
+    // Each number, one at a time: only the true ones pass.
+    let held = r#"["held","{}"]"#;
+    let kinds: [(Request, Vec<&str>, [i64; 4]); 3] = [
+        (Request::Probe, vec![], [0, 0, 0, 0]),
+        (Request::Held, vec![held], [0, 0, 0, 0]),
+        (ids(&["s1"]), vec![S1, U1], [1, 1, 0, 0]),
+    ];
+    let said = |rows: &[&str], counts: [i64; 4]| {
+        let [a, b, c, d] = counts;
+        let end = format!(r#"["end","ok",{a},{b},{c},{d}]"#);
+        let mut lines = vec![STARTED];
+        lines.extend(rows);
+        lines.push(&end);
+        answer(&lines)
+    };
+    for (ask, rows, right) in kinds {
+        assert!(
+            parse(&ask, &said(&rows, right)).is_ok(),
+            "{ask:?} {right:?}"
+        );
+        for at in 0..4 {
+            for wrong in [-1, right[at] + 1, 9_000] {
+                let mut counts = right;
+                counts[at] = wrong;
+                assert_eq!(
+                    parse(&ask, &said(&rows, counts)),
+                    Err(Rejected::Counts),
+                    "{ask:?} {counts:?}"
+                );
+            }
+        }
+    }
+    // A page of fingerprints: after rowid 4, at most 5 rows. Its numbers
+    // are the fingerprints, nothing, the rows looked at and the last
+    // one's rowid, which is past `after` by at least one for each row.
+    let page = Request::Prints {
+        after: 4,
+        limit: 5,
+        since: None,
+    };
+    let print = r#"["p",6,"a","x"]"#;
+    for right in [[1, 0, 2, 6], [1, 0, 2, 7], [1, 0, 3, 7], [1, 0, 5, 900]] {
+        assert!(parse(&page, &said(&[print], right)).is_ok(), "{right:?}");
+    }
+    for wrong in [
+        [0, 0, 2, 7],
+        [2, 0, 2, 7],
+        [-1, 0, 2, 7],
+        [1, 1, 2, 7],
+        [1, -1, 2, 7],
+        [1, 0, 0, 7],
+        [1, 0, -1, 7],
+        [1, 0, 6, 70],
+        [1, 0, 4, 7],
+        [1, 0, 2, 5],
+        [1, 0, 2, -1],
+    ] {
+        assert_eq!(
+            parse(&page, &said(&[print], wrong)),
+            Err(Rejected::Counts),
+            "{wrong:?}"
+        );
+    }
+    assert!(parse(&page, &said(&[], [0, 0, 0, 4])).is_ok());
+    assert!(parse(&page, &said(&[], [0, 0, 3, 9])).is_ok());
+    for wrong in [
+        [0, 0, 0, 5],
+        [0, 0, 0, 3],
+        [0, 0, 1, 4],
+        [0, 0, -1, 4],
+        [0, 0, 0, -1],
+    ] {
+        assert_eq!(
+            parse(&page, &said(&[], wrong)),
+            Err(Rejected::Counts),
+            "{wrong:?}"
+        );
+    }
+    // A status that brings no rows brings no numbers either.
+    let none = answer(&[STARTED, r#"["end","none",0,0,0,1]"#]);
+    assert_eq!(parse(&Request::Held, &none), Err(Rejected::Counts));
 }

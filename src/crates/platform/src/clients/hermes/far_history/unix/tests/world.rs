@@ -46,8 +46,11 @@ pub(super) fn settings() -> Settings {
     }
 }
 
-pub(super) fn machine() -> MachineKey {
-    machine_key(Some("0123456789abcdef0123456789abcdef"), "/far/.hermes").expect("a key")
+/// The key of the machine whose root home is `home`. Every lab has its
+/// own, as every far machine does, so one lab's readers never count as
+/// another's.
+pub(super) fn machine_of(home: &str) -> MachineKey {
+    machine_key(Some("0123456789abcdef0123456789abcdef"), home).expect("a key")
 }
 
 impl World {
@@ -111,8 +114,12 @@ impl World {
         *self.hermes.lock().unwrap() = None;
     }
 
+    pub(super) fn machine(&self) -> MachineKey {
+        machine_of(&self.home)
+    }
+
     pub(super) fn mark(&self) -> String {
-        far::mark(&self.home)
+        far::mark(&self.machine(), &self.home)
     }
 
     /// Puts a stand-in for `python3` first on the far path.
@@ -394,7 +401,7 @@ pub(super) fn most(samples: &[Sample]) -> (usize, usize) {
 /// Runs the program once, with no caller and no slot: what the far side
 /// does by itself.
 pub(super) fn raw(link: &Link, home: &str, deadline: Duration, request: &far::Request) -> Ran {
-    let args = far::arguments(home, deadline, far::MOST_OUTPUT, request);
+    let args = far::arguments(&machine_of(home), home, deadline, far::MOST_OUTPUT, request);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     link.run(&FarCommand {
         script: far::SCRIPT,

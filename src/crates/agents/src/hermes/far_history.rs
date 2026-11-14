@@ -15,8 +15,11 @@
 //!   (`session_counts`), so a session whose fingerprint is unchanged has
 //!   nothing new to fetch;
 //! - sessions: for a list of ids, each session's row and every one of its
-//!   usage rows, with the columns this crate's reader selects;
+//!   usage rows, with the columns this crate's reader selects. No value
+//!   longer than 64 KiB is loaded on the far side: a session that holds one
+//!   is too large, and a fingerprint made of one reads `oversized`;
 //! - held: `runtime/active_sessions.json`, bounded, as untrusted text.
+use super::gateway::MachineKey;
 use super::session_counts;
 use crate::transcript::{sql_column, sql_columns};
 use rusqlite::Connection;
@@ -38,6 +41,9 @@ pub const PROGRAM: &str = include_str!("far_history/reader.py");
 pub const SCRIPT: &str = "exec python3 -I - \"$@\"";
 /// The exit status of a shell that found no `python3`.
 pub const NO_PYTHON: i32 = 127;
+/// The exit status of a reader that ended itself because what it read
+/// made its memory grow too far: a value SQLite had to load to measure.
+pub const TOO_MUCH_MEMORY: i32 = 5;
 /// The start of the argument every reader carries, by which one reader
 /// finds another in the far process list.
 pub const MARK: &str = "agent-hud-far-history:";
@@ -145,20 +151,29 @@ pub fn usable_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= LONGEST_ID && !id.chars().any(char::is_control)
 }
 
-/// The argument that marks a reader of `home`, which must be the far
-/// home's canonical path: the program checks that it is, so one home has
-/// one mark however it was reached.
-pub fn mark(home: &str) -> String {
+/// The argument that marks a reader: the machine's key, then what names
+/// `home`, which must be the far home's canonical path (the program checks
+/// that it is). A reader that finds another one of the same machine alive
+/// opens nothing, whichever of the machine's homes either reads, so the
+/// machine's one slot is held on the far side too. So does one that finds
+/// another reader of the same home.
+pub fn mark(machine: &MachineKey, home: &str) -> String {
     let digest = Sha256::digest(home.as_bytes());
     let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    format!("{MARK}{}", &hex[..16])
+    format!("{MARK}{}:{}", machine.as_str(), &hex[..16])
 }
 
 /// The program's arguments, for [`SCRIPT`]: its mark, its deadline in
 /// seconds, the home, and the request.
-pub fn arguments(home: &str, deadline: Duration, most: usize, request: &Request) -> [String; 4] {
+pub fn arguments(
+    machine: &MachineKey,
+    home: &str,
+    deadline: Duration,
+    most: usize,
+    request: &Request,
+) -> [String; 4] {
     [
-        mark(home),
+        mark(machine, home),
         format!("{:.3}", deadline.as_secs_f64()),
         home.to_owned(),
         request.argument(most),

@@ -4,7 +4,7 @@
 //! Every count is the far side's own (`world::Watch`).
 use super::super::{Failure, Hold, Reader, Slots};
 use super::world::{
-    clients, kill, machine, most, naming, open, raw, readers, sessions, settings, Watch, World,
+    clients, kill, machine_of, most, naming, open, raw, readers, sessions, settings, Watch, World,
     PYTHON,
 };
 use crate::ssh_link::unix::tests::lab::until;
@@ -73,7 +73,7 @@ fn never_two_readers() {
     let Some(world) = World::start() else { return };
     world.make_every_read_endless();
     let (reader, slots) = (world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let link = world.link();
     assert_eq!(
         reader.read(&link, &slot, &world.home, &Request::Probe),
@@ -167,7 +167,7 @@ fn a_late_start(shown: bool) {
     let mut impatient = short.clone();
     impatient.local_wait = Duration::from_millis(1_200);
     let (reader, hasty, slots) = (world.reader(short), world.reader(impatient), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let link = world.link();
     assert_eq!(
         reader.read(&link, &slot, &world.home, &Request::Probe),
@@ -314,7 +314,12 @@ fn a_hud_that_reads_until_it_is_killed() {
     let reader = Reader::new(long, |line| println!("  hud log: {line}"));
     let slots = Slots::new();
     loop {
-        let _ = reader.read(&link, &slots.of(&machine()), &home, &sessions(&["endless"]));
+        let _ = reader.read(
+            &link,
+            &slots.of(&machine_of(&home)),
+            &home,
+            &sessions(&["endless"]),
+        );
     }
 }
 
@@ -359,7 +364,7 @@ fn hud_relaunch_does_not_overlap_a_reader() {
     println!("  relaunch swept {swept:?}");
     let link = world.link();
     let (reader, slots) = (world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     assert_eq!(slot.hold(), Hold::StartUnknown);
     let request = sessions(&["endless"]);
     let first = reader.read(&link, &slot, &world.home, &request);
@@ -405,7 +410,7 @@ fn retire_and_readd_keeps_reader_exclusion() {
     let mut long = settings();
     long.deadline = Duration::from_secs(4);
     let (reader, slots) = (world.reader(long), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let link = world.link();
     assert_eq!(
         reader.read(&link, &slot, &world.home, &Request::Probe),
@@ -422,12 +427,12 @@ fn retire_and_readd_keeps_reader_exclusion() {
         let old = readers(&world.mark());
         // The machine's only entry is removed in the middle of the query:
         // the machine is retired and its link closed.
-        slots.retired(&machine());
+        slots.retired(&world.machine());
         link.close();
         assert!(first.join().unwrap().is_err());
         // And added again at once. It has the slot it had, which now
         // knows nothing of the reader.
-        let same = slots.of(&machine());
+        let same = slots.of(&world.machine());
         assert!(Arc::ptr_eq(&slot, &same));
         assert_eq!(same.hold(), Hold::StartUnknown);
         let again = world.link();

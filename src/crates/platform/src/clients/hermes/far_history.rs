@@ -18,7 +18,8 @@
 //! its answer ended with an exit status, or its own deadline has passed
 //! since its `started` line was seen here. A lost link, a reconnect and a
 //! change of route free nothing. The far side holds the same rule by
-//! itself: a reader that finds another one alive opens nothing.
+//! itself: a reader that finds another one of the same machine alive
+//! opens nothing, whichever of the machine's homes either one reads.
 use crate::ssh_link::{self, Cut, End, FarCommand, Link, Refused};
 use agent_hud_agents::hermes::far_history::{
     self as far, Far, First, No, Rejected, Reply, Request,
@@ -186,7 +187,13 @@ impl Reader {
     ) -> Result<Reply, Failure> {
         let kind = request.kind();
         let settings = &self.settings;
-        let args = far::arguments(home, settings.deadline, settings.most_output, request);
+        let args = far::arguments(
+            slot.machine(),
+            home,
+            settings.deadline,
+            settings.most_output,
+            request,
+        );
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let command = FarCommand {
             script: far::SCRIPT,
@@ -241,8 +248,12 @@ impl Reader {
             }
         };
         // The far program ended and its status came back: it is gone.
+        let read = matches!(request, Request::Prints { .. } | Request::Sessions { .. });
         let answer = if exit == far::NO_PYTHON {
             Err(Failure::NoHistory)
+        } else if exit == far::TOO_MUCH_MEMORY && read {
+            // It ended itself over a value too long to hold: too large.
+            Ok(Reply::TooLarge)
         } else if exit != 0 {
             Err(Failure::Exit(exit))
         } else if !ran.stderr.is_empty() {
@@ -272,7 +283,7 @@ impl Reader {
         let bytes = ran.stdout.len();
         match &answer {
             Ok(reply) => self.say(format!(
-                "history {kind} ok exit=0 {ms} ms {bytes} B{}",
+                "history {kind} ok exit={exit} {ms} ms {bytes} B{}",
                 batches::counts(reply)
             )),
             Err(failure) => self.say(format!(

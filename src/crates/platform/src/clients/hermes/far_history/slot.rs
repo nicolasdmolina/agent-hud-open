@@ -34,6 +34,7 @@ pub enum Hold {
 }
 
 pub struct Slot {
+    machine: MachineKey,
     /// One read at a time: held from before a reader starts until its
     /// answer has ended on this side.
     turn: Mutex<()>,
@@ -52,14 +53,22 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Slot {
-    fn new() -> Self {
+    fn new(machine: MachineKey) -> Self {
         Self {
+            machine,
             turn: Mutex::new(()),
             state: Mutex::new(State {
                 hold: Hold::StartUnknown,
                 round: 0,
             }),
         }
+    }
+
+    /// The machine this slot is for. Every reader started under it
+    /// carries this key, by which the far side keeps one reader for the
+    /// machine too, whichever of its homes is read.
+    pub fn machine(&self) -> &MachineKey {
+        &self.machine
     }
 
     pub fn hold(&self) -> Hold {
@@ -140,7 +149,7 @@ impl Slots {
         let mut all = locked(&self.all);
         let slot = all
             .entry(machine.clone())
-            .or_insert_with(|| Arc::new(Slot::new()));
+            .or_insert_with(|| Arc::new(Slot::new(machine.clone())));
         Arc::clone(slot)
     }
 

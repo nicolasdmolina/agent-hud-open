@@ -6,7 +6,7 @@
 //! database that way, so its history is not read until Hermes runs there
 //! again. This is a limit of the design, pinned here.
 use super::super::{Failure, Slots};
-use super::world::{machine, settings, World};
+use super::world::{settings, World};
 use agent_hud_agents::hermes::far_history::Far;
 use std::fs;
 
@@ -27,7 +27,7 @@ fn a_database_nobody_has_open_is_named_as_not_opened_and_nothing_is_made_beside_
     world.stop_hermes();
     assert_eq!(world.files(), ["state.db"]);
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let read = reader.sessions(&link, &slot, &world.home, &owned(&["s1"]));
     println!(
         "  read {} session(s), stopped: {:?}; the home now holds {:?}",
@@ -90,7 +90,7 @@ fn a_log_left_behind_is_read_with_the_rows_that_are_only_in_it() {
     assert!(fs::metadata(&log).unwrap().len() > 0);
 
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let asked = owned(&["s1", "only-in-the-log"]);
     let read = reader.sessions(&link, &slot, &world.home, &asked);
     // The shared memory file is made by the open: no intentional write,

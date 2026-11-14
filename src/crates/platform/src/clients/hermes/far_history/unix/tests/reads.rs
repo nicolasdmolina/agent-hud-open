@@ -1,6 +1,6 @@
 //! Each kind of read against the lab database, and what is too large.
 use super::super::{Failure, Hold, Skip, Slots};
-use super::world::{direct, machine, sessions, settings, sort, World};
+use super::world::{direct, sessions, settings, sort, World};
 use agent_hud_agents::hermes::far_history::{self as far, Reply, Request, MOST_USAGE_ROWS};
 use std::{fs, time::Instant};
 
@@ -20,7 +20,7 @@ fn each_kind_of_read_returns_the_labs_rows() {
     fs::create_dir_all(format!("{}/runtime", world.home)).unwrap();
     fs::write(format!("{}/runtime/active_sessions.json", world.home), held).unwrap();
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     assert_eq!(slot.hold(), Hold::StartUnknown);
 
     // Fingerprints, a page at a time by rowid.
@@ -125,7 +125,7 @@ fn the_programs_fingerprint_is_the_huds_own() {
     )
     .unwrap();
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let far = reader
         .prints(&link, &slot, &world.home, 0, 100, None)
         .unwrap();
@@ -158,7 +158,7 @@ fn a_batch_over_the_output_bound_is_too_large_and_the_caller_halves_it() {
     let mut settings = settings();
     settings.most_output = 64 * 1024;
     let (link, reader, slots) = (world.link(), world.reader(settings), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
 
     // Asked for all at once, the far side answers "too large" and no row.
     let all = Request::Sessions { ids: names.clone() };
@@ -212,7 +212,7 @@ fn a_session_with_501_usage_rows_is_skipped_whole() {
     world.add_session(&db, "s-over", MOST_USAGE_ROWS + 1);
     world.add_session(&db, "s-small", 2);
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let read = reader.sessions(
         &link,
         &slot,
@@ -258,7 +258,7 @@ fn a_session_with_501_usage_rows_is_skipped_whole() {
 fn a_missing_oversized_or_non_json_active_sessions_file_is_none() {
     let Some(world) = World::start() else { return };
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let file = format!("{}/runtime/active_sessions.json", world.home);
     // Missing: the folder, then the file.
     assert_eq!(reader.held(&link, &slot, &world.home), Ok(None));
@@ -295,7 +295,7 @@ fn a_missing_oversized_or_non_json_active_sessions_file_is_none() {
 fn no_far_command_line_is_longer_than_the_limit() {
     let Some(world) = World::start() else { return };
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     // The longest ids there can be, of the characters that grow most
     // when they are quoted for JSON and then for the far shell.
     let ids: Vec<String> = (0..60)
@@ -304,11 +304,12 @@ fn no_far_command_line_is_longer_than_the_limit() {
     assert!(ids
         .iter()
         .all(|id| id.len() == far::LONGEST_ID && far::usable_id(id)));
-    let reads = reader.reads(&world.home, ids.clone());
+    let reads = reader.reads(&world.machine(), &world.home, ids.clone());
     let mut longest = 0;
     for read in &reads {
         let request = Request::Sessions { ids: read.clone() };
         let args = far::arguments(
+            &world.machine(),
             &world.home,
             settings().deadline,
             settings().most_output,
@@ -358,7 +359,7 @@ fn the_time_and_bytes_of_each_kind_of_read() {
     let held = r#"[{"session_id":"20261113_000001_abcdef","surface":"desktop","pid":4242}]"#;
     fs::write(format!("{}/runtime/active_sessions.json", world.home), held).unwrap();
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
-    let slot = slots.of(&machine());
+    let slot = slots.of(&world.machine());
     let nothing = crate::ssh_link::unix::tests::lab::far("true", &[]);
     let mut floor = Vec::new();
     for _ in 0..5 {
