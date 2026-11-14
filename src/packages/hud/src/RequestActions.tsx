@@ -95,9 +95,10 @@ export function RequestActions({
           so what was typed stays. */}
       <div
         className="hud-request-controls"
-        aria-disabled={unreachable ? true : undefined}
         style={{
           opacity: unreachable ? 0.45 : undefined,
+          // Grey too, so an answered Submit no longer looks ready.
+          filter: unreachable ? "saturate(0)" : undefined,
           transition: "opacity 160ms ease",
         }}
       >

@@ -42,6 +42,7 @@ export function MachineLabel({
         fontWeight: 500,
         lineHeight: `${size + 4}px`,
         whiteSpace: "nowrap",
+        position: "relative",
         ...style,
       }}
     >
@@ -52,9 +53,23 @@ export function MachineLabel({
         style={{ flexShrink: 0 }}
       />
       <span
+        aria-hidden="true"
         style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}
       >
         {machineLabelText(label)}
+      </span>
+      {/* The whole label for a screen reader, which reads no hover title. */}
+      <span
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          overflow: "hidden",
+          clip: "rect(0 0 0 0)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {oneLine(label)}
       </span>
     </span>
   );

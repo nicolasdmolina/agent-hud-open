@@ -4,17 +4,6 @@ import { age, type Language } from "@agent-hud/ui/format";
 
 type Text = (en: string, zh: string) => string;
 
-/** The colour of a state's dot: well, on its way, needs a look, or not
- * followed at all. */
-export const dot: Record<MachineStatus["state"], string> = {
-  connected: "#30d158",
-  connecting: "#ffd60a",
-  "not-trusted": "#ff9f0a",
-  "cannot-reach": "#ff453a",
-  "not-covered": "#8e8e93",
-  "same-machine": "#8e8e93",
-};
-
 /** Whether the list is worth a section: not when it holds only this machine
  * (or nothing) and nothing is wrong with the list itself. */
 export function showsMachines(

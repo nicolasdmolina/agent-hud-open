@@ -7,7 +7,7 @@ import { Laptop, Server, TriangleAlert } from "lucide-react";
 import type { Provider, Snapshot } from "@agent-hud/protocol";
 import { snapshotLanguage } from "@agent-hud/ui/format";
 import { Notice, Row, Section, type Text } from "../SettingsPrimitives";
-import { dot, machineTimes, showsMachines } from "./machines-list";
+import { machineTimes, showsMachines } from "./machines-list";
 
 export function MachinesSection({
   t,
@@ -49,15 +49,17 @@ export function MachinesSection({
             machine.here ? (
               <Laptop size={17} strokeWidth={1.8} />
             ) : (
-              <Server size={17} strokeWidth={1.8} />
+              <Server
+                size={17}
+                strokeWidth={1.8}
+                opacity={followed(machine) ? 1 : 0.5}
+              />
             )
           }
           title={machine.label}
           subtitle={machine.note}
           detail={machineTimes(machine, now, language, t)}
-          muted={
-            machine.state === "not-covered" || machine.state === "same-machine"
-          }
+          muted={!followed(machine)}
         >
           <span
             className="settings-machine-state"
@@ -72,12 +74,7 @@ export function MachinesSection({
           >
             <span
               aria-hidden="true"
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: 999,
-                background: dot[machine.state],
-              }}
+              className={`settings-machine-dot is-${machine.state}`}
             />
             {machine.stateText}
           </span>
@@ -85,4 +82,10 @@ export function MachinesSection({
       ))}
     </Section>
   );
+}
+
+/** Whether Agent HUD follows the machine at all: one not covered, or the
+ * same machine as another entry, is drawn quieter, icon and all. */
+function followed(machine: { state: string }) {
+  return machine.state !== "not-covered" && machine.state !== "same-machine";
 }
