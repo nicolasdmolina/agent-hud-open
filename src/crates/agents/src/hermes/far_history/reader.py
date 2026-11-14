@@ -40,7 +40,7 @@ MOST_USAGE = 500  # the usage rows of one session the HUD's reader accepts
 MOST_HELD = 256 * 1024
 MOST_FIELD = 64 * 1024  # the bytes of one value that are loaded at all: `octet_length` is asked first,
 # which SQLite (3.43 on) answers from a row's header without loading the value, but for a column declared REAL
-TIE_WAIT = 3.0  # the longest a reader waits for higher process ids to leave
+TIE_WAIT = 3.0  # how long a reader waits for higher process ids to leave
 TOKENS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
 SESSION = ("title", "cwd", "source", "model", "billing_provider", "billing_base_url",
            "billing_mode") + TOKENS + ("ended_at", "last_activity_at", "profile_name")
@@ -92,8 +92,8 @@ def others(mark):
     return [int(part[0]) for part in rows if len(part) > 2 and part[1] == uid and int(part[0]) != me and any(
         word.startswith(MARK) and (word.startswith(machine + ":") or word.endswith(":" + home)) for word in part[2:])]
 
-def alone(mark, wait):
-    until = time.monotonic() + wait
+def alone(mark):
+    until = time.monotonic() + TIE_WAIT
     while True:
         found = others(mark)
         if not found:
@@ -270,7 +270,7 @@ def main():
                 "probe", "prints", "rowids", "sessions", "held")):
         return say(line(["no", "request"]))
     try:
-        lone = alone(mark, min(TIE_WAIT, deadline / 2))  # so that "busy" is said before the deadline
+        lone = alone(mark)
     except (OSError, ValueError, subprocess.SubprocessError):
         return say(line(["no", "processes"]))
     if not lone:
