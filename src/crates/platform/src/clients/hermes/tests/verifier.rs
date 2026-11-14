@@ -188,7 +188,7 @@ fn verifier_permission_retry_must_stop_if_card_settled_during_resume() {
 
 #[test]
 fn verifier_hint_on_short_socket_must_request_poll() {
-    use super::super::{control, log, visit::Visit, Model, Shared};
+    use super::super::{log, visit::Visit, Model, Shared};
     use agent_hud_agents::hermes::gateway::{
         identify_line, Connection, Gateway, GatewayId, Input, Machine, Profile,
     };
@@ -201,7 +201,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
     let session_id = gateway.play("question-answered-elsewhere", Some("clarify.request"));
     gateway.world().hint_on_resume = true;
     let mut model = Gateway::new(GatewayId::new(Machine::This, Profile::Default));
-    let identified = control::ask(&lab.home, &identify_line(), Duration::from_secs(2)).unwrap();
+    let identified = super::ask(&lab.home, &identify_line(), Duration::from_secs(2)).unwrap();
     model.apply(
         Input::Identified {
             answer: &identified,
@@ -216,7 +216,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         .session(&Profile::named("hud-spike").unwrap(), &session_id)
         .unwrap();
     let shared = Shared {
-        home: lab.home.clone(),
+        route: lab.route.clone(),
         requests: lab.requests.clone(),
         wake: Arc::new(|| {}),
         log: log::Log::new(&lab.data),
