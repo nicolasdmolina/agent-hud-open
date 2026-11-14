@@ -22,6 +22,7 @@ mod identity;
 mod live;
 mod machine;
 mod poll;
+mod reach;
 mod read;
 mod reconcile;
 mod served;
@@ -29,6 +30,7 @@ mod state;
 mod ticket;
 
 pub use ask::{Approval, Ask, Batch, BatchQuestion, Choice, Locked, Pending, Prompt, Question};
+pub use card::out_of_reach;
 pub use command::{active_list, detach, events_since, resume, Command};
 pub use connection::{
     identify, refused, served_homes, Connection, Denied, Failure, Identified, Instance, Served,

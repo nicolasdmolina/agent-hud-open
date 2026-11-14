@@ -272,30 +272,31 @@ fn an_answer_hermes_does_not_take_brings_the_card_back() {
     }
 }
 
+/// Phase 1 let the card of a stopped gateway take the click, and brought
+/// it back with a receipt that said the answer failed. Since ticket 27 the
+/// card says its gateway cannot be reached and takes no answer at all: it
+/// stays as it is, and nothing is said of an answer that was never taken.
+/// An answer core took a moment before the gateway went is still brought
+/// back, as it was (`unreachable_late.rs`).
 #[test]
-fn an_answer_that_cannot_be_sent_brings_the_card_back() {
+fn an_answer_to_a_gateway_that_is_gone_is_refused_and_the_card_stays() {
     let mut lab = lab();
     let gateway = Fake::start(&lab.home, "instance-1");
     lab.follow();
     lab.hears(&gateway, "question-answered-here", "clarify.request");
-    let id = lab.card()["id"].as_str().unwrap().to_owned();
+    let card = lab.card();
+    let id = card["id"].as_str().unwrap().to_owned();
     // The gateway is gone, and the card still shows: the request may wait.
     gateway.kill();
-    until("the loss is seen", || {
-        lab.log().contains("connection failed")
-    });
+    until("the card says so", || super::marked(&lab.card()));
     let decision = json!({"kind": "answer", "answers": {"715a2db63d": {"selected": ["green"]}}});
-    lab.requests
-        .answer(&id, &decision, crate::hooks::now_ms())
-        .unwrap();
-    // Core put the card away on the answer. Nothing could be sent, so it
-    // comes back under the same id, and the receipt says why.
-    let receipt = lab.delivery(&id);
-    assert_eq!(receipt["state"], "failed");
-    assert!(receipt["reason"]
-        .as_str()
-        .is_some_and(|why| !why.is_empty()));
-    assert_eq!(lab.card()["id"], id.as_str());
+    let refused = lab.requests.answer(&id, &decision, crate::hooks::now_ms());
+    assert!(refused.is_err_and(|why| !why.is_empty()));
+    // It was not put away, so there is nothing to bring back and no receipt.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert_eq!(super::plain(lab.card()), card);
+    assert!(lab.requests.deliveries(crate::hooks::now_ms()).is_empty());
+    assert!(!lab.log().contains("undelivered"), "{}", lab.log());
 }
 
 #[test]

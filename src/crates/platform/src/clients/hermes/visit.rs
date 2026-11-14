@@ -212,26 +212,26 @@ impl<'a> Visit<'a> {
         &mut self,
         write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
     ) -> Option<T> {
-        self.write_marked(|_| {}, write)
+        self.write_marked(|_| true, write)
     }
 
     /// The same, with `marked` run under the lock in the very step that
     /// marks the visit as writing: what the model has to know of the write
-    /// before anything can end what it is for.
+    /// before anything can end what it is for. It may still say no, and
+    /// then nothing is written.
     pub(super) fn write_marked<T>(
         &mut self,
-        marked: impl FnOnce(&mut Model),
+        marked: impl FnOnce(&mut Model) -> bool,
         write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
     ) -> Option<T> {
         {
             let mut model = self.shared.model();
-            if !self.wanted(&model) {
+            if !self.wanted(&model) || !marked(&mut model) {
                 return None;
             }
             if let Some(held) = model.visits.get_mut(&self.key) {
                 held.writing = true;
             }
-            marked(&mut model);
         }
         let done = write(&mut self.socket);
         if let Some(held) = self.shared.model().visits.get_mut(&self.key) {

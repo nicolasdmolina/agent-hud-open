@@ -16,6 +16,7 @@ mod far;
 mod handshake;
 mod live;
 mod machines;
+mod reach;
 mod regressions;
 mod replay;
 mod scenarios;

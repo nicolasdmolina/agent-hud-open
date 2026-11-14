@@ -56,6 +56,10 @@ mod script;
 mod stalled;
 #[path = "tests/states.rs"]
 mod states;
+#[path = "tests/unreachable.rs"]
+mod unreachable;
+#[path = "tests/unreachable_late.rs"]
+mod unreachable_late;
 #[path = "tests/verifier.rs"]
 mod verifier;
 #[path = "tests/verifier2.rs"]
@@ -189,6 +193,19 @@ fn ask(home: &Path, line: &Value, wait: Duration) -> Result<Value, Silent> {
     let route = Local::at(home);
     let home = route.homes()?.remove(0);
     control::ask(&route, &home, line, wait)
+}
+
+/// Whether a card says its gateway cannot be reached (ticket 27).
+fn marked(card: &Value) -> bool {
+    card["unreachable"]
+        .as_str()
+        .is_some_and(|why| !why.is_empty())
+}
+
+/// The card without its mark: a marked card is the same card but for that.
+fn plain(mut card: Value) -> Value {
+    card.as_object_mut().unwrap().remove("unreachable");
+    card
 }
 
 /// Waits for `met`, which takes hundredths of a second; the limit is for a

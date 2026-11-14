@@ -1,6 +1,8 @@
 //! Answering a waiting request: checking the decision against its card, and
-//! sending it to the client that waits.
-use super::{Content, Requests};
+//! sending it to the client that waits. This is the one gate every
+//! decision passes: a request whose card says its client cannot be
+//! reached (`unreachable`) takes none, and stays as it is.
+use super::{back::Taken, Content, Requests};
 use crate::l10n;
 use serde_json::Value;
 use std::sync::PoisonError;
@@ -20,6 +22,7 @@ impl Requests {
             Content::Hook(request) => request.view(id, item.created_ms),
             Content::Native(view) => view.clone(),
         };
+        reachable(&view, decision)?;
         validate_native_decision(&view, decision)?;
         Ok(view)
     }
@@ -43,6 +46,9 @@ impl Requests {
                     request.response(decision)?
                 }
                 Content::Native(view) => {
+                    // Refused before anything changes: the card, its hold
+                    // and whether it was dismissed stay as they were.
+                    reachable(view, decision)?;
                     validate_native_decision(view, decision)?;
                     (decision.get("kind").and_then(Value::as_str) != Some("leave"))
                         .then(|| decision.clone())
@@ -51,6 +57,12 @@ impl Requests {
             let item = state.pending.remove(index).expect("pending index exists");
             if matches!(&item.content, Content::Native(_)) {
                 state.dismissed.insert(id.into());
+                // A decision that is to be sent may yet come back unsent
+                // (`back.rs`); leaving the card alone sends nothing.
+                if response.is_some() {
+                    let (wait, created_ms) = (item.wait, item.created_ms);
+                    state.taken.insert(id.into(), Taken { wait, created_ms });
+                }
             }
             state.revision = state.revision.wrapping_add(1);
             (item, response)
@@ -66,6 +78,23 @@ impl Requests {
             ))
         }
     }
+}
+/// A card that says its client cannot be reached (`unreachable`, the
+/// reason in its adapter's words) takes no answer: there is nowhere to
+/// send one, and the client may still wait. Leaving the card alone sends
+/// nothing, so that is still taken, and the card goes as the user asked.
+fn reachable(view: &Value, decision: &Value) -> Result<(), String> {
+    let why = match view.get("unreachable") {
+        None | Some(Value::Null) => return Ok(()),
+        Some(why) => why.as_str().filter(|why| !why.is_empty()),
+    };
+    if decision.get("kind").and_then(Value::as_str) == Some("leave") {
+        return Ok(());
+    }
+    Err(why.map_or_else(
+        || l10n::text("现在无法送达这个回答", "This cannot be answered right now"),
+        str::to_owned,
+    ))
 }
 fn validate_native_decision(view: &Value, decision: &Value) -> Result<(), String> {
     let kind = decision

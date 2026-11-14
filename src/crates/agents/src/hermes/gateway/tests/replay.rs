@@ -83,6 +83,8 @@ pub fn describe(effect: &Effect) -> String {
             }
         }
         Effect::Changed(pending) => format!("changed {}", key(&pending.id())),
+        Effect::Marked(pending) => format!("out of reach {}", key(&pending.id())),
+        Effect::Unmarked(pending) => format!("in reach {}", key(&pending.id())),
         Effect::Close {
             id, why: closed, ..
         } => format!("close {} {}", key(id), why(closed)),

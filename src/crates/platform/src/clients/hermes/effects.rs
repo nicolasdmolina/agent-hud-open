@@ -1,14 +1,18 @@
 //! Doing what the model says: each effect becomes a call on core's
 //! requests. A card opens once under its request id, changes in place, and
-//! is withdrawn when Hermes says the request is over. What the sessions
-//! are doing is told to core in one place, `tell`, after everything the
-//! model takes in, under the follower's own reader name.
+//! is withdrawn when Hermes says the request is over. It is never
+//! withdrawn for being out of reach: it is marked in place, and a card
+//! core put away for an answer that did not land is given back as it was
+//! (`back`), never registered anew. What the sessions are doing is told to
+//! core in one place, `tell`, after everything the model takes in, under
+//! the follower's own reader name.
 use super::{answer::NO_REPLY, Model, Shared};
 use agent_hud_agents::hermes::{
-    gateway::{Ask, Closed, Connection, Effect, Gateway, Pending, Refusal},
+    gateway::{Ask, Closed, Connection, Effect, Gateway, Input, Pending, Refusal},
     AGENT,
 };
 use agent_hud_core::l10n;
+use serde_json::Value;
 
 /// The machine label on the cards made here: none, since every gateway
 /// this channel follows runs on this machine.
@@ -36,14 +40,25 @@ impl Shared {
                 Effect::Changed(pending) => {
                     let id = pending.id();
                     self.log.line(&format!("change id={id}"));
-                    let opened = model.opened.get(&id).copied().unwrap_or(now);
-                    let view = pending.view(opened, MACHINE);
+                    let view = self.view(model, &pending, now);
+                    self.requests.refresh_native(&id, view);
+                }
+                // Out of reach, or found waiting again: the same request,
+                // changed in place. Its time, its hold and whether it
+                // was dismissed are core's, and are not touched.
+                Effect::Marked(pending) | Effect::Unmarked(pending) => {
+                    let id = pending.id();
+                    let marked = model.gateway.marked(&id);
+                    let word = if marked { "unreachable" } else { "reached" };
+                    self.log.line(&format!("{word} id={id}"));
+                    let view = self.view(model, &pending, now);
                     self.requests.refresh_native(&id, view);
                 }
                 Effect::Close { id, session, why } => {
                     self.log.line(&format!("close id={id} why={why:?}"));
                     model.waiters.remove(&id);
                     model.opened.remove(&id);
+                    model.taken.remove(&id);
                     // An answer to it that is being written is cut.
                     model.cut_writing(|request| request == Some(id.as_str()));
                     self.requests.settle_native(&id);
@@ -54,9 +69,8 @@ impl Shared {
                     self.log.line(&format!("unanswered id={id} why={why:?}"));
                     model.answered.remove(&id);
                     // Core put the card away when it was answered; this
-                    // brings it back, since the request still waits.
-                    self.requests.settle_native(&id);
-                    self.show(model, &pending, now);
+                    // gives it back as it was, since the request still waits.
+                    self.back(model, &pending, now);
                     let (state, reason) = match &why {
                         Some(Refusal::Other(word)) if word == NO_REPLY => {
                             ("uncertain", unconfirmed())
@@ -72,31 +86,69 @@ impl Shared {
         (self.wake)();
     }
 
-    /// An answer that could not be sent at all: its card comes back, saying
-    /// why, for as long as Hermes still waits on it.
-    pub(super) fn undelivered(&self, pending: &Pending, reason: String) {
+    /// An answer that could not be sent at all (the decision taken in
+    /// `wait`): nothing of it was written. Its card comes back as it was,
+    /// marked, for as long as Hermes still waits on it. Nothing comes back
+    /// where the request is over meanwhile, the follower ended, or the
+    /// answer is not the one that is out now.
+    pub(super) fn undelivered(&self, pending: &Pending, wait: u64, reason: String) {
         let mut model = self.model();
         let id = pending.id();
-        if model.stopped || model.gateway.pending(&id).is_none() {
+        let out = model.taken.get(&id) == Some(&wait);
+        if model.stopped || model.gateway.pending(&id).is_none() || !out {
             return;
         }
         let now = crate::hooks::now_ms();
         self.log.line(&format!("undelivered id={id}"));
-        self.requests.settle_native(&id);
-        self.show(&mut model, pending, now);
+        // The gateway took no answer just now: the model marks the card
+        // until a poll finds the request waiting again.
+        self.take(&mut model, Input::Unsent { request: &id });
+        self.back(&mut model, pending, now);
         self.note(&id, &pending.session.hud_id(), "failed", Some(reason), now);
-        self.tell(&model.gateway, now);
         (self.wake)();
+    }
+
+    /// The card as it shows now: marked while its gateway is out of reach.
+    fn view(&self, model: &Model, pending: &Pending, now: i64) -> Value {
+        let id = pending.id();
+        let opened = model.opened.get(&id).copied().unwrap_or(now);
+        if model.gateway.marked(&id) {
+            pending.view_out_of_reach(opened, MACHINE)
+        } else {
+            pending.view(opened, MACHINE)
+        }
     }
 
     /// Registers the card with core and keeps where its answer will arrive.
     /// Core refuses one it already holds, which changes nothing.
     fn show(&self, model: &mut Model, pending: &Pending, now: i64) {
         let id = pending.id();
-        let opened = *model.opened.entry(id.clone()).or_insert(now);
-        let view = pending.view(opened, MACHINE);
+        model.opened.entry(id.clone()).or_insert(now);
+        let view = self.view(model, pending, now);
+        #[cfg(test)]
+        (self.shows).fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         if let Some(waiter) = self.requests.register_native(id.clone(), view, now) {
             model.waiters.insert(id, waiter);
+        }
+    }
+
+    /// Gives core back a card it put away for an answer that did not land:
+    /// the same request, with the time it came and the hold that runs from
+    /// it, and not dismissed (`Requests::put_back`). It is not registered
+    /// again, which would start its hold anew. Nothing comes back where
+    /// the request came to its end for core meanwhile (its hold ran out),
+    /// or where the answer that is out is no longer this one.
+    fn back(&self, model: &mut Model, pending: &Pending, now: i64) {
+        let id = pending.id();
+        let Some(wait) = model.taken.remove(&id) else {
+            return;
+        };
+        let view = self.view(model, pending, now);
+        match self.requests.put_back(&id, wait, view, now) {
+            Some(waiter) => {
+                model.waiters.insert(id, waiter);
+            }
+            None => self.log.line(&format!("over id={id}")),
         }
     }
 

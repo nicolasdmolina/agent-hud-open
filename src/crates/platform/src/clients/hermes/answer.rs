@@ -4,6 +4,11 @@
 //! subscribe, send, hear the reply, detach, close. The model is told the
 //! answer was written and then what Hermes replied; it closes the card or
 //! brings it back.
+//!
+//! Core refuses a decision for a card that is marked as out of reach, and
+//! the same rule holds here for a decision core took a moment before the
+//! mark: no socket is opened for it, nothing is written, and the card is
+//! given back to core as it was (`effects.rs`, `undelivered`).
 use super::{
     effects::too_late,
     out::Out,
@@ -38,24 +43,25 @@ pub(super) const NO_REPLY: &str = "no_reply";
 /// own, so one slow answer never holds up another.
 pub(super) fn watch(shared: Arc<Shared>) {
     while shared.active() {
-        for (pending, decision) in decided(&shared) {
+        for (pending, decision, wait) in decided(&shared) {
             let owned = shared.clone();
             let sent = pending.clone();
             let spawned = thread::Builder::new()
                 .name("Hermes answer".into())
-                .spawn(move || deliver(&owned, sent, &decision));
+                .spawn(move || deliver(&owned, sent, &decision, wait));
             if spawned.is_err() {
-                shared.undelivered(&pending, unreachable());
+                shared.undelivered(&pending, wait, unreachable());
             }
         }
         shared.pause(GLANCE);
     }
 }
 
-/// The decisions that arrived, each with its request as it waits now. A
+/// The decisions that arrived, each with its request as it waits now and
+/// the wait core took it in, which is filed as the answer that is out. A
 /// waiter core let go of (the card was left alone, or its time in the HUD
 /// ran out) is forgotten; the request goes on waiting in Hermes.
-fn decided(shared: &Shared) -> Vec<(Pending, Value)> {
+fn decided(shared: &Shared) -> Vec<(Pending, Value, u64)> {
     let mut model = shared.model();
     let (mut arrived, mut over) = (Vec::new(), Vec::new());
     for (id, waiter) in &model.waiters {
@@ -63,7 +69,7 @@ fn decided(shared: &Shared) -> Vec<(Pending, Value)> {
             Ok(Some(decision)) => {
                 over.push(id.clone());
                 if let Some(pending) = model.gateway.pending(id) {
-                    arrived.push((pending.clone(), decision));
+                    arrived.push((pending.clone(), decision, waiter.wait));
                 }
             }
             Ok(None) | Err(TryRecvError::Disconnected) => over.push(id.clone()),
@@ -73,32 +79,37 @@ fn decided(shared: &Shared) -> Vec<(Pending, Value)> {
     for id in over {
         model.waiters.remove(&id);
     }
+    for (pending, _, wait) in &arrived {
+        model.taken.insert(pending.id(), *wait);
+    }
     arrived
 }
 
-fn deliver(shared: &Shared, pending: Pending, decision: &Value) {
+fn deliver(shared: &Shared, pending: Pending, decision: &Value, taken: u64) {
     let reply = match pending.reply(decision, Scope::Host) {
         Ok(Some(reply)) => reply,
         // Nothing to send: the request is left to Hermes's own windows.
         // That is done, not an answer that failed.
         Ok(None) => return shared.log.line(&format!("answer left id={}", pending.id())),
-        Err(reason) => return shared.undelivered(&pending, reason),
+        Err(reason) => return shared.undelivered(&pending, taken, reason),
     };
     let id = pending.id();
-    // Nothing is sent for a card that closed meanwhile; one that still
-    // shows with no gateway to send to comes back saying so.
+    // Nothing is sent for a card that closed meanwhile. One that still
+    // shows with no gateway to send to, or that was marked as out of
+    // reach since core took the decision, opens no socket and is put back.
     let Some(instance) = shared.instance_of(&id) else {
-        return shared.undelivered(&pending, unreachable());
+        return shared.undelivered(&pending, taken, unreachable());
     };
     let wait = shared.pace.answer * 2;
     // An answer from a socket that is not subscribed is refused.
     let visit = Visit::begin_for(shared, &instance, &pending.session, &id, wait);
     let Some((mut visit, _)) = visit else {
-        return shared.undelivered(&pending, unreachable());
+        return shared.undelivered(&pending, taken, unreachable());
     };
     let going = Going {
         shared,
         pending: &pending,
+        taken,
     };
     let told = match reply {
         // Nothing replies to the answer to a set of questions: a poll
@@ -113,7 +124,7 @@ fn deliver(shared: &Shared, pending: Pending, decision: &Value) {
         Some(None) => {}
         // Nothing was written. A card that closed, or an observer that
         // stopped, is left alone; a card that still shows comes back.
-        None => shared.undelivered(&pending, unreachable()),
+        None => shared.undelivered(&pending, taken, unreachable()),
     }
     visit.end();
 }
@@ -122,6 +133,9 @@ fn deliver(shared: &Shared, pending: Pending, decision: &Value) {
 struct Going<'a> {
     shared: &'a Shared,
     pending: &'a Pending,
+    /// The wait core took the decision in. The answer is the one that is
+    /// out only while the model files that wait for its card.
+    taken: u64,
 }
 
 impl Going<'_> {
@@ -130,9 +144,11 @@ impl Going<'_> {
     /// the instance that asked (`Visit::write_marked`, which checks under
     /// the model's lock and writes outside it; a stop, or the card closing,
     /// cuts the socket of a write under way). The answer is filed as on its
-    /// way in that same locked step. Once the frame is out the model hears
-    /// it was written; a frame that did not get out is forgotten. None
-    /// where it was not written, or not all of it.
+    /// way in that same locked step, and only while it is the answer that
+    /// is out: one whose card came back since writes nothing more. Once
+    /// the frame is out the model hears it was written; a frame that did
+    /// not get out is forgotten. None where it was not written, or not
+    /// all of it.
     fn written<T>(
         &self,
         visit: &mut Visit,
@@ -141,12 +157,16 @@ impl Going<'_> {
         let id = self.pending.id();
         let batch = matches!(self.pending.ask, Ask::Batch(_));
         let file = |model: &mut Model| {
+            if model.taken.get(&id) != Some(&self.taken) {
+                return false;
+            }
             let out = Out {
                 batch,
                 written: false,
                 closed: None,
             };
             model.answered.insert(id.clone(), out);
+            true
         };
         let done = visit.write_marked(file, write);
         let mut model = self.shared.model();
@@ -201,6 +221,15 @@ impl Going<'_> {
         // its gateway (`follower.rs`) kept the answers whose cards it
         // closed, and the reply still gives each its receipt.
         if model.stopped && !closed {
+            return;
+        }
+        // The card of this answer came back since (its socket was lost
+        // under it) and may have been answered again: a refusal of this
+        // one says nothing of the request as it waits now.
+        let stale = model.taken.get(&id) != Some(&self.taken);
+        let refused =
+            |told| matches!(told, Answered::Refused(why) if why != Refusal::StaleGeneration);
+        if !closed && stale && refused(answered(told)) {
             return;
         }
         if !closed {
@@ -271,7 +300,15 @@ mod probes {
         visit: &mut Visit,
         write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
     ) -> Option<T> {
-        Going { shared, pending }.written(visit, write)
+        // The decision core handed over is filed as `decided` files it.
+        let taken = 0;
+        shared.model().taken.insert(pending.id(), taken);
+        let going = Going {
+            shared,
+            pending,
+            taken,
+        };
+        going.written(visit, write)
     }
 
     /// Where a test may pause an answer's thread: after Hermes's reply is read

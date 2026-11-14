@@ -71,6 +71,10 @@ pub enum Input<'a> {
     Sent { request: &'a str },
     /// The gateway's reply frame to an answer.
     Responded { request: &'a str, reply: &'a Value },
+    /// An answer to the request with this id was taken and could not be
+    /// sent: nothing of it was written. Its gateway is in doubt until a
+    /// poll finds the request waiting again (`reach.rs`).
+    Unsent { request: &'a str },
 }
 
 /// Why a card closed.
@@ -108,6 +112,12 @@ pub enum Effect {
     /// The card changed while it waits: show it as it is now, under the
     /// request it already has (another viewer answered one of its questions).
     Changed(Pending),
+    /// The card's gateway cannot be reached, and Hermes may still wait:
+    /// the card stays, changed in place to say so, and takes no answer
+    /// (`reach.rs`). Never a second request.
+    Marked(Pending),
+    /// A poll found the request waiting again: the card is as it was.
+    Unmarked(Pending),
     /// Withdraw the card: the request is over.
     Close {
         id: String,

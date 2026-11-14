@@ -6,7 +6,7 @@
 use super::super::{Pace, Shared};
 use super::{
     fake::{home_of, Fake},
-    lab, quick, until, Lab,
+    lab, marked, plain, quick, until, Lab,
 };
 use agent_hud_agents::hermes::gateway::Profile;
 use serde_json::Value;
@@ -272,7 +272,11 @@ fn stopping_one_of_two_gateways_keeps_its_cards_and_a_new_instance_closes_them_a
     });
     lab.looks(4);
     assert_eq!(lab.shown(), [old, kept]);
-    assert_eq!(card(old), stays, "the card is the same card");
+    // The same card, which now says its gateway is out of reach (ticket
+    // 27); the other gateway's card says nothing of the kind.
+    let now = card(old).unwrap();
+    assert!(marked(&now), "{now}");
+    assert_eq!(Some(plain(now)), stays, "the card is the same card");
     assert_eq!(card(kept), untouched);
     assert!(Arc::ptr_eq(&follower, &lab.follower("local/reports")));
     assert!(follower.active());
@@ -494,7 +498,10 @@ fn a_contest_ends_when_one_claimant_is_truly_stopped_and_no_hooks_are_toggled() 
     }
     assert!(lab.observer.as_ref().unwrap().ends().is_empty());
     assert!(stopped.active() && stopped.gone.load(Ordering::Acquire));
-    assert_eq!(card("hermes:local/alpha:beta:s-beta:p3"), kept);
+    // As it was, but for the mark of a gateway out of reach (ticket 27).
+    let held = card("hermes:local/alpha:beta:s-beta:p3").unwrap();
+    assert!(marked(&held), "{held}");
+    assert_eq!(Some(plain(held)), kept);
     assert_eq!(card("hermes:local:default:s-default:p2"), untouched);
     let alpha = Profile::named("alpha").unwrap();
     assert!(

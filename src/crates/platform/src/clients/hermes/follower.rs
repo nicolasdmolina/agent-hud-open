@@ -71,6 +71,10 @@ pub(super) struct Shared {
     /// Every reader that was ended in core, for the tests that count them.
     #[cfg(test)]
     pub(super) ends: Arc<Mutex<Vec<String>>>,
+    /// How often a card was registered with core, for the tests of a
+    /// card that must come back without being registered again.
+    #[cfg(test)]
+    pub(super) shows: std::sync::atomic::AtomicUsize,
 }
 
 /// The gateway as the model knows it, and what core holds for its cards.
@@ -84,6 +88,9 @@ pub(super) struct Model {
     /// The answers given here that are out, or on their way out, and whose
     /// receipt is still to give (`answer.rs`).
     pub(super) answered: HashMap<String, out::Out>,
+    /// The decision that is out for each card core put away: the wait it
+    /// was taken in (core's ticket), by which the card is given back.
+    pub(super) taken: HashMap<String, u64>,
     /// Every short socket that is open now (`visit.rs`), so that stopping,
     /// or closing a card, can cut the ones that are writing.
     pub(super) visits: HashMap<u64, visit::Held>,
@@ -99,6 +106,7 @@ impl Model {
             waiters: HashMap::new(),
             opened: HashMap::new(),
             answered: HashMap::new(),
+            taken: HashMap::new(),
             visits: HashMap::new(),
             visited: 0,
             stopped: false,
@@ -106,15 +114,17 @@ impl Model {
     }
 
     /// Whether an answer to `request` may still go to `instance`: the
-    /// follower has not ended, the request still has its card, and the
-    /// gateway that is ready is still the instance that asked. Anything
-    /// else and the answer is for nobody.
+    /// follower has not ended, the request still has its card, that card
+    /// is not marked as out of reach, and the gateway that is ready is
+    /// still the instance that asked. Anything else and the answer is
+    /// for nobody.
     pub(super) fn current(&self, request: &str, instance: &Instance) -> bool {
         let same = matches!(
             self.gateway.connection(),
             Connection::Ready(ready) if ready.id == instance.id
         );
-        !self.stopped && same && self.gateway.pending(request).is_some()
+        let waits = self.gateway.pending(request).is_some() && !self.gateway.marked(request);
+        !self.stopped && same && waits
     }
 }
 
@@ -171,12 +181,14 @@ impl Shared {
     }
 
     /// The instance to answer `request` on: the one that is ready, while
-    /// the follower runs and the request still has its card. A gateway
-    /// that restarted since the card was answered closed the card, and
-    /// its new instance never asked.
+    /// the follower runs, the request still has its card and that card is
+    /// not marked as out of reach. A gateway that restarted since the card
+    /// was answered closed the card, and its new instance never asked.
+    /// This is asked before any socket is opened for an answer: nothing
+    /// is sent through a connection that is lost.
     pub(super) fn instance_of(&self, request: &str) -> Option<Instance> {
         let model = self.model();
-        if model.stopped {
+        if model.stopped || model.gateway.marked(request) {
             return None;
         }
         model.gateway.pending(request)?;
@@ -268,6 +280,7 @@ impl Shared {
                 model.answered.clear();
             }
         }
+        model.taken.clear();
         model.waiters.clear();
         model.opened.clear();
         drop(model);

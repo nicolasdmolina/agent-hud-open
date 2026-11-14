@@ -180,6 +180,8 @@ impl Followers {
             look: self.look.clone(),
             #[cfg(test)]
             ends: self.ends.clone(),
+            #[cfg(test)]
+            shows: Default::default(),
         });
         let owned = shared.clone();
         thread::Builder::new()
