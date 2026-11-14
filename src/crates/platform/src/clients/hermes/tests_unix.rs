@@ -48,6 +48,8 @@ mod reverify3;
 mod reviewer27;
 #[path = "tests/reviewer27_extra.rs"]
 mod reviewer27_extra;
+#[path = "tests/reviewer27_round3.rs"]
+mod reviewer27_round3;
 #[path = "tests/round3.rs"]
 mod round3;
 #[path = "tests/round4.rs"]

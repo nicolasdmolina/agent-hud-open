@@ -87,9 +87,10 @@ impl Shared {
 
     /// An answer that could not be sent at all (the decision taken in
     /// `wait`): nothing of it was written. Its card comes back as it was,
-    /// marked, for as long as Hermes still waits on it. Nothing comes back
-    /// where the request is over meanwhile, the follower ended, or the
-    /// answer is not the one that is out now.
+    /// marked, for as long as Hermes still waits on it, and the answer has
+    /// one receipt that says it failed. Nothing comes back where the
+    /// request is over meanwhile, the follower ended, or the answer is
+    /// not the one that is out now.
     pub(super) fn undelivered(&self, pending: &Pending, wait: u64, reason: String) {
         let mut model = self.model();
         let id = pending.id();
@@ -103,11 +104,13 @@ impl Shared {
         // gives the request back (`out.rs`, `lost`). A card that was
         // marked already is given back here.
         self.take(&mut model, Input::Unsent { request: &id });
+        // One receipt for one decision: where the mark gave the request
+        // back, it also said that the answer was not delivered.
         if model.taken.contains_key(&id) {
             self.log.line(&format!("undelivered id={id}"));
             self.back(&mut model, pending, now);
+            self.note(&id, &pending.session.hud_id(), "failed", Some(reason), now);
         }
-        self.note(&id, &pending.session.hud_id(), "failed", Some(reason), now);
         (self.wake)();
     }
 

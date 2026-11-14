@@ -111,7 +111,13 @@ impl Shared {
             return;
         }
         // Filed means its frame was let through: some of it may be out.
-        let (state, why) = match model.answered.contains_key(&id) {
+        // Its own record only: what is filed for the card can still be
+        // the answer's before, whose thread has not returned from its cut
+        // write, and that says nothing of an answer that never got as
+        // far as a write.
+        let out = model.taken.get(&id);
+        let filed = model.answered.get(&id).map(|filed| &filed.taken);
+        let (state, why) = match filed.is_some() && filed == out {
             true => ("uncertain", unconfirmed()),
             false => ("failed", unreachable()),
         };
