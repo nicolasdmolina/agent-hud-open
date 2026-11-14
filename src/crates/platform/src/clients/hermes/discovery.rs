@@ -44,6 +44,8 @@ pub(super) struct Seen {
     /// A home that has a gateway to ask gave no answer to go by: this
     /// look does not know every claim there is.
     pub(super) missed: bool,
+    /// Which look this is, counted from the first.
+    pub(super) number: u64,
 }
 
 /// One gateway, as it answered.
@@ -74,7 +76,9 @@ pub(super) fn work(all: Arc<Followers>) {
         // By the clock, the first look comes at once and each wait below
         // ends in one. Without it, only a look that was asked for.
         if all.look.take() || by_clock {
-            if let Some(seen) = look(&all) {
+            let number = all.look.begin();
+            if let Some(mut seen) = look(&all) {
+                seen.number = number;
                 all.settle(&seen);
             }
             all.look.set_looked();
@@ -103,7 +107,7 @@ fn look(all: &Followers) -> Option<Seen> {
             // No socket, or nobody listening. Whether that leaves a claim
             // open is for whoever knows who answered there before.
             Err(Silent::Absent) => continue,
-            Err(Silent::TimedOut | Silent::Garbled | Silent::Unsafe(_)) => {
+            Err(Silent::TimedOut | Silent::Garbled | Silent::Unsafe(_) | Silent::Unclear) => {
                 seen.missed = true;
                 continue;
             }

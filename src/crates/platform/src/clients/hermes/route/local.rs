@@ -116,4 +116,4 @@ fn named(root: &Path) -> Vec<Home> {
 /// The folder Hermes makes for the socket of `home` where the home cannot
 /// hold one.
 #[cfg(all(test, unix))]
-pub(in crate::clients::hermes) use unix::folder_of;
+pub(in crate::clients::hermes) use unix::{folder_of, nobody};

@@ -240,6 +240,42 @@ fn a_gateway_that_is_gone_closes_every_card_as_a_restart() {
     assert_eq!(gateway.instance(), Some("instance-1"));
 }
 
+/// Two instances can be told apart alike: their hashes begin with the
+/// same four bytes. The second takes the next number, and so on, each a
+/// name no other gateway has.
+#[test]
+fn gateways_told_apart_alike_take_the_next_free_number() {
+    use std::num::NonZeroU16;
+    let alpha = Profile::named("alpha").unwrap();
+    // Found by search in the third review of ticket 26.
+    let one = "newcomer-000000000000000000000000000112df";
+    let two = "newcomer-00000000000000000000000000028885";
+    let apart = |instance: &str, nth: u16| {
+        let nth = NonZeroU16::new(nth).unwrap();
+        GatewayId::apart_again(Machine::This, alpha.clone(), instance, nth)
+    };
+    let first = GatewayId::apart(Machine::This, alpha.clone(), one);
+    assert_eq!(first.to_string(), "local/alpha~874493ab");
+    assert_eq!(apart(one, 1), first, "the first is the plain form");
+    assert_eq!(apart(two, 1).to_string(), first.to_string(), "alike");
+    let second = apart(two, 2);
+    assert_eq!(second.to_string(), "local/alpha~874493ab~2");
+    assert_eq!(apart(two, 3).to_string(), "local/alpha~874493ab~3");
+    assert_eq!(
+        apart(two, u16::MAX).to_string(),
+        "local/alpha~874493ab~65535"
+    );
+    assert_ne!(second, first);
+    assert_eq!(second.anchor(), &alpha);
+    // The same every time, and no anchor is named so.
+    assert_eq!(apart(two, 2), second);
+    assert_eq!(Profile::named("alpha~874493ab~2"), None);
+    let session = SessionRef::new(second, alpha, "s1").unwrap();
+    let request = session.request_id("p1");
+    assert_eq!(request, "hermes:local/alpha~874493ab~2:alpha:s1:p1");
+    assert_eq!(session.hud_id(), "hermes:alpha:s1");
+}
+
 /// A home that lies at `…/profiles/<name>` is the profile `<name>` to
 /// Hermes, wherever its root is (the second review of ticket 26 ran it):
 /// its calls are routed by that name, and its sessions are named by it,

@@ -10,6 +10,7 @@ use super::machine::{canonical, Machine, StoredKey};
 use crate::hermes::AGENT;
 use sha2::{Digest, Sha256};
 use std::fmt;
+use std::num::NonZeroU16;
 use std::path::Path;
 
 /// One gateway Agent HUD follows: the machine it runs on and its anchor,
@@ -21,8 +22,13 @@ pub struct GatewayId {
     anchor: Profile,
     /// What sets it apart from another gateway of the machine that goes
     /// by the same anchor (`apart`); none for nearly every gateway.
-    apart: Option<u32>,
+    apart: Option<Apart>,
 }
+
+/// The first four bytes of the SHA-256 of a gateway's instance, and a
+/// number for the rare two instances whose hashes begin alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct Apart(u32, NonZeroU16);
 
 impl GatewayId {
     pub fn new(machine: Machine, anchor: Profile) -> Self {
@@ -37,11 +43,17 @@ impl GatewayId {
     /// gateway that is followed: that one kept the name after the profile
     /// left it, and keeps it. This one is told apart by the first four
     /// bytes of the SHA-256 of `instance`, the run it was found as: the
-    /// same for as long as it is followed, and no other gateway's.
+    /// same for as long as it is followed.
     pub fn apart(machine: Machine, anchor: Profile, instance: &str) -> Self {
+        Self::apart_again(machine, anchor, instance, NonZeroU16::MIN)
+    }
+    /// The same, for the `nth` gateway whose instance hashes to that
+    /// start: two instances can, so whoever names a gateway takes the
+    /// first `nth` whose name is free. The first is `apart`.
+    pub fn apart_again(machine: Machine, anchor: Profile, instance: &str, nth: NonZeroU16) -> Self {
         let digest = Sha256::digest(instance.as_bytes());
         let start = [digest[0], digest[1], digest[2], digest[3]];
-        let apart = Some(u32::from_be_bytes(start));
+        let apart = Some(Apart(u32::from_be_bytes(start), nth));
         Self {
             machine,
             anchor,
@@ -61,8 +73,9 @@ impl GatewayId {
 /// `local/<anchor>` for another of this machine's, `<key>/<anchor>` for a
 /// far one. A key is hex, so it is never `local`. One told apart from a
 /// gateway of the same anchor ends in `~` and eight hex characters
-/// (`local/<anchor>~<8 hex>`): a profile's name holds no `~`, so that is
-/// never another gateway's id.
+/// (`local/<anchor>~<8 hex>`), and in `~<n>` after that for the second
+/// and later whose hashes begin alike (`local/<anchor>~<8 hex>~2`): a
+/// profile's name holds no `~`, so that is never another gateway's id.
 impl fmt::Display for GatewayId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (&self.machine, &self.anchor) {
@@ -71,7 +84,8 @@ impl fmt::Display for GatewayId {
             (Machine::Far(key), anchor) => write!(f, "{}/{}", key.as_str(), anchor.name()),
         }?;
         match self.apart {
-            Some(apart) => write!(f, "~{apart:08x}"),
+            Some(Apart(hash, NonZeroU16::MIN)) => write!(f, "~{hash:08x}"),
+            Some(Apart(hash, nth)) => write!(f, "~{hash:08x}~{nth}"),
             None => Ok(()),
         }
     }

@@ -238,6 +238,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         born: Mutex::default(),
         found: Mutex::default(),
         gone: AtomicBool::new(false),
+        awaits: std::sync::atomic::AtomicU64::new(0),
         look: Arc::default(),
         ends: Arc::default(),
     };

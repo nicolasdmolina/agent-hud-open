@@ -39,6 +39,7 @@ use agent_hud_agents::hermes::gateway::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
+    num::NonZeroU16,
     sync::{atomic::Ordering, Arc, PoisonError},
 };
 
@@ -108,6 +109,9 @@ impl Followers {
                     .line(&format!("gateway gone id={reader} why={word}"));
             }
         }
+        // Every follower has what this look found: one that waited for
+        // it may poll.
+        self.look.settle(seen.number);
     }
 
     /// The profiles two gateways claim, said when that changes. An
@@ -233,16 +237,22 @@ impl Followers {
         let Some(anchor) = anchor(&seen.root, served_homes(answer)) else {
             return;
         };
+        // Where the name is a living follower's, which kept it after its
+        // anchor profile left its gateway, that follower is not ended and
+        // not renamed: this gateway is told apart by its instance, and
+        // where two instances are told apart alike, by the first number
+        // that leaves the name free. It is followed in this very look.
         let taken = |id: &GatewayId| set.iter().any(|kept| kept.reader == id.to_string());
         let mut id = GatewayId::new(self.machine.clone(), anchor.clone());
-        if taken(&id) {
-            // The name is a living follower's, which kept it after its
-            // anchor profile left its gateway. That follower is not ended
-            // and not renamed: this gateway is told apart by its instance.
-            id = GatewayId::apart(self.machine.clone(), anchor.clone(), &instance.id);
-            if taken(&id) {
+        let mut nth = Some(NonZeroU16::MIN);
+        while taken(&id) {
+            // More gateways of one anchor than there are numbers: none.
+            let Some(again) = nth else {
                 return;
-            }
+            };
+            let (machine, anchor) = (self.machine.clone(), anchor.clone());
+            id = GatewayId::apart_again(machine, anchor, &instance.id, again);
+            nth = again.checked_add(1);
         }
         // The anchor's own home is asked, where it answered.
         let asked = match found.via.contains_key(&anchor) {

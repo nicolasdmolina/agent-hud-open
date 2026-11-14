@@ -27,7 +27,7 @@ use std::{
     collections::BTreeSet,
     path::Path,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex, MutexGuard, PoisonError,
     },
     thread,
@@ -176,6 +176,7 @@ impl Followers {
             born: Mutex::new(born),
             found: Mutex::default(),
             gone: AtomicBool::new(false),
+            awaits: AtomicU64::new(0),
             look: self.look.clone(),
             #[cfg(test)]
             ends: self.ends.clone(),

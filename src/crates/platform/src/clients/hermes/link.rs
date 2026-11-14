@@ -81,13 +81,16 @@ pub(super) fn work(shared: Arc<Shared>) {
 }
 
 /// The home whose gateway is followed, as it is now: the one this
-/// follower asks, among the homes the route tells of.
-pub(super) fn home(shared: &Shared) -> Result<Home, Silent> {
+/// follower asks, among the homes the route tells of. An error where
+/// the homes cannot be told; none where they can and it is not there.
+fn listed(shared: &Shared) -> Result<Option<Home>, Silent> {
     let (homes, asked) = (shared.route.homes()?, shared.asked());
-    let mut homes = homes.into_iter();
-    homes
-        .find(|home| *home.profile() == asked)
-        .ok_or(Silent::Absent)
+    Ok(homes.into_iter().find(|home| *home.profile() == asked))
+}
+
+/// The home whose gateway is followed.
+pub(super) fn home(shared: &Shared) -> Result<Home, Silent> {
+    listed(shared)?.ok_or(Silent::Absent)
 }
 
 /// The answer this follower was made from, until its first identify
@@ -102,25 +105,40 @@ fn born(shared: &Shared) -> std::sync::MutexGuard<'_, Option<Value>> {
 /// follower made from an answer takes that one first.
 ///
 /// This is where a follower learns that its gateway is gone: its socket
-/// is lost, or it would not be asking, and nobody listens at the control
-/// socket of its home. A home that cannot be told of, and a control
-/// socket that is there and does not answer, say no such thing.
+/// is lost, or it would not be asking, and either nobody listens at the
+/// control socket of its home, or the homes of the machine were told and
+/// its home is not among them. A machine whose homes cannot be told, and
+/// a control socket that is there and does not answer, or cannot be
+/// asked, say no such thing. The mark changes only with what the asking
+/// found, and never in between.
 fn asked(shared: &Shared) -> Result<(Value, Home), Silent> {
-    // Said once the asking is over, and never in between: a follower
-    // whose gateway is gone stays so for as long as nobody listens.
-    let gone = |gone: bool| shared.gone.store(gone, Ordering::Release);
-    let home = home(shared).inspect_err(|_| gone(false))?;
+    let home = match listed(shared)? {
+        Some(home) => home,
+        None => {
+            shared.gone.store(true, Ordering::Release);
+            return Err(Silent::Absent);
+        }
+    };
     if let Some(answer) = born(shared).take() {
-        gone(false);
         return Ok((answer, home));
     }
     let line = identify_line();
     let ask = || control::ask(&*shared.route, &home, &line, shared.pace.answer);
     let answer = match ask() {
-        Err(Silent::TimedOut) => ask(),
+        // Asked once more where it only was slow, by a follower that
+        // still follows: one that ended meanwhile asks nothing more.
+        Err(Silent::TimedOut) if shared.active() => ask(),
         answer => answer,
     };
-    gone(matches!(answer, Err(Silent::Absent)));
+    let nobody = matches!(answer, Err(Silent::Absent));
+    let was = shared.gone.swap(nobody, Ordering::AcqRel);
+    if was && !nobody {
+        // Back from gone: it claims its profiles again, and polls again
+        // once a look that begins from now on has settled what that
+        // means for the cards it may open.
+        shared.awaits.store(shared.look.next(), Ordering::Release);
+        shared.look.want();
+    }
     Ok((answer?, home))
 }
 
@@ -141,7 +159,7 @@ fn elsewhere(shared: &Shared, answer: &Value, home: &str) -> bool {
 
 pub(super) fn silent(silent: Silent) -> Failure {
     match silent {
-        Silent::Absent | Silent::TimedOut => Failure::Unreachable,
+        Silent::Absent | Silent::TimedOut | Silent::Unclear => Failure::Unreachable,
         Silent::Unsafe(what) => Failure::Refused(format!("the control {what} is not private")),
         Silent::Garbled => Failure::Invalid("invalid_control_response"),
     }
@@ -209,7 +227,10 @@ fn follow(shared: &Shared, socket: &mut Socket) -> Option<Failure> {
     let mut warm: Option<Instant> = None;
     // The first poll waits for the first look at the machine, which says
     // which profiles two gateways claim.
-    while !shared.look.looked() {
+    // So does the first poll of a follower whose gateway was gone and is
+    // back, for a look that began after its return.
+    let awaited = |shared: &Shared| shared.awaits.load(Ordering::Acquire) > shared.look.settled();
+    while !shared.look.looked() || awaited(shared) {
         if !shared.active() {
             return None;
         }

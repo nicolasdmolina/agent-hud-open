@@ -2,7 +2,7 @@
 //! how the look waits to be asked (`discovery.rs`).
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Condvar, Mutex, PoisonError,
     },
     time::Duration,
@@ -15,6 +15,10 @@ pub(super) struct Signal {
     waiting: (Mutex<()>, Condvar),
     /// The first look is over, whatever it found.
     looked: AtomicBool,
+    /// How many looks have begun, which numbers them.
+    begun: AtomicU64,
+    /// The number of the last look whose findings were settled.
+    settled: AtomicU64,
 }
 
 impl Signal {
@@ -39,6 +43,27 @@ impl Signal {
 
     pub(super) fn set_looked(&self) {
         self.looked.store(true, Ordering::Release);
+    }
+
+    /// A look begins: its number.
+    pub(super) fn begin(&self) -> u64 {
+        self.begun.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    /// The number the next look to begin will have: one that begins from
+    /// now on, and so sees what is true now.
+    pub(super) fn next(&self) -> u64 {
+        self.begun.load(Ordering::Acquire) + 1
+    }
+
+    /// The findings of the look `number` are settled, every follower told.
+    pub(super) fn settle(&self, number: u64) {
+        self.settled.fetch_max(number, Ordering::AcqRel);
+    }
+
+    /// The number of the last look that was settled.
+    pub(super) fn settled(&self) -> u64 {
+        self.settled.load(Ordering::Acquire)
     }
 
     pub(super) fn take(&self) -> bool {

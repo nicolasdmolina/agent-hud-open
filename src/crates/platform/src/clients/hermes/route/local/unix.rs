@@ -30,7 +30,7 @@ const POINTER_LIMIT: usize = 4096;
 pub(super) fn exchange(home: &Path, line: &[u8], timeout: Duration) -> Result<Vec<u8>, Silent> {
     let until = Instant::now() + timeout;
     let path = socket(home)?;
-    let mut stream = UnixStream::connect(&path).map_err(|_| Silent::Absent)?;
+    let mut stream = UnixStream::connect(&path).map_err(|error| nobody(&error))?;
     // The path was checked, but a link put there since would be followed:
     // the listener itself has to be the same user.
     if peer_uid(&stream) != Some(unsafe { libc::getuid() }) {
@@ -40,9 +40,11 @@ pub(super) fn exchange(home: &Path, line: &[u8], timeout: Duration) -> Result<Ve
         let left = until.saturating_duration_since(Instant::now());
         (!left.is_zero()).then_some(left).ok_or(Silent::TimedOut)
     };
+    // Once connected, somebody listened: no failure after that is word
+    // that nobody does.
     let failed = |error: std::io::Error| match error.kind() {
         ErrorKind::WouldBlock | ErrorKind::TimedOut => Silent::TimedOut,
-        _ => Silent::Absent,
+        _ => Silent::Unclear,
     };
     // Both waits get their end before anything is sent. The gateway closes
     // the socket as soon as it has answered, and macOS refuses to change
@@ -73,11 +75,22 @@ pub(super) fn exchange(home: &Path, line: &[u8], timeout: Duration) -> Result<Ve
     Ok(answer)
 }
 
+/// What an error on the way to the listener says. Two say for certain
+/// that nobody listens: nothing is there, and nobody takes the
+/// connection. Any other (a permission error among them) leaves it open
+/// whether a gateway runs, and a gateway is never taken for gone on it.
+pub(in crate::clients::hermes) fn nobody(error: &std::io::Error) -> Silent {
+    match error.kind() {
+        ErrorKind::NotFound | ErrorKind::ConnectionRefused => Silent::Absent,
+        _ => Silent::Unclear,
+    }
+}
+
 /// The socket to ask for `home`, once everything on the way to it is the
 /// user's own.
 fn socket(home: &Path) -> Result<PathBuf, Silent> {
     let uid = unsafe { libc::getuid() };
-    let node = fs::symlink_metadata(home).map_err(|_| Silent::Absent)?;
+    let node = fs::symlink_metadata(home).map_err(|error| nobody(&error))?;
     // Hermes lets a home be read by others, never written: whoever can
     // write it can put a socket of their own there. A home its group may
     // write is refused here outright, where Hermes looks up whether the
@@ -86,19 +99,33 @@ fn socket(home: &Path) -> Result<PathBuf, Silent> {
         return Err(Silent::Unsafe("home"));
     }
     let private = |node: &fs::Metadata| node.uid() == uid && node.mode() & 0o077 == 0;
+    // A socket is the user's own to use: one its owner may not read and
+    // write is none Hermes made, and could not be asked.
+    let usable = |node: &fs::Metadata| {
+        node.file_type().is_socket() && private(node) && node.mode() & 0o600 == 0o600
+    };
     let direct = home.join(CONTROL_SOCKET);
-    if let Ok(node) = fs::symlink_metadata(&direct) {
-        return (node.file_type().is_socket() && private(&node))
-            .then_some(direct)
-            .ok_or(Silent::Unsafe("socket"));
+    match fs::symlink_metadata(&direct) {
+        Ok(node) => {
+            return usable(&node)
+                .then_some(direct)
+                .ok_or(Silent::Unsafe("socket"))
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(_) => return Err(Silent::Unclear),
     }
     // No waiting on a pipe put where the pointer should be, and no links.
     let mut pointer = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(home.join(CONTROL_POINTER))
-        .map_err(|_| Silent::Absent)?;
-    let node = pointer.metadata().map_err(|_| Silent::Absent)?;
+        // A link in place of the pointer is not read: the pointer Hermes
+        // writes is a file, so none of its is there, as where nothing is.
+        .map_err(|error| match error.raw_os_error() {
+            Some(libc::ELOOP) => Silent::Absent,
+            _ => nobody(&error),
+        })?;
+    let node = pointer.metadata().map_err(|_| Silent::Unclear)?;
     if !node.is_file() || !private(&node) {
         return Err(Silent::Unsafe("pointer"));
     }
@@ -106,7 +133,7 @@ fn socket(home: &Path) -> Result<PathBuf, Silent> {
     (&mut pointer)
         .take(POINTER_LIMIT as u64 + 1)
         .read_to_end(&mut named)
-        .map_err(|_| Silent::Absent)?;
+        .map_err(|_| Silent::Unclear)?;
     let named = std::str::from_utf8(&named)
         .ok()
         .filter(|named| named.len() <= POINTER_LIMIT)
@@ -119,9 +146,9 @@ fn socket(home: &Path) -> Result<PathBuf, Silent> {
     if folder.file_name().map(|name| name.as_bytes()) != Some(folder_name(home).as_bytes()) {
         return Err(Silent::Unsafe("pointer"));
     }
-    let inside = fs::symlink_metadata(folder).map_err(|_| Silent::Absent)?;
-    let node = fs::symlink_metadata(target).map_err(|_| Silent::Absent)?;
-    if !inside.is_dir() || !private(&inside) || !node.file_type().is_socket() || !private(&node) {
+    let inside = fs::symlink_metadata(folder).map_err(|error| nobody(&error))?;
+    let node = fs::symlink_metadata(target).map_err(|error| nobody(&error))?;
+    if !inside.is_dir() || !private(&inside) || !usable(&node) {
         return Err(Silent::Unsafe("socket"));
     }
     Ok(target.to_path_buf())

@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex, MutexGuard, PoisonError,
     },
     time::Duration,
@@ -61,6 +61,11 @@ pub(super) struct Shared {
     /// and keeps its cards; what a gateway that is gone claimed, it
     /// claims no more (`settle.rs`).
     pub(super) gone: AtomicBool,
+    /// The look it waits for before it polls again, by its number; none
+    /// while it is 0. A follower whose gateway was gone and is back claims
+    /// its profiles again, and what two gateways claim since is known
+    /// only once a look that began after its return is settled.
+    pub(super) awaits: AtomicU64,
     /// Asks for a look at every gateway of the machine.
     pub(super) look: Arc<Signal>,
     /// Every reader that was ended in core, for the tests that count them.
