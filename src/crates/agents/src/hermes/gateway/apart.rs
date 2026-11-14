@@ -11,10 +11,24 @@
 //! where the events cannot say, and is whole or not used. It is dropped
 //! where it was begun before something it cannot know of: an answer
 //! Hermes took, a restart, a dropped socket, a profile that left the
-//! gateway, a newer reading of the same session, or the session leaving
-//! the live list. It never lists anything: what a session is doing is
+//! gateway, a newer reading of the same session, the session leaving
+//! the live list, or a poll listing the session as something else that
+//! is not waiting. It never lists anything: what a session is doing is
 //! the polls' to say, and a reading apart goes by what the newest poll
-//! listed it as.
+//! listed it as when it began. So a reading begun while the session
+//! waited opens nothing once a poll has listed it idle, or working: what
+//! it saw waiting was settled since, as far as it can know.
+//!
+//! A poll that lists the session as waiting where it worked drops no
+//! reading: a request was asked since, and a reading under way either
+//! read it, and its card shows that much sooner, or did not, and opens
+//! nothing. Dropping it would make every card of a session that is slow
+//! to read wait for a reading begun after the poll.
+//!
+//! Whether a reading still counts can be asked while it is under way
+//! (`Gateway::counts`), so that whoever runs one sends nothing more for
+//! a reading that is of no use: no further read, and above all no
+//! snapshot, which subscribes to a session.
 use super::ask::Ask;
 use super::effect::{Effect, Status};
 use super::identity::SessionRef;
@@ -32,6 +46,9 @@ pub(super) struct Apart {
     changes: u64,
     /// Which reading apart it is, counted over all sessions.
     number: u64,
+    /// The listing of the session it began under: the poll that last
+    /// listed it anew, or as something else that is not waiting.
+    listing: Option<u64>,
 }
 
 impl Gateway {
@@ -61,6 +78,7 @@ impl Gateway {
             session: session.clone(),
             changes: self.changes,
             number: self.readings,
+            listing: self.listing.get(session).copied(),
         };
         let step = Step::Since {
             session: session.clone(),
@@ -87,6 +105,26 @@ impl Gateway {
         })
     }
 
+    /// Whether `poll` still counts: whether the model would take what it
+    /// read. For a poll, that it is the newest and the gateway is ready.
+    /// For a reading of one session apart, also that nothing happened
+    /// since it began that it cannot know of, that it is the newest
+    /// reading of its session, that the session is still on the live
+    /// list, and that no poll has since given it a new listing.
+    pub fn counts(&self, poll: &Poll) -> bool {
+        let ready = matches!(self.connection, Connection::Ready(_));
+        if poll.gateway != self.id || !ready {
+            return false;
+        }
+        let Some(apart) = &poll.apart else {
+            return poll.number == self.polls;
+        };
+        let at = &apart.session;
+        let newest = self.apart.get(at) == Some(&apart.number);
+        let listed = self.listed.contains_key(at) && self.listing.get(at) == apart.listing.as_ref();
+        newest && listed && apart.changes == self.changes
+    }
+
     /// Makes the cards of one session match what a reading of it alone
     /// found, where that reading still counts.
     pub(super) fn reconcile_apart(
@@ -96,13 +134,10 @@ impl Gateway {
         now_ms: i64,
         effects: &mut Vec<Effect>,
     ) {
-        let at = &apart.session;
-        let ready = matches!(self.connection, Connection::Ready(_));
-        let newest = self.apart.get(at) == Some(&apart.number);
-        let live = self.listed.contains_key(at);
-        if poll.gateway != self.id || !ready || !newest || !live || apart.changes != self.changes {
+        if !self.counts(&poll) {
             return;
         }
+        let at = &apart.session;
         let its: Vec<_> = self
             .cards
             .keys()
@@ -128,10 +163,20 @@ impl Gateway {
         self.changes += 1;
     }
 
+    /// A poll listed `at` anew, or as no longer doing what the poll
+    /// before listed and not as waiting: its listing is that poll's from
+    /// now on, and a reading of it begun under the one before counts no
+    /// more.
+    pub(super) fn relisted(&mut self, at: &SessionRef, poll: u64) {
+        self.listing.insert(at.clone(), poll);
+    }
+
     /// The sessions the newest poll no longer lists are read apart no
-    /// more: a reading of one that is still out counts for nothing.
+    /// more, and have no listing: a reading of one that is still out
+    /// counts for nothing, also once the session is listed again.
     pub(super) fn keep_apart(&mut self) {
         let listed: BTreeSet<&SessionRef> = self.listed.keys().collect();
         self.apart.retain(|at, _| listed.contains(at));
+        self.listing.retain(|at, _| listed.contains(at));
     }
 }

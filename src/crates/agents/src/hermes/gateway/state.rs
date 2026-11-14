@@ -83,6 +83,9 @@ pub struct Gateway {
     /// each session.
     pub(super) readings: u64,
     pub(super) apart: BTreeMap<SessionRef, u64>,
+    /// The poll that last listed each live session anew, or as something
+    /// else than the poll before it and not as waiting (`apart.rs`).
+    pub(super) listing: BTreeMap<SessionRef, u64>,
 }
 
 impl Gateway {
@@ -102,6 +105,7 @@ impl Gateway {
             changes: 0,
             readings: 0,
             apart: BTreeMap::new(),
+            listing: BTreeMap::new(),
         }
     }
     pub fn id(&self) -> &GatewayId {

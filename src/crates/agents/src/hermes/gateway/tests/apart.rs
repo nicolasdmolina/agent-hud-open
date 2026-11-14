@@ -274,3 +274,99 @@ fn a_reading_apart_tells_nothing_of_any_other_session() {
     read_apart(&mut gateway, &mut hermes, 5_200).unwrap();
     assert_eq!(names(&gateway), ["other-1", "slow-1"]);
 }
+
+/// The independent verifier's probe from the second review of ticket 30
+/// (`evidence/30/verifier2-files/stale-waiting-order-probe.rs`), as
+/// written but for its layout. A reading begun while the session waited
+/// is held back; the question settles, the turn ends, and a newer poll
+/// lists the session idle. The old reading then opened a card for the
+/// settled question and turned the session back to waiting.
+#[test]
+fn reviewer30_an_older_waiting_read_cannot_open_a_card_after_a_newer_poll_lists_idle() {
+    let (mut gateway, mut hermes) = start();
+    asks(&mut hermes, SLOW, "p-before-idle");
+    poll_beside(&mut gateway, &mut hermes, 1_000);
+    let mut late = gateway.poll_apart(&slow(&gateway)).unwrap();
+    ask(&mut late, &mut hermes);
+    settles(&mut hermes, SLOW, "p-before-idle");
+    hermes.publish(&work(), SLOW, "message.complete", 1, json!({}));
+    poll_beside(&mut gateway, &mut hermes, 1_100);
+    assert_eq!(gateway.status(&slow(&gateway)), Some(Status::Idle));
+    assert!(names(&gateway).is_empty());
+    let effects = gateway.apply(Input::Polled(late), 1_200);
+    println!(
+        "TRACE latest_status={:?} card_names={:?} late_effects={effects:?}",
+        gateway.status(&slow(&gateway)),
+        names(&gateway)
+    );
+    assert!(
+        names(&gateway).is_empty(),
+        "an older waiting read opened a card after a newer poll listed the session idle"
+    );
+}
+
+/// A reading goes by the listing it began under. A poll that lists the
+/// session as no longer doing what it did, and not as waiting, gives it
+/// a new listing, and a reading begun before that counts no more: what
+/// it saw waiting may have been settled since. A poll that lists it as
+/// before, or as waiting where it worked, leaves a reading under way as
+/// good as it was: a request asked since is in it or is not.
+#[test]
+fn a_reading_counts_until_a_poll_lists_its_session_as_something_else_that_is_not_waiting() {
+    let (mut gateway, mut hermes) = start();
+    hermes.publish(&work(), SLOW, "message.start", 1, json!({}));
+    poll_beside(&mut gateway, &mut hermes, 1_000);
+    assert_eq!(gateway.status(&slow(&gateway)), Some(Status::Working));
+
+    // Listed the same again, however often: the reading counts.
+    let mut same = gateway.poll_apart(&slow(&gateway)).unwrap();
+    for now in [1_100, 1_200, 1_300] {
+        poll_beside(&mut gateway, &mut hermes, now);
+        assert!(gateway.counts(&same));
+    }
+
+    // Working, then waiting: a request was asked since the reading
+    // began. It read the request, and the card shows without waiting
+    // for a reading begun after the poll.
+    asks(&mut hermes, SLOW, "p-1");
+    ask(&mut same, &mut hermes);
+    poll_beside(&mut gateway, &mut hermes, 1_400);
+    assert_eq!(gateway.status(&slow(&gateway)), Some(Status::Waiting));
+    assert!(gateway.counts(&same), "listed as waiting drops no reading");
+    gateway.apply(Input::Polled(same), 1_450);
+    assert_eq!(names(&gateway), ["p-1"]);
+
+    // Waiting, then working: settled elsewhere while the turn goes on.
+    // The reading saw the request waiting, and opens and keeps nothing.
+    let mut waiting = gateway.poll_apart(&slow(&gateway)).unwrap();
+    ask(&mut waiting, &mut hermes);
+    settles(&mut hermes, SLOW, "p-1");
+    poll_beside(&mut gateway, &mut hermes, 1_600);
+    assert!(!gateway.counts(&waiting), "the polls list it working now");
+    assert_eq!(gateway.apply(Input::Polled(waiting), 1_650), []);
+    read_apart(&mut gateway, &mut hermes, 1_700).unwrap();
+    assert_eq!(names(&gateway), Vec::<String>::new());
+
+    // Working, then idle, with no poll between that listed it waiting:
+    // asked, settled and the turn over since the reading began.
+    poll_beside(&mut gateway, &mut hermes, 1_750);
+    assert_eq!(gateway.status(&slow(&gateway)), Some(Status::Working));
+    let mut working = gateway.poll_apart(&slow(&gateway)).unwrap();
+    asks(&mut hermes, SLOW, "p-2");
+    ask(&mut working, &mut hermes);
+    settles(&mut hermes, SLOW, "p-2");
+    hermes.publish(&work(), SLOW, "message.complete", 1, json!({}));
+    poll_beside(&mut gateway, &mut hermes, 1_800);
+    assert_eq!(gateway.status(&slow(&gateway)), Some(Status::Idle));
+    assert!(!gateway.counts(&working), "the polls list it idle now");
+    assert_eq!(gateway.apply(Input::Polled(working), 1_850), []);
+    assert_eq!(names(&gateway), Vec::<String>::new());
+
+    // A poll, too, counts only while it is the newest.
+    let old = gateway.poll().unwrap();
+    assert!(gateway.counts(&old));
+    let newer = gateway.poll().unwrap();
+    assert!(!gateway.counts(&old) && gateway.counts(&newer));
+    gateway.apply(Input::Lost(Failure::Closed(1006)), 1_900);
+    assert!(!gateway.counts(&newer));
+}

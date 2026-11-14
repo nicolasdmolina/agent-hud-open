@@ -162,6 +162,7 @@ fn verifier2_initial_resume_must_not_write_after_currency_check_went_stale() {
         &pending.session,
         Duration::from_secs(2),
         &still,
+        &|_| true,
     );
     if let Some((visit, _)) = visit {
         visit.end();

@@ -35,6 +35,16 @@ impl Gateway {
         // it; a profile no longer served has no live sessions; one whose
         // list failed keeps what was known.
         let unlisted = |listed: Option<&Option<bool>>| matches!(listed, Some(None | Some(false)));
+        // A session this poll lists anew, or as no longer doing what the
+        // poll before listed and not as waiting, has a new listing
+        // (`apart.rs`).
+        for (at, look) in &poll.sessions {
+            let before = self.listed.get(at);
+            let moved = before != Some(&look.status) && look.status != Status::Waiting;
+            if before.is_none() || moved {
+                self.relisted(at, poll.number);
+            }
+        }
         self.listed
             .retain(|at, _| unlisted(poll.profiles.get(&at.profile)));
         self.told.read(&poll, now_ms);

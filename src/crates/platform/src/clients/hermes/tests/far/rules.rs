@@ -12,7 +12,7 @@ use super::{
         fake::{fixture, Fake},
         marked,
     },
-    far_lab, lab, until, Standing, INSTALL,
+    far_lab, lab, until, FarLab, Standing, INSTALL,
 };
 use agent_hud_agents::hermes::gateway::{
     identify, identify_line, machine_key, Identified, Instance,
@@ -327,7 +327,14 @@ fn turning_the_channel_off_withdraws_the_cards_and_leaves_no_master() {
     gateway.play("question-answered-here", Some("clarify.request"));
     far.card();
     let folder = far.lab.folder();
-    assert_eq!(far.lab.link_processes(&folder).len(), 1, "the one master");
+    // The masters alone: a look at the machine runs a relay each time,
+    // and its `ssh` names the same socket for the moment it lives.
+    let masters = |far: &FarLab| {
+        let all = far.lab.link_processes(&folder);
+        let master = |line: &String| line.contains("ControlMaster=yes");
+        all.into_iter().filter(master).collect::<Vec<String>>()
+    };
+    assert_eq!(masters(&far).len(), 1, "the one master");
     let sockets = |folder: &crate::ssh_link::Folder| {
         let names = lab::entries(folder.path());
         let plain = |name: &&String| !name.ends_with(".pid") && !name.ends_with(".log");
@@ -339,8 +346,12 @@ fn turning_the_channel_off_withdraws_the_cards_and_leaves_no_master() {
     assert!(far.cards().is_empty(), "withdrawn");
     let waiting = far.requests.native_waiting_sessions();
     assert!(waiting.values().all(|sessions| sessions.is_empty()));
-    // No master, no socket, and nothing answers on the control path.
-    assert_eq!(far.lab.link_processes(&folder), Vec::<String>::new());
+    // No master, no socket, and nothing answers on the control path. A
+    // relay that was under way when the master went ends with it.
+    assert_eq!(masters(&far), Vec::<String>::new());
+    until("no ssh of the link is left", || {
+        far.lab.link_processes(&folder).is_empty()
+    });
     assert_eq!(lab::entries(folder.path()), Vec::<String>::new());
     let check = Command::new("/usr/bin/ssh")
         .args(["-F", "none", "-o"])

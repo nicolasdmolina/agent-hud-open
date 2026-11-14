@@ -156,7 +156,16 @@ fn work(shared: &Arc<Shared>, session: &SessionRef) {
                 // No more often than the polls read a busy session.
                 shared.pause(pace.watch.saturating_sub(took));
             }
-            Ok(None) => break "ended",
+            Ok(None) if !shared.active() => break "ended",
+            // The reading counts no more and was given up. A call of it
+            // may still be out on this socket, so the next reading gets
+            // a socket of its own.
+            Ok(None) => {
+                if let Some(mut stale) = socket.take() {
+                    stale.close();
+                }
+                shared.pause(pace.gap);
+            }
             // The lane's own socket: it is opened again, and nothing is
             // said of the gateway.
             Err(_) => {

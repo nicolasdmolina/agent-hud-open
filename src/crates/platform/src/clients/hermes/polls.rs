@@ -9,7 +9,7 @@
 //! session whose read took long is read apart from then on, on a socket
 //! of its own (`apart.rs`): the polls leave it out, and go on at their
 //! own pace.
-use super::{socket::result, socket::Socket, visit::Visit, Shared};
+use super::{socket::result, socket::Socket, visit::Visit, Model, Shared};
 use agent_hud_agents::hermes::gateway::{
     frame, hints, Connection, Failure, Frame, Input, Instance, Poll, Refusal, Scope, SessionRef,
     Step,
@@ -85,10 +85,28 @@ pub(super) struct Asked {
     slow: Vec<SessionRef>,
 }
 
+/// How long one look at the socket lasts while a reading of one session
+/// waits for a reply: a reading that counts no more is given up within
+/// this.
+const GLANCE: Duration = Duration::from_millis(50);
+
 /// Asks every step `poll` wants, round after round, and gives it each
-/// answer. None where the follower ended meanwhile; an error when the
-/// socket was lost. `beside` is whether this is a poll, which leaves out
-/// the sessions that are read apart, or a reading of one of those.
+/// answer. An error when the socket was lost. `beside` is whether this
+/// is a poll, which leaves out the sessions that are read apart, or a
+/// reading of one of those.
+///
+/// None where nothing is to be handed back: the follower ended
+/// meanwhile, or this is a reading of one session that counts no more.
+/// Such a reading sends nothing further once the model would not take
+/// it: its session left the live list, a poll lists it as something
+/// else that is not waiting, an answer was taken. That is asked under the model's
+/// lock before every call on `socket`, now and then while a reply is
+/// waited for, and for a snapshot in the step that marks its visit as
+/// writing (`visit.rs`), with the `session.resume` the next thing
+/// written: a snapshot subscribes, and a session off the live list is
+/// never subscribed to.
+/// A reading given up may have a call still out on `socket`, which is
+/// then of no further use.
 pub(super) fn rounds(
     shared: &Arc<Shared>,
     socket: &mut Socket,
@@ -106,8 +124,9 @@ pub(super) fn rounds(
         let mut alone = Vec::new();
         for step in steps {
             // A follower that ended asks nothing more: a reply that was
-            // held comes back to no next round, and no next call.
-            if !shared.active() {
+            // held comes back to no next round, and no next call. Nor
+            // does a reading that counts no more.
+            if !shared.active() || !(beside || counts(shared, poll)) {
                 return Ok(None);
             }
             // Read apart: nothing is known of it by this poll, which
@@ -131,7 +150,21 @@ pub(super) fn rounds(
         // time its own call took.
         let mut last = Instant::now();
         while !asked.is_empty() {
-            let Some(value) = socket.read(until)? else {
+            let value = match beside {
+                true => socket.read(until)?,
+                // Looked at now and then, so that a reading that counts
+                // no more does not wait out a slow reply.
+                false => match socket.read(until.min(Instant::now() + GLANCE))? {
+                    None if Instant::now() < until && shared.active() => {
+                        if !counts(shared, poll) {
+                            return Ok(None);
+                        }
+                        continue;
+                    }
+                    value => value,
+                },
+            };
+            let Some(value) = value else {
                 break;
             };
             match frame(&value) {
@@ -177,7 +210,12 @@ pub(super) fn rounds(
                 return Ok(None);
             }
             snapshots += 1;
-            match snapshot(shared, instance, &step) {
+            // A reading of one session is asked whether it still counts
+            // in the step before the resume is written: its socket takes
+            // a moment to open, and the model may know more by then.
+            let reading: &Poll = poll;
+            let still = move |model: &Model| beside || model.gateway.counts(reading);
+            match snapshot(shared, instance, &step, &still) {
                 Some(told) => poll.answer(&step, &told),
                 None => poll.failed(&step),
             }
@@ -193,12 +231,24 @@ pub(super) fn rounds(
     }))
 }
 
+/// Whether the model would still take `poll`, asked under its lock.
+fn counts(shared: &Shared, poll: &Poll) -> bool {
+    shared.model().gateway.counts(poll)
+}
+
 /// Everything that waits in one session, from a visit that ends at once.
-fn snapshot(shared: &Shared, instance: &Instance, step: &Step) -> Option<Value> {
+/// `still` is asked under the model's lock before anything subscribes.
+fn snapshot(
+    shared: &Shared,
+    instance: &Instance,
+    step: &Step,
+    still: &dyn Fn(&Model) -> bool,
+) -> Option<Value> {
     let Step::Snapshot(session) = step else {
         return None;
     };
-    let (visit, told) = Visit::begin(shared, instance, session, shared.pace.answer * 2)?;
+    let wait = shared.pace.answer * 2;
+    let (visit, told) = Visit::begin_while(shared, instance, session, wait, &|| true, still)?;
     visit.end();
     Some(told)
 }

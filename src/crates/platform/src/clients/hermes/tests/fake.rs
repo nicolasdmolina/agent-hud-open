@@ -681,6 +681,12 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
                 frame["method"] == *method
                     // The first read of a session, which asks where its
                     // stream is and names no epoch.
+                    // The same, of the session that is slow to read.
+                    || (*method == "slow-probe"
+                        && frame["method"] == "session.events.since"
+                        && frame["params"].get("replay_epoch").is_none()
+                        && (world.slow_replay.as_ref())
+                            .is_some_and(|(slow, _)| frame["params"]["session_id"] == slow.as_str()))
                     || (*method == "stream-probe"
                         && frame["method"] == "session.events.since"
                         && frame["params"].get("replay_epoch").is_none())

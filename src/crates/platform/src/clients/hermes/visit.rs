@@ -35,6 +35,8 @@ use std::{sync::Arc, time::Duration};
 /// How long the gateway gets to say it detached before the socket closes
 /// anyway. Closing ends the subscription too.
 const PARTING: Duration = Duration::from_millis(500);
+/// The two checks of a visit that has nothing more to ask before it subscribes.
+const ALWAYS: (&dyn Fn() -> bool, &dyn Fn(&Model) -> bool) = (&|| true, &|_| true);
 
 /// One live visit, as the model lists it.
 pub(super) struct Held {
@@ -105,26 +107,21 @@ impl<'a> Visit<'a> {
     /// what the gateway gave: everything that waits in the session now.
     /// None where the observer stopped, no socket opened, the gateway
     /// refused, or it did not answer in time; the log says which.
-    pub(super) fn begin(
-        shared: &'a Shared,
-        instance: &Instance,
-        session: &SessionRef,
-        wait: Duration,
-    ) -> Option<(Self, Value)> {
-        Self::begin_while(shared, instance, session, wait, &|| true)
-    }
-
-    /// The same, subscribing only while `still` holds once the socket is
-    /// open: getting a ticket and dialling take time, and what the visit
-    /// is for may be over by then.
+    ///
+    /// It subscribes only while `still` holds once the socket is open:
+    /// getting a ticket and dialling take time, and what the visit is for
+    /// may be over by then. `marked` is asked the same of the model, with
+    /// the model locked, in the step that marks the visit as writing: the
+    /// `session.resume` is the next thing it does.
     pub(super) fn begin_while(
         shared: &'a Shared,
         instance: &Instance,
         session: &SessionRef,
         wait: Duration,
         still: &dyn Fn() -> bool,
+        marked: &dyn Fn(&Model) -> bool,
     ) -> Option<(Self, Value)> {
-        Self::open(shared, instance, session, None, wait, still)
+        Self::open(shared, instance, session, None, wait, (still, marked))
     }
 
     /// Subscribes to answer `request`, which the visit then stands or
@@ -136,7 +133,7 @@ impl<'a> Visit<'a> {
         request: &str,
         wait: Duration,
     ) -> Option<(Self, Value)> {
-        Self::open(shared, instance, session, Some(request), wait, &|| true)
+        Self::open(shared, instance, session, Some(request), wait, ALWAYS)
     }
 
     fn open(
@@ -145,7 +142,7 @@ impl<'a> Visit<'a> {
         session: &SessionRef,
         request: Option<&str>,
         wait: Duration,
-        still: &dyn Fn() -> bool,
+        (still, marked): (&dyn Fn() -> bool, &dyn Fn(&Model) -> bool),
     ) -> Option<(Self, Value)> {
         // A test that only reads a real machine begins no visit at all.
         #[cfg(test)]
@@ -191,7 +188,8 @@ impl<'a> Visit<'a> {
         if !still() {
             return None;
         }
-        let asked = visit.write(|socket| socket.send(&resume(session, Scope::Host)))?;
+        let subscribe = |socket: &mut Socket| socket.send(&resume(session, Scope::Host));
+        let asked = visit.write_marked(|model| marked(model), subscribe)?;
         let Ok(Reply::Frame(reply)) = visit.reply(asked, wait) else {
             return turned("no reply".into());
         };
