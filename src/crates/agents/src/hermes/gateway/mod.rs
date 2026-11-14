@@ -14,6 +14,7 @@ mod command;
 mod connection;
 mod decision;
 mod effect;
+pub mod far;
 mod fold;
 mod frame;
 mod identity;
