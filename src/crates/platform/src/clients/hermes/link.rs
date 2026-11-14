@@ -1,18 +1,19 @@
 //! The connection to one gateway over its life: ask the control socket who
-//! is there, get a ticket, open the socket, run polls until it is lost,
+//! is there, open a socket (`opening.rs`), run polls until it is lost,
 //! then begin again. Where the gateway is, the route knows (`route.rs`):
 //! nothing here names a path or an address. A gateway that restarts comes
 //! back as another instance, usually on another port, so nothing is kept
 //! from one dial to the next but the model.
 use super::{
     control::{self, Silent},
+    opening::{opened, Shut},
     polls,
     route::Home,
     socket::Socket,
     Shared,
 };
 use agent_hud_agents::hermes::gateway::{
-    granted, hints, identify_line, ticket_line, Connection, Denied, Failure, Input, Instance, Scope,
+    hints, identify_line, Connection, Failure, Input, Instance,
 };
 use serde_json::Value;
 use std::{
@@ -69,7 +70,7 @@ pub(super) fn work(shared: Arc<Shared>) {
 
 /// The home whose gateway is followed: the first the route tells of, as
 /// it is now.
-fn home(shared: &Shared) -> Result<Home, Silent> {
+pub(super) fn home(shared: &Shared) -> Result<Home, Silent> {
     let homes = shared.route.homes()?;
     homes.into_iter().next().ok_or(Silent::Absent)
 }
@@ -87,7 +88,7 @@ fn asked(shared: &Shared, line: &Value) -> Result<(Value, Home), Silent> {
     Ok((answer, home))
 }
 
-fn silent(silent: Silent) -> Failure {
+pub(super) fn silent(silent: Silent) -> Failure {
     match silent {
         Silent::Absent | Silent::TimedOut => Failure::Unreachable,
         Silent::Unsafe(what) => Failure::Refused(format!("the control {what} is not private")),
@@ -119,40 +120,6 @@ fn identified(shared: &Shared) -> Result<Instance, Next> {
         Connection::Unsupported(_) => Err(Next::Rarely),
         Connection::Disconnected | Connection::Failed(_) => Err(Next::Later),
     }
-}
-
-/// Why no socket opened.
-pub(super) enum Shut {
-    Denied(Denied),
-    Failed(Failure),
-    /// The observer stopped before a ticket was asked for. Nothing more is
-    /// asked of the gateway, and there is nothing to tell anyone.
-    Stopped,
-}
-
-/// A new socket on `instance`, for every profile it serves: the route is
-/// told of the instance, then a ticket is asked for, used once and gone.
-/// None of it once the observer has stopped. Nothing is told to the model: a
-/// socket for one answer or one snapshot failing says nothing of the
-/// connection the polls run on.
-pub(super) fn opened(shared: &Shared, instance: &Instance) -> Result<Socket, Shut> {
-    // What the route needs for this instance is in place before the
-    // ticket is asked for, since a ticket does not last. The route hears
-    // of a stop while it works on that, and whatever it answers, no ticket
-    // is asked for and nothing is dialled once the observer has stopped.
-    let prepared = match shared.active() {
-        true => shared.route.prepare(instance, shared),
-        false => return Err(Shut::Stopped),
-    };
-    if !shared.active() {
-        return Err(Shut::Stopped);
-    }
-    prepared.map_err(Shut::Failed)?;
-    let (grant, _) = asked(shared, &ticket_line(instance, Scope::Host))
-        .map_err(|why| Shut::Failed(silent(why)))?;
-    let ticket = granted(&grant, instance).map_err(Shut::Denied)?;
-    drop(grant);
-    Socket::open(&*shared.route, instance, ticket).map_err(Shut::Failed)
 }
 
 fn dial(shared: &Shared) -> Result<Socket, Next> {

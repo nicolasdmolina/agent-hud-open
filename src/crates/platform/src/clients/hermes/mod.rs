@@ -34,6 +34,7 @@ mod control;
 mod effects;
 mod link;
 mod log;
+mod opening;
 mod out;
 mod pace;
 mod polls;

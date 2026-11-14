@@ -16,13 +16,14 @@ use agent_hud_agents::hermes::gateway::{
 use serde_json::{json, Value};
 use std::{
     borrow::Cow,
-    net::{IpAddr, TcpListener, TcpStream, UdpSocket},
+    io::Read,
+    net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// The way to the pretend gateway: the home it was started in, reached as
@@ -33,9 +34,13 @@ pub struct Way {
     /// A route that is shut tells of no home, as one whose machine cannot
     /// be reached.
     pub shut: AtomicBool,
-    /// Holds every `prepare` until released, whether or not the one who
-    /// asked has stopped: a route that does not listen.
-    pub deaf: Mutex<Option<Arc<Hold>>>,
+    /// Holds `prepare`, or a stream that `dial` has just got, until
+    /// released, whether or not the one who asked has stopped: a route
+    /// that does not listen.
+    pub held: Mutex<Option<(&'static str, Arc<Hold>)>>,
+    /// Where `dial` leads in place of the gateway: somewhere that takes
+    /// the stream and never says a word on it.
+    pub mute: Mutex<Option<SocketAddr>>,
     pub asked: Mutex<Asked>,
 }
 
@@ -57,13 +62,25 @@ impl Way {
         Self {
             local: Local::at(home),
             shut: AtomicBool::new(false),
-            deaf: Mutex::default(),
+            held: Mutex::default(),
+            mute: Mutex::default(),
             asked: Mutex::default(),
         }
     }
 
     pub fn asked(&self) -> std::sync::MutexGuard<'_, Asked> {
         self.asked.lock().unwrap()
+    }
+
+    /// Waits at `step` while it is held.
+    fn hold(&self, step: &str) {
+        let held = self.held.lock().unwrap().clone();
+        if let Some((_, held)) = held.filter(|(at, _)| *at == step) {
+            held.entered.store(true, Ordering::Release);
+            while !held.released.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
     }
 }
 
@@ -89,19 +106,19 @@ impl Route for Way {
 
     fn prepare(&self, instance: &Instance, stop: &dyn Stop) -> Result<(), Failure> {
         self.asked().prepared.push(instance.origin.clone());
-        let held = self.deaf.lock().unwrap().clone();
-        if let Some(held) = held {
-            held.entered.store(true, Ordering::Release);
-            while !held.released.load(Ordering::Acquire) {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        }
+        self.hold("prepare");
         self.local.prepare(instance, stop)
     }
 
     fn dial(&self, instance: &Instance) -> Result<TcpStream, Failure> {
         self.asked().dials.push(instance.origin.clone());
-        self.local.dial(instance)
+        let mute = *self.mute.lock().unwrap();
+        let stream = match mute {
+            Some(address) => TcpStream::connect(address).map_err(|_| Failure::Unreachable),
+            None => self.local.dial(instance),
+        };
+        self.hold("dial");
+        stream
     }
 }
 
@@ -119,49 +136,58 @@ fn everything_the_connection_asks_of_a_gateway_goes_through_its_route() {
     until("Hermes hears the answer", || {
         !gateway.world().calls("session.detach").is_empty()
     });
-    lab.observer.take();
 
     // What the route was asked for, beside what the gateway gave: the
     // tickets asked for and granted, the streams asked for and the sockets
-    // opened. A poll may have taken a snapshot besides, and a visit still
-    // on its way when the observer stopped ends on its own, so the two are
-    // looked at until they agree.
+    // opened. The observer still runs, and a poll may be taking a snapshot
+    // on a socket of its own just now, so the two are looked at together
+    // until they agree. (They need not once it has stopped: an opening
+    // that a stop overtakes asks for nothing more.)
+    struct Seen {
+        verbs: Vec<String>,
+        prepared: Vec<String>,
+        dials: Vec<String>,
+        homes: usize,
+        granted: usize,
+        sockets: usize,
+        turned_away: usize,
+    }
     let seen = || {
         let (world, asked) = (gateway.world(), lab.route.asked());
-        let tickets = |verb: &&String| *verb == "session-ticket";
-        let asked_for = (
-            asked.verbs.iter().filter(tickets).count(),
-            asked.dials.len(),
-        );
-        let given = (world.granted.len(), world.sockets + world.turned_away);
-        (asked_for, given)
+        Seen {
+            verbs: asked.verbs.clone(),
+            prepared: asked.prepared.clone(),
+            dials: asked.dials.clone(),
+            homes: asked.homes,
+            granted: world.granted.len(),
+            sockets: world.sockets,
+            turned_away: world.turned_away,
+        }
     };
+    let tickets = |seen: &Seen| {
+        let ticket = |verb: &&String| *verb == "session-ticket";
+        seen.verbs.iter().filter(ticket).count()
+    };
+    let mut last = seen();
     until("the gateway gave what the route was asked for", || {
-        let (asked_for, given) = seen();
-        asked_for == given && asked_for.0 == asked_for.1
+        last = seen();
+        let asked_for = (tickets(&last), last.dials.len());
+        asked_for == (last.granted, last.sockets + last.turned_away)
+            && asked_for.0 == asked_for.1
+            && last.prepared.len() == asked_for.0
     });
+    lab.observer.take();
     // The socket the polls run on and the one the answer went on, at least:
     // a ticket and a stream each, and every one of them asked of the route.
-    let ((tickets, dials), _) = seen();
-    assert!(tickets >= 2 && dials >= 2, "{tickets} {dials}");
-    let origin = gateway.world().identify.as_ref().unwrap()["result"]["api_origin"].clone();
-    let (verbs, dialled, homes, prepared) = {
-        let asked = lab.route.asked();
-        let prepared = asked.prepared.clone();
-        (
-            asked.verbs.clone(),
-            asked.dials.clone(),
-            asked.homes,
-            prepared,
-        )
-    };
+    assert!(tickets(&last) >= 2, "{}", tickets(&last));
     // The route was told of the instance before each ticket was asked for.
-    assert_eq!(prepared, dialled);
-    assert_eq!(gateway.world().turned_away, 0);
-    assert_eq!(verbs[0], "identify");
-    assert!(dialled.iter().all(|dialled| json!(dialled) == origin));
+    assert_eq!(last.prepared, last.dials);
+    assert_eq!(last.turned_away, 0);
+    assert_eq!(last.verbs[0], "identify");
+    let origin = gateway.world().identify.as_ref().unwrap()["result"]["api_origin"].clone();
+    assert!(last.dials.iter().all(|dialled| json!(dialled) == origin));
     // A home is asked for before each thing asked in it.
-    assert!(homes >= verbs.len(), "{homes} {verbs:?}");
+    assert!(last.homes >= last.verbs.len(), "{}", last.homes);
 }
 
 #[test]
@@ -197,7 +223,7 @@ fn once_the_observer_has_stopped_no_ticket_is_asked_for_whatever_the_route_answe
     let mut lab = lab();
     let gateway = Fake::start(&lab.home, "instance-1");
     let held = Arc::new(Hold::default());
-    *lab.route.deaf.lock().unwrap() = Some(held.clone());
+    *lab.route.held.lock().unwrap() = Some(("prepare", held.clone()));
     lab.follow();
     until("the route is told of the instance", || {
         held.entered.load(Ordering::Acquire)
@@ -218,6 +244,65 @@ fn once_the_observer_has_stopped_no_ticket_is_asked_for_whatever_the_route_answe
         (world.granted.len(), world.sockets + world.turned_away)
     };
     assert_eq!((granted, sockets), (0, 0));
+}
+
+#[test]
+fn a_stream_that_arrives_once_the_observer_stopped_is_never_spoken_on() {
+    let mut lab = lab();
+    let gateway = Fake::start(&lab.home, "instance-1");
+    let held = Arc::new(Hold::default());
+    *lab.route.held.lock().unwrap() = Some(("dial", held.clone()));
+    lab.follow();
+    until("a stream is dialled", || {
+        held.entered.load(Ordering::Acquire)
+    });
+    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    // Stopped with the ticket in hand and the stream on its way.
+    lab.observer.take();
+    held.released.store(true, Ordering::Release);
+    until("the connection's thread is done", || {
+        Arc::strong_count(&shared) == 1
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    // The ticket was never offered: the gateway saw no upgrade at all.
+    let (granted, upgrades) = {
+        let world = gateway.world();
+        (world.granted.len(), world.sockets + world.turned_away)
+    };
+    assert_eq!((granted, upgrades), (1, 0));
+    let dials = lab.route.asked().dials.len();
+    assert_eq!(dials, 1);
+}
+
+#[test]
+fn stopping_cuts_a_stream_that_is_being_upgraded() {
+    let mut lab = lab();
+    let _gateway = Fake::start(&lab.home, "instance-1");
+    // The stream leads somewhere that takes it and never answers, so the
+    // upgrade waits: five seconds, were it left alone.
+    let mute = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    *lab.route.mute.lock().unwrap() = Some(mute.local_addr().unwrap());
+    lab.follow();
+    let (mut taken, _) = mute.accept().unwrap();
+    let mut asked = [0u8; 4096];
+    let read = taken.read(&mut asked).unwrap();
+    assert!(
+        asked[..read].starts_with(b"GET "),
+        "the upgrade is under way"
+    );
+    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let began = Instant::now();
+    lab.observer.take();
+    until("the connection's thread is done", || {
+        Arc::strong_count(&shared) == 1
+    });
+    let took = began.elapsed();
+    assert!(took < Duration::from_secs(2), "{took:?}");
+    // The other end sees the stream end, with nothing more on it.
+    taken
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert_eq!(taken.read(&mut asked).ok(), Some(0));
 }
 
 #[test]

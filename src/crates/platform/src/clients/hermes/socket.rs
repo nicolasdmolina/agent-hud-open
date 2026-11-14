@@ -49,14 +49,17 @@ pub(super) enum Reply {
     Late,
 }
 
+/// A stream to an instance on which nothing has been said yet.
+pub(super) struct Dialled {
+    line: Arc<Line>,
+    /// The instance's own name for itself, which the upgrade asks for.
+    authority: String,
+}
+
 impl Socket {
-    /// Upgrades a stream to the instance with the ticket. The stream is
-    /// the route's to give: nothing is dialled here. No `Origin` header.
-    pub(super) fn open(
-        route: &dyn Route,
-        instance: &Instance,
-        ticket: Ticket,
-    ) -> Result<Self, Failure> {
+    /// A stream to the instance. The stream is the route's to give:
+    /// nothing is dialled here.
+    pub(super) fn dial(route: &dyn Route, instance: &Instance) -> Result<Dialled, Failure> {
         let (scheme, authority) = instance
             .origin
             .split_once("://")
@@ -72,7 +75,32 @@ impl Socket {
         let _ = tcp.set_nodelay(true);
         let _ = tcp.set_read_timeout(Some(HANDSHAKE));
         let _ = tcp.set_write_timeout(Some(WRITE));
-        let line = Line::new(tcp);
+        Ok(Dialled {
+            line: Line::new(tcp),
+            authority: authority.to_owned(),
+        })
+    }
+
+    /// A stream to the instance, upgraded with the ticket at once.
+    #[cfg(test)]
+    pub(super) fn open(
+        route: &dyn Route,
+        instance: &Instance,
+        ticket: Ticket,
+    ) -> Result<Self, Failure> {
+        Self::dial(route, instance)?.upgrade(ticket)
+    }
+}
+
+impl Dialled {
+    /// The stream, for whoever may have to cut it while it is upgraded.
+    pub(super) fn line(&self) -> Arc<Line> {
+        self.line.clone()
+    }
+
+    /// Upgrades the stream with the ticket. No `Origin` header.
+    pub(super) fn upgrade(self, ticket: Ticket) -> Result<Socket, Failure> {
+        let Self { line, authority } = self;
         let mut request = format!("ws://{authority}{SOCKET_PATH}")
             .into_client_request()
             .map_err(|_| Failure::Invalid("invalid_api_origin"))?;
@@ -108,14 +136,16 @@ impl Socket {
                 "the gateway speaks another protocol".into(),
             ));
         }
-        Ok(Self {
+        Ok(Socket {
             ws,
             line,
             budget: WRITE,
             calls: 0,
         })
     }
+}
 
+impl Socket {
     /// The stream under the socket, for whoever may have to cut it.
     pub(super) fn line(&self) -> Arc<Line> {
         self.line.clone()

@@ -21,7 +21,7 @@
 //! a change asks for a poll, as on the socket the polls run on; what waits
 //! is still read by the poll alone.
 use super::{
-    link::{opened, Shut},
+    opening::{opened, Shut},
     socket::{result, Reply, Socket},
     wire::Line,
     Model, Shared,
@@ -43,15 +43,30 @@ pub(super) struct Held {
     request: Option<String>,
     /// A write of its own is under way.
     writing: bool,
+    /// It is no visit yet: a stream being upgraded into a socket
+    /// (`opening.rs`), which a stop cuts as it cuts a write.
+    opening: bool,
+}
+
+impl Held {
+    pub(super) fn opening(line: Arc<Line>) -> Self {
+        Self {
+            line,
+            request: None,
+            writing: false,
+            opening: true,
+        }
+    }
 }
 
 impl Model {
     /// Cuts the socket of every visit that is writing and that `which`
     /// names by its request: an answer on its way to a request that is
-    /// over, or any write at all once the observer stops.
+    /// over, or any write at all once the observer stops. A socket still
+    /// being opened answers no request, so only a stop cuts it.
     pub(super) fn cut_writing(&mut self, which: impl Fn(Option<&str>) -> bool) {
         for held in self.visits.values() {
-            if held.writing && which(held.request.as_deref()) {
+            if (held.writing || held.opening) && which(held.request.as_deref()) {
                 held.line.cut();
             }
         }
@@ -146,6 +161,7 @@ impl<'a> Visit<'a> {
                 line: socket.line(),
                 request: request.map(str::to_owned),
                 writing: false,
+                opening: false,
             };
             let key = model.visited;
             model.visits.insert(key, held);
