@@ -1,6 +1,7 @@
 // Renders the package's real components in a test: Vite loads the .tsx
 // source as the app builds it, and React renders it to markup. Not a test
 // file itself (node --test runs *.test.ts only).
+import { dirname } from "node:path";
 import { createServer, type ViteDevServer } from "vite";
 
 let server: Promise<ViteDevServer> | null = null;
@@ -9,7 +10,8 @@ let server: Promise<ViteDevServer> | null = null;
  * "/src/sessions/SessionRow.tsx"), loaded as the app loads it. */
 export async function load<T>(path: string): Promise<T> {
   server ??= createServer({
-    root: new URL("..", import.meta.url).pathname,
+    // This package's folder, which holds the test folder.
+    root: dirname(import.meta.dirname),
     configFile: false,
     logLevel: "silent",
     appType: "custom",
