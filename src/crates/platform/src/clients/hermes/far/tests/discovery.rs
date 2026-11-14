@@ -150,6 +150,57 @@ fn a_hermes_home_named_by_the_login_shell_is_found() {
     );
 }
 
+/// The verifier's probe: 201 profiles, and a gateway only in the last.
+/// Discovery returns every home or refuses the machine, and never asks
+/// some of the homes as if they were all of them.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn v_discovery_never_silently_drops_a_valid_home() {
+    let Some(lab) = FarLab::start() else { return };
+    let root = lab.root();
+    let paths: Vec<_> = (0..201).map(|n| lab.profile(&format!("p{n:03}"))).collect();
+    let late = paths.last().unwrap();
+    let gate = lab.gate(late, Manner::gateway("last", &[late]));
+    let far = Far::default();
+    match far.homes(&lab.link) {
+        Ok(found) => {
+            let picture = far.discover(&lab.link).expect("a discovery result");
+            println!(
+                "Actual folders: root + 201 profiles. Returned homes: {}. Final valid profile \
+                 included: {}. Discovery asked {} homes and found {} gateways. Final profile \
+                 gateway received {} connections.",
+                found.homes.len(),
+                found.homes.iter().any(|h| h.path == text(late)),
+                picture.asked.len(),
+                picture.gateways.len(),
+                gate.connections()
+            );
+            assert_eq!(
+                found.homes.len(),
+                202,
+                "successful discovery must return every home, or explicitly refuse an \
+                 oversized inventory"
+            );
+        }
+        Err(reason) => {
+            println!("Oversized discovery explicitly refused: {reason:?}");
+            assert_eq!(format!("{reason:?}"), "NotCovered(TooManyProfiles)");
+            let whole = far.discover(&lab.link).unwrap_err();
+            assert_eq!(format!("{whole:?}"), "NotCovered(TooManyProfiles)");
+            assert_eq!(gate.connections(), 0, "no home of it was asked");
+        }
+    }
+    assert!(root.exists());
+    // With one profile fewer every home is named, the last one too.
+    fs::remove_dir(&paths[0]).unwrap();
+    let found = far.homes(&lab.link).expect("the homes of 200 profiles");
+    assert_eq!(found.homes.len(), 201);
+    assert_eq!(
+        found.homes.last().map(|home| home.path.as_str()),
+        Some(text(late))
+    );
+}
+
 #[test]
 #[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_machine_where_the_relay_cannot_run_or_a_check_fails_is_not_covered() {

@@ -18,6 +18,7 @@ mod checks;
 mod deadline;
 mod discovery;
 mod fixture;
+mod lists;
 mod program;
 mod real;
 mod replies;

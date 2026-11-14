@@ -14,7 +14,7 @@ use std::fmt;
 mod homes;
 mod picture;
 
-pub use homes::{homes, FarHome, Homes, NoHomes, HOMES_SCRIPT, HOMES_SECONDS};
+pub use homes::{homes, FarHome, Homes, NoHomes, HOMES_SCRIPT, HOMES_SECONDS, MOST_PROFILES};
 pub use picture::{picture, Asked, FoundGateway, Picture};
 
 /// How long the relay lives on the far machine, in seconds, to begin with.
@@ -153,9 +153,12 @@ pub enum Unchecked {
     ListenerNotYours,
     /// The line named a verb that is never sent.
     VerbNotSent,
+    /// A node's access control list could not be read, so it is not known
+    /// to be closed to others.
+    PermissionsUnread,
 }
 
-const UNCHECKED: [(Unchecked, &str); 16] = [
+const UNCHECKED: [(Unchecked, &str); 17] = [
     (Unchecked::NoPython, "no-python3"),
     (Unchecked::HomeNotCanonical, "home-not-canonical"),
     (Unchecked::HomeNotYours, "home-not-yours"),
@@ -172,6 +175,7 @@ const UNCHECKED: [(Unchecked, &str); 16] = [
     (Unchecked::NoPeerCredentials, "no-peer-credentials"),
     (Unchecked::ListenerNotYours, "listener-not-yours"),
     (Unchecked::VerbNotSent, "verb-not-sent"),
+    (Unchecked::PermissionsUnread, "permissions-unread"),
 ];
 
 impl Unchecked {

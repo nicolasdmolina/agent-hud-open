@@ -41,8 +41,10 @@ fi
 kill "$watch" 2>/dev/null
 exit 0"#;
 
-/// The most profiles of one machine that are asked.
-const MOST_PROFILES: usize = 200;
+/// The most profiles one machine may have and be followed. Each is asked
+/// in turn, so a machine with more is refused whole ([`NoHomes::TooMany`]):
+/// never some of its homes as if they were all of them.
+pub const MOST_PROFILES: usize = 200;
 
 /// One Hermes home on a far machine.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -72,6 +74,8 @@ pub enum NoHomes {
     NoPython,
     /// The root it named is not written as a canonical path is.
     RootNotCanonical,
+    /// More than [`MOST_PROFILES`] profiles there.
+    TooMany,
     /// The answer is not the command's: cut short, or something else.
     Garbled,
 }
@@ -79,6 +83,7 @@ pub enum NoHomes {
 /// Reads what [`HOMES_SCRIPT`] printed. A folder under `profiles/` that is
 /// no profile's (Hermes allows a profile a name of `a-z`, `0-9`, `_`, `-`)
 /// names no home, and neither does one whose home is not a canonical path.
+/// Every home that is left is in the answer, or there is no answer.
 pub fn homes(output: &[u8]) -> Result<Homes, NoHomes> {
     let text = std::str::from_utf8(output).map_err(|_| NoHomes::Garbled)?;
     let mut words = text.split('\0');
@@ -116,15 +121,17 @@ pub fn homes(output: &[u8]) -> Result<Homes, NoHomes> {
         return Err(NoHomes::NoPython);
     }
     named.sort();
-    // Two folders that lead to one home are one home, under its first name.
+    // Two folders that lead to one home are one home, under its first name,
+    // and count once.
+    let mut seen = std::collections::HashSet::from([root.clone()]);
+    named.retain(|home| seen.insert(home.path.clone()));
+    if named.len() > MOST_PROFILES {
+        return Err(NoHomes::TooMany);
+    }
     let mut homes = vec![FarHome {
         profile: Profile::Default,
         path: root.clone(),
     }];
-    for home in named.into_iter().take(MOST_PROFILES) {
-        if homes.iter().all(|held| held.path != home.path) {
-            homes.push(home);
-        }
-    }
+    homes.append(&mut named);
     Ok(Homes { root, homes })
 }

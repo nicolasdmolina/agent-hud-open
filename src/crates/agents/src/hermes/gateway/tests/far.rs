@@ -159,6 +159,7 @@ fn the_relays_words_are_an_answer_or_a_named_reason() {
         Unchecked::NoPeerCredentials,
         Unchecked::ListenerNotYours,
         Unchecked::VerbNotSent,
+        Unchecked::PermissionsUnread,
     ];
     let mut names: Vec<&str> = checks.iter().map(|why| why.reason_code()).collect();
     for why in checks {
@@ -168,7 +169,7 @@ fn the_relays_words_are_an_answer_or_a_named_reason() {
     names.push(Unchecked::NoPython.reason_code());
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), 16, "sixteen reasons, sixteen names");
+    assert_eq!(names.len(), 17, "seventeen reasons, seventeen names");
     // No `python3`, as `sh` says it; the deadline, which says nothing.
     assert_eq!(quiet(127, ""), Quiet::Unchecked(Unchecked::NoPython));
     assert_eq!(quiet(126, ""), Quiet::Unchecked(Unchecked::NoPython));
@@ -267,6 +268,60 @@ fn the_homes_command_names_the_root_and_each_profile() {
     for word in [" rm ", "mkdir", "touch", ">>", "hermes "] {
         assert!(!HOMES_SCRIPT.contains(word), "{word}");
     }
+}
+
+/// What the homes command prints for a root and `profiles`, each a folder
+/// name and where it leads.
+fn printed(profiles: &[(String, String)]) -> Vec<u8> {
+    let mut text = format!("root\0{ROOT}\0");
+    for (name, path) in profiles {
+        text.push_str(&format!("profile\0{name}\0{path}\0"));
+    }
+    text.push_str("python\0yes\0end\0");
+    text.into_bytes()
+}
+
+/// `count` profiles, each in its own folder under the root.
+fn profiles(count: usize) -> Vec<(String, String)> {
+    (0..count)
+        .map(|at| (format!("p{at:03}"), format!("{ROOT}/profiles/p{at:03}")))
+        .collect()
+}
+
+/// The verifier's probe of the parser: an inventory is answered whole or
+/// refused, never cut to a part of it and called an answer.
+#[test]
+fn v_a_large_inventory_is_whole_or_refused_never_part_of_it() {
+    // As many as are asked: every one is there.
+    let most = homes(&printed(&profiles(200))).expect("200 profiles");
+    assert_eq!(most.homes.len(), 201);
+    assert_eq!(most.homes[200].path, format!("{ROOT}/profiles/p199"));
+    // One more: no homes at all, and the reason says why.
+    let over = homes(&printed(&profiles(201)));
+    assert!(
+        over.as_ref().map_or(true, |found| found.homes.len() == 202),
+        "a successful answer holds every home: {} of 202",
+        over.as_ref().map_or(0, |found| found.homes.len())
+    );
+    assert_eq!(format!("{over:?}"), "Err(TooMany)");
+    assert_eq!(
+        format!("{:?}", homes(&printed(&profiles(5000)))),
+        "Err(TooMany)"
+    );
+    // Folders that lead to one home count once, before anything is
+    // counted: 250 names for one home do not crowd out five others.
+    let mut aliased: Vec<(String, String)> = (0..250)
+        .map(|at| (format!("a{at:03}"), "/Volumes/big/shared".to_owned()))
+        .collect();
+    aliased.extend(profiles(5));
+    let found = homes(&printed(&aliased)).expect("six homes under 255 names");
+    let paths: Vec<&str> = found.homes.iter().map(|home| home.path.as_str()).collect();
+    assert_eq!(paths.len(), 7, "{paths:?}");
+    assert_eq!(paths[1], "/Volumes/big/shared");
+    assert_eq!(paths[6], format!("{ROOT}/profiles/p004"));
+    // A profile folder that leads back to the root is the root.
+    let back = homes(&printed(&[("loop".to_owned(), ROOT.to_owned())])).unwrap();
+    assert_eq!(back.homes.len(), 1);
 }
 
 /// Every order the three homes can be asked in.

@@ -22,7 +22,7 @@
 //!
 //! A ticket is in an answer and nowhere else: never in an error, and
 //! [`Answered`] does not print.
-use crate::ssh_link::{End, Failure, FarCommand, Link};
+use crate::ssh_link::{Cut, End, Failure, FarCommand, Link};
 use agent_hud_agents::hermes::gateway::far::{
     homes, picture, relay_said, Answered, Asked, FarHome, Homes, NoHomes, Picture, Quiet, Request,
     Unchecked, HOMES_SCRIPT, HOMES_SECONDS, MOST_ANSWER, RELAY_SECONDS,
@@ -93,6 +93,9 @@ pub enum NotCovered {
     },
     /// The root home it named is not a canonical path.
     RootNotCanonical,
+    /// More profiles than are asked of one machine (`MOST_PROFILES`), or
+    /// more than the homes command may print. None of them is followed.
+    TooManyProfiles,
 }
 
 /// The exchanges with one far machine. It remembers which homes have a
@@ -215,17 +218,22 @@ impl Far {
             }
             Err(failure) => return unreached(Silent::Link(failure)),
         };
+        let not_covered = |why| Err(NoPicture::NotCovered(why));
         if ran.end != End::Ended(0) {
-            if matches!(ran.end, End::CutOff(_)) {
+            if let End::CutOff(cut) = ran.end {
                 self.cut_off("", HOMES_SECONDS);
+                // More than is read: an inventory too large to take whole.
+                if cut == Cut::TooMuchOutput {
+                    return not_covered(NotCovered::TooManyProfiles);
+                }
                 return unreached(Silent::CutOff);
             }
             return unreached(Silent::Relay(Quiet::Failed));
         }
-        let not_covered = |why| Err(NoPicture::NotCovered(why));
         match homes(&ran.stdout) {
             Ok(homes) => Ok(homes),
             Err(NoHomes::NoHermes) => not_covered(NotCovered::NoHermes),
+            Err(NoHomes::TooMany) => not_covered(NotCovered::TooManyProfiles),
             Err(NoHomes::RootNotCanonical) => not_covered(NotCovered::RootNotCanonical),
             Err(NoHomes::NoPython) => not_covered(NotCovered::Unchecked {
                 why: Unchecked::NoPython,

@@ -61,6 +61,7 @@ fn the_relay_names_only_the_standard_library_and_opens_nothing_for_writing() {
         }
     }
     imported.sort();
+    imported.dedup();
     assert_eq!(imported, STANDARD, "what the relay imports");
     let text = code.join("\n");
     // Nothing of Hermes's is run or imported.
