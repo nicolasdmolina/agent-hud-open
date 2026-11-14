@@ -37,6 +37,8 @@ export interface Approval {
   deniesWithReply?: boolean;
   kind?: "permission" | "question" | "plan";
   vendor?: string;
+  /** From Core: the label of the far machine the session runs on; absent on this machine. */
+  machine?: string | null;
   summary?: string;
   detail?: string | null;
   cwd?: string | null;

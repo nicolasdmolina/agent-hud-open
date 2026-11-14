@@ -179,6 +179,7 @@ pub fn read(path: &Path, _cursor: &Value) -> rusqlite::Result<Page> {
             id: format!("droid:{id}"),
             title: text(&start["title"]).map(str::to_owned),
             client: None,
+            machine: None,
             title_fallback: None,
             cwd: text(&start["cwd"])
                 .or_else(|| text(&start["lastCwd"]))

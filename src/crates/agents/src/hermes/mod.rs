@@ -3,6 +3,7 @@ pub mod account;
 pub mod connections;
 pub mod gateway;
 mod hooks;
+mod mirror;
 mod session_counts;
 mod settings;
 pub mod transcript;

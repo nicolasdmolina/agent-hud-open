@@ -6,7 +6,7 @@
 //! Nothing here can be built from a name or an id Hermes would not write:
 //! a profile's name, a session's id and the ids made of them are checked
 //! where they are made, so no id of this machine can be a far machine's.
-use super::machine::{canonical, Machine};
+use super::machine::{canonical, Machine, StoredKey};
 use crate::hermes::AGENT;
 use std::fmt;
 use std::path::Path;
@@ -176,14 +176,29 @@ pub fn hud_session_id(machine: &Machine, profile: &Profile, id: &str) -> Option<
     names_a_session(id).then(|| written(machine, profile, id))
 }
 
+/// A far session's id where the machine's key was read back from a file
+/// Agent HUD wrote (`StoredKey`), such as a mirror: the very id
+/// `hud_session_id` gives that machine's verified key, written by the same
+/// hand, so a stored session and a live one are one session.
+pub fn stored_session_id(key: &StoredKey, profile: &Profile, id: &str) -> Option<String> {
+    names_a_session(id).then(|| write(Some(key.as_str()), profile, id))
+}
+
 fn written(machine: &Machine, profile: &Profile, id: &str) -> String {
+    match machine {
+        Machine::This => write(None, profile, id),
+        Machine::Far(key) => write(Some(key.as_str()), profile, id),
+    }
+}
+
+/// Every form of a HUD session id, by the far machine's key (None for
+/// this machine).
+fn write(key: Option<&str>, profile: &Profile, id: &str) -> String {
     let agent = AGENT.id;
-    match (machine, profile) {
-        (Machine::This, Profile::Default) => format!("{agent}:{id}"),
-        (Machine::This, Profile::Named(profile)) => format!("{agent}:{}:{id}", profile.as_str()),
-        (Machine::Far(key), profile) => {
-            format!("{agent}:{}/{}:{id}", key.as_str(), profile.name())
-        }
+    match (key, profile) {
+        (None, Profile::Default) => format!("{agent}:{id}"),
+        (None, Profile::Named(profile)) => format!("{agent}:{}:{id}", profile.as_str()),
+        (Some(key), profile) => format!("{agent}:{key}/{}:{id}", profile.name()),
     }
 }
 
