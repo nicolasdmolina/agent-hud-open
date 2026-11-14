@@ -32,6 +32,7 @@ use std::{
 mod answer;
 mod control;
 mod effects;
+pub mod far_history;
 mod link;
 mod log;
 mod opening;

@@ -23,6 +23,10 @@
 //! What a lab login still reads: the system's own files (the account
 //! database, `/etc/zshenv` where one exists), and whatever the far command
 //! itself opens.
+//!
+//! A far command finds its programs in the lab's `bin` folder first, which
+//! is empty unless a test puts a stand-in there (a `python3` that starts
+//! late, say), and then where the system keeps its own.
 use crate::ssh_link::{FarCommand, Folder, Settings, Target};
 use std::{
     fs,
@@ -36,6 +40,10 @@ use std::{
 pub(crate) const SHELL: &str = "shell";
 /// What the lab's startup file sets, naming the shell that read it.
 pub(crate) const MARKER: &str = "AGENT_HUD_LAB_STARTUP";
+/// The folder, in the lab, a far command looks in first for its programs.
+pub(crate) const BIN: &str = "bin";
+/// Where a far command looks after that.
+pub(crate) const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 pub(crate) struct Lab {
     dir: tempfile::TempDir,
@@ -141,7 +149,13 @@ impl Lab {
     /// The lab, or None where this machine cannot run one. On macOS, where
     /// the link is verified, that is a failure.
     pub(crate) fn start() -> Option<Self> {
-        match Self::try_start() {
+        Self::start_on(SYSTEM_PATH)
+    }
+
+    /// A lab whose far commands find programs in its `bin` folder and
+    /// then on `path`, which may be empty.
+    pub(crate) fn start_on(path: &str) -> Option<Self> {
+        match Self::try_start(path) {
             Ok(lab) => Some(lab),
             Err(why) if cfg!(target_os = "macos") => panic!("the lab sshd did not start: {why}"),
             Err(why) => {
@@ -151,7 +165,7 @@ impl Lab {
         }
     }
 
-    fn try_start() -> Result<Self, String> {
+    fn try_start(path: &str) -> Result<Self, String> {
         // A socket path holds 104 bytes, so the lab needs a short folder.
         let base = Some(std::env::temp_dir())
             .filter(|base| base.as_os_str().len() <= 52)
@@ -183,6 +197,9 @@ impl Lab {
             format!("set -gx {MARKER} fish\n"),
         )
         .map_err(|error| error.to_string())?;
+        fs::create_dir_all(at(BIN)).map_err(|error| error.to_string())?;
+        let path = [text(BIN), path.to_owned()].join(":");
+        let path = path.trim_end_matches(':');
         // A port found free can be taken before `sshd` binds it, by another
         // test's lab. So `sshd` itself says when it listens, and one that
         // could not bind is started again on another port.
@@ -198,7 +215,8 @@ impl Lab {
                      AllowAgentForwarding yes\nMaxStartups 100\n\
                      PermitUserRC no\nPermitUserEnvironment no\nHostbasedAuthentication no\n\
                      IgnoreRhosts yes\nX11Forwarding no\n\
-                     SetEnv ZDOTDIR={shell} XDG_CONFIG_HOME={shell} BASH_ENV=/dev/null ENV=/dev/null\n",
+                     SetEnv ZDOTDIR={shell} XDG_CONFIG_HOME={shell} BASH_ENV=/dev/null ENV=/dev/null \
+                     PATH={path}\n",
                     text("hostkey"),
                     text("authorized_keys"),
                     shell = text(SHELL),

@@ -1,0 +1,282 @@
+//! Reads a far machine's Hermes history over its SSH link: runs the reader
+//! program (`agents::hermes::far_history`) there once and returns what it
+//! answered, checked whole. One read at a time for each machine. Nothing
+//! here schedules a read or stores one.
+//!
+//! The program is sent on standard input and is never a file on the far
+//! disk. It opens that machine's own `state.db` so that it cannot change
+//! it, holds what it read in memory, closes the database, and only then
+//! answers, so a slow link never keeps a reader open there.
+//!
+//! **An answer is used whole or not at all.** The far program's exit
+//! status, anything on its standard error, its last line and its counts,
+//! and the shape of every row are checked on every read. What fails is
+//! logged with the exit status and never with a row's text.
+//!
+//! **A local time limit does not stop the far reader**, so the machine's
+//! slot (`slot.rs`) is freed only when the reader is known to be gone:
+//! its answer ended with an exit status, or its own deadline has passed
+//! since its `started` line was seen here. A lost link, a reconnect and a
+//! change of route free nothing. The far side holds the same rule by
+//! itself: a reader that finds another one alive opens nothing.
+use crate::ssh_link::{self, Cut, End, FarCommand, Link, Refused};
+use agent_hud_agents::hermes::far_history::{
+    self as far, Far, First, No, Rejected, Reply, Request,
+};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
+
+mod batches;
+mod slot;
+
+pub use batches::{Sessions, Skip};
+pub use slot::{Hold, Slot, Slots};
+
+/// The first and last lines of an answer, beside the bound on its rows.
+const BESIDE_ROWS: usize = 4 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct Settings {
+    /// The reader's own deadline, which it counts from its `started`.
+    pub deadline: Duration,
+    /// Added to the deadline before a cut-off reader is taken to be gone.
+    pub margin: Duration,
+    /// How long this side waits for an answer: a little longer than the
+    /// deadline, for the reader's start.
+    pub local_wait: Duration,
+    /// The most bytes of rows one read returns.
+    pub most_output: usize,
+    /// The most sessions asked for in one read.
+    pub batch: usize,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            deadline: Duration::from_secs(20),
+            margin: Duration::from_secs(2),
+            local_wait: Duration::from_secs(25),
+            most_output: far::MOST_OUTPUT,
+            batch: 25,
+        }
+    }
+}
+
+/// Why a read gave nothing. No row of it is used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// Another reader is alive on that machine, or may be, and this one
+    /// opened nothing. Worth asking again later.
+    Busy,
+    /// The machine has no `python3`, or a Python without `sqlite3`.
+    NoHistory,
+    /// The link did not run it, or was lost.
+    Link(ssh_link::Failure),
+    /// This side stopped waiting. The reader may still run, and the slot
+    /// holds until it cannot.
+    CutOff(Cut),
+    /// The far program ended with this status and nothing to use.
+    Exit(i32),
+    /// It wrote to standard error.
+    Stderr,
+    Rejected(Rejected),
+    /// It could not show that it is alone, or did not know the request.
+    Refused(No),
+    Far(Far),
+    /// Even the smallest read does not fit the output bound.
+    TooLarge,
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Busy => f.write_str("another reader is alive there"),
+            Self::NoHistory => f.write_str("no history on this machine"),
+            Self::Link(failure) => write!(f, "link: {failure}"),
+            Self::CutOff(Cut::TimeLimit) => f.write_str("cut off at the local time limit"),
+            Self::CutOff(Cut::TooMuchOutput) => f.write_str("cut off: too much output"),
+            Self::CutOff(Cut::ChannelClosed) => f.write_str("cut off: the channel closed"),
+            Self::Exit(status) => write!(f, "the far program ended with status {status}"),
+            Self::Stderr => f.write_str("text on standard error"),
+            Self::Rejected(rejected) => write!(f, "answer rejected: {rejected}"),
+            Self::Refused(No::Processes) => f.write_str("the far process list could not be read"),
+            Self::Refused(_) => f.write_str("the far program refused the request"),
+            Self::Far(far) => f.write_str(far.reason()),
+            Self::TooLarge => f.write_str("too large for one read"),
+        }
+    }
+}
+
+/// Runs reads. One for the app; the slot it is given says which machine.
+pub struct Reader {
+    settings: Settings,
+    log: Box<dyn Fn(&str) + Send + Sync>,
+}
+
+impl Reader {
+    /// `log` is given one line for each read and each wait. A line holds
+    /// kinds, counts, times and statuses, and never a row's text.
+    pub fn new(settings: Settings, log: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        Self {
+            settings,
+            log: Box::new(log),
+        }
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    fn say(&self, line: String) {
+        (self.log)(&line);
+    }
+
+    /// One read of the Hermes home `home`, a canonical far path, on the
+    /// machine whose slot is `slot`. It waits its turn: for a read under
+    /// way, and for a reader that was cut off and may still run. Where
+    /// nothing is known of a reader there, it probes first. `Reply::No`
+    /// and `Reply::Failed` come back as a [`Failure`].
+    pub fn read(
+        &self,
+        link: &Link,
+        slot: &Slot,
+        home: &str,
+        request: &Request,
+    ) -> Result<Reply, Failure> {
+        let kind = request.kind();
+        let _turn = slot.turn();
+        for _ in 0..3 {
+            match slot.hold() {
+                Hold::Free => return self.run(link, slot, home, request),
+                Hold::Until(until) => {
+                    let left = until.saturating_duration_since(Instant::now());
+                    if !left.is_zero() {
+                        self.say(format!(
+                            "history {kind} waits {} ms: a reader cut off after it started may run until its deadline",
+                            left.as_millis()
+                        ));
+                        thread::sleep(left);
+                    }
+                    slot.lapsed(until);
+                }
+                Hold::StartUnknown => {
+                    self.say(format!(
+                        "history {kind} probes first: nothing here says whether a reader runs there"
+                    ));
+                    let probed = self.run(link, slot, home, &Request::Probe)?;
+                    if *request == Request::Probe {
+                        return Ok(probed);
+                    }
+                }
+            }
+        }
+        Err(Failure::Busy)
+    }
+
+    /// Starts one reader and takes its answer. The slot is left saying
+    /// what is now known of that reader.
+    fn run(
+        &self,
+        link: &Link,
+        slot: &Slot,
+        home: &str,
+        request: &Request,
+    ) -> Result<Reply, Failure> {
+        let kind = request.kind();
+        let settings = &self.settings;
+        let args = far::arguments(home, settings.deadline, settings.most_output, request);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let command = FarCommand {
+            script: far::SCRIPT,
+            args: &args,
+            stdin: Some(far::PROGRAM.as_bytes()),
+            limit: settings.local_wait,
+            most_output: settings.most_output + BESIDE_ROWS,
+        };
+        let (round, before) = slot.begin();
+        let held = settings.deadline + settings.margin;
+        let began = Instant::now();
+        let mut seen = false;
+        let ran = link.run_watched(&command, &mut |stdout| {
+            if !seen && far::first_line(stdout) == First::Started {
+                seen = true;
+                slot.started(round, Instant::now() + held);
+            }
+        });
+        let ms = began.elapsed().as_millis();
+        let ran = match ran {
+            Ok(ran) => ran,
+            Err(failure) => {
+                // These three are refused before `ssh` is run, so no
+                // reader was started and the slot is as it was.
+                if let ssh_link::Failure::Refused(
+                    Refused::Closed | Refused::CommandTooLong | Refused::HereDocument,
+                ) = failure
+                {
+                    slot.restore(round, before);
+                }
+                self.say(format!("history {kind} not run: {failure}"));
+                return Err(Failure::Link(failure));
+            }
+        };
+        let started = if seen { "seen" } else { "not seen" };
+        let exit = match ran.end {
+            // 255 is `ssh`'s own failure as well as a far status, so it
+            // does not show the far program gone.
+            End::Ended(status) if status != 255 => status,
+            End::Ended(status) => {
+                self.say(format!(
+                    "history {kind} failed exit={status} after {ms} ms, started {started}"
+                ));
+                return Err(Failure::Exit(status));
+            }
+            End::CutOff(cut) => {
+                let failure = Failure::CutOff(cut);
+                self.say(format!(
+                    "history {kind} {failure} after {ms} ms, started {started}"
+                ));
+                return Err(failure);
+            }
+        };
+        // The far program ended and its status came back: it is gone.
+        let answer = if exit == far::NO_PYTHON {
+            Err(Failure::NoHistory)
+        } else if exit != 0 {
+            Err(Failure::Exit(exit))
+        } else if !ran.stderr.is_empty() {
+            Err(Failure::Stderr)
+        } else {
+            match far::parse(request, &ran.stdout) {
+                Err(rejected) => Err(Failure::Rejected(rejected)),
+                Ok(Reply::No(No::Busy)) => Err(Failure::Busy),
+                Ok(Reply::No(No::Sqlite)) => Err(Failure::NoHistory),
+                Ok(Reply::No(no)) => Err(Failure::Refused(no)),
+                Ok(Reply::Failed(far)) => Err(Failure::Far(far)),
+                Ok(reply) => Ok(reply),
+            }
+        };
+        if answer == Err(Failure::Busy) {
+            slot.busy(round);
+        } else {
+            slot.ended(round);
+        }
+        let bytes = ran.stdout.len();
+        match &answer {
+            Ok(reply) => self.say(format!(
+                "history {kind} ok exit=0 {ms} ms {bytes} B{}",
+                batches::counts(reply)
+            )),
+            Err(failure) => self.say(format!(
+                "history {kind} failed exit={exit} stderr={} B {ms} ms: {failure}",
+                ran.stderr.len()
+            )),
+        }
+        answer
+    }
+}
+
+#[cfg(all(test, unix))]
+#[path = "far_history/unix/tests/mod.rs"]
+mod tests;
