@@ -108,7 +108,17 @@ pub fn claim_collector(
 
 pub struct InstanceLock {
     path: PathBuf,
-    _file: File,
+    file: File,
+}
+
+impl Drop for InstanceLock {
+    /// Closing the file alone may keep the lock: a process this one is
+    /// starting holds a copy of every open file until it runs its program,
+    /// and the lock lasts while any copy is open. Letting go first frees it
+    /// at once.
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
 }
 
 /// The lock of the copy that runs, and the endpoint where a second launch
@@ -180,7 +190,7 @@ pub fn claim(path: &Path, executable: Option<&Path>) -> Claim {
     }
     Claim::Acquired(InstanceLock {
         path: path.to_owned(),
-        _file: file,
+        file,
     })
 }
 
@@ -217,6 +227,10 @@ pub fn application(executable: &Path) -> PathBuf {
         _ => executable.to_path_buf(),
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "tests_unix.rs"]
+mod tests_unix;
 
 #[cfg(test)]
 mod tests {
