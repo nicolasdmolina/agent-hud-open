@@ -191,6 +191,7 @@ pub(super) fn read(
             id,
             title: None,
             client: None,
+            machine: None,
             title_fallback: None,
             cwd: None,
             model: model.unwrap_or_else(|| "Unknown".into()),

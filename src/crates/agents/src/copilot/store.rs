@@ -136,6 +136,7 @@ pub fn read(db: &Connection, cursor: &Value) -> rusqlite::Result<Page> {
             id,
             title: None,
             client: None,
+            machine: None,
             title_fallback: None,
             cwd: sql_text(row, 11),
             model,

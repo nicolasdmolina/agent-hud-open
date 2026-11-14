@@ -305,10 +305,10 @@ fn never_mix(one: GatewayId, other: GatewayId, one_machine: bool) {
     assert_eq!((a.pending(&id_b), b.pending(&id_a)), (None, None));
     // Cards: each view carries its own id, and its own machine's session.
     let (card_a, card_b) = (a.pending(&id_a).unwrap(), b.pending(&id_b).unwrap());
-    assert_eq!(card_a.view(0)["id"], id_a.as_str());
-    assert_eq!(card_b.view(0)["id"], id_b.as_str());
-    assert_eq!(card_a.view(0)["sessionId"], at_a.hud_id().as_str());
-    assert_eq!(card_b.view(0)["sessionId"], at_b.hud_id().as_str());
+    assert_eq!(card_a.view(0, None)["id"], id_a.as_str());
+    assert_eq!(card_b.view(0, None)["id"], id_b.as_str());
+    assert_eq!(card_a.view(0, None)["sessionId"], at_a.hud_id().as_str());
+    assert_eq!(card_b.view(0, None)["sessionId"], at_b.hud_id().as_str());
     // Statuses.
     assert_eq!(a.statuses(), [(at_a.clone(), Status::Waiting)]);
     assert_eq!(b.statuses(), [(at_b.clone(), Status::Waiting)]);
@@ -381,7 +381,7 @@ fn the_install_id_is_in_no_id_and_no_debug_output() {
         format!("{:?}", machine_key(Some(INSTALL), FAR_HOME)),
         format!("{:?} {}", gateway.id(), gateway.id()),
         format!("{:?} {}", pending.session, pending.session.hud_id()),
-        format!("{pending:?} {} {}", pending.id(), pending.view(0)),
+        format!("{pending:?} {} {}", pending.id(), pending.view(0, None)),
         format!("{gateway:?} {begun:?} {effects:?}"),
         format!("{:?}", gateway.statuses()),
         format!("{:?}", machine_key(Some(&INSTALL.to_uppercase()), FAR_HOME)),

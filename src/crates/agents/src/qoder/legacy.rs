@@ -76,6 +76,7 @@ pub fn read(db: &Connection, cursor: &Value) -> rusqlite::Result<Page> {
             id: session,
             title: None,
             client: None,
+            machine: None,
             title_fallback: None,
             cwd: None,
             model: model.to_owned(),

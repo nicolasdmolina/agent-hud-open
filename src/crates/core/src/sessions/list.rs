@@ -236,31 +236,19 @@ impl AgentHudCore {
                     && source_filter
                         .as_ref()
                         .is_none_or(|sources| sources.contains(&log.source))
-                    && wanted.as_ref().is_none_or(|wanted| project_of(log.cwd.as_deref()) == *wanted)
+                    && wanted
+                        .as_ref()
+                        .is_none_or(|wanted| project_of(log.cwd.as_deref()) == *wanted)
                     && in_project(&Value::Null, log.cwd.as_deref())
                     && (search.is_empty()
-                        || [
-                            Some(log.id.as_str()),
-                            Some(log.source.as_str()),
-                            agent_hud_agents::by_id(&log.source).map(|agent| agent.name),
-                            // The client as the list names it: "Codex Desktop".
-                            crate::naming::clients::client_name(&log.source, log.client.as_deref()).as_deref(),
-                            Some(log.title.as_str()),
-                            Some(log.model.as_str()),
-                            log.cwd.as_deref(),
+                        || super::search::finds(
+                            log,
                             self.usage_projection
                                 .as_ref()
                                 .and_then(|p| p.titles.get(&log.id))
                                 .map(String::as_str),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .any(|field| field.to_lowercase().contains(&search))
-                        // The model as people read it: "Opus 4.5".
-                        || (!log.model.is_empty()
-                            && crate::naming::model_names::consumer_name(&format!("{}-model:{}", log.source, log.model))
-                                .to_lowercase()
-                                .contains(&search)))
+                            &search,
+                        ))
             })
             .collect::<Vec<_>>();
         // Keep the complete history as cheap heads; serialize only this page.

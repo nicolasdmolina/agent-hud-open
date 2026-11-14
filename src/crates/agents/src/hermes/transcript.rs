@@ -1,5 +1,6 @@
 //! Hermes SQLite session reader (`state.db`).
-use super::gateway::{hud_session_id, Machine, Profile};
+use super::gateway::{hud_session_id, stored_session_id, Machine, Profile};
+use super::mirror;
 use super::session_counts::{self, SessionCounts};
 use crate::transcript::{sql_column, sql_columns, sql_count, sql_model, sql_text, sql_time};
 use crate::{
@@ -11,6 +12,9 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Page> {
+    // Checked on every page, before anything is read: a mirror that cannot
+    // be trusted gives nothing.
+    let mirror = mirror::identity(db)?;
     let s = sql_columns(db, "sessions")?;
     if !s.contains("id") || !s.contains("started_at") {
         return Err(rusqlite::Error::InvalidQuery);
@@ -60,9 +64,13 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
     let mut seen = 0;
     // A `state.db` under a Hermes home is this machine's, and its folder
     // says whose: a named profile's in `profiles/<name>`, else the default
-    // profile's of whatever root holds it.
-    let machine = Machine::This;
-    let of = Profile::of_home(path.parent().unwrap_or(Path::new("")));
+    // profile's of whatever root holds it. A mirror's own table says whose
+    // it is, whatever folder holds it.
+    let of = match &mirror {
+        Some(mirror) => mirror.profile.clone(),
+        None => Profile::of_home(path.parent().unwrap_or(Path::new(""))),
+    };
+    let label = mirror.as_ref().map(|mirror| mirror.label.clone());
     let profile = match &of {
         Profile::Named(name) => Some(name.as_str().to_owned()),
         Profile::Default => None,
@@ -75,7 +83,11 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
             continue;
         };
         // A row whose id can be no session's is left out, like one without.
-        let Some(id) = hud_session_id(&machine, &of, &raw) else {
+        let id = match &mirror {
+            Some(mirror) => stored_session_id(&mirror.key, &of, &raw),
+            None => hud_session_id(&Machine::This, &of, &raw),
+        };
+        let Some(id) = id else {
             continue;
         };
         let Some(started) = sql_time(row, 2, true) else {
@@ -89,7 +101,15 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
             .max()
             .unwrap_or(started);
         max_ts = max_ts.max(updated);
-        let grew = prints.changed(last, &sql_text(row, 18).unwrap_or_default());
+        let counts = sql_text(row, 18).unwrap_or_default();
+        // A mirror's label is part of each session's print, so a machine
+        // shown under a new label reads every session again.
+        let grew = prints.changed(
+            last,
+            &label
+                .as_ref()
+                .map_or(counts.clone(), |label| format!("{label}\n{counts}")),
+        );
         if last <= rowid_after && updated <= ts_after && !grew {
             continue;
         }
@@ -138,6 +158,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
                     title: title.clone(),
                     title_fallback: title_fallback.clone(),
                     client: client.clone(),
+                    machine: label.clone(),
                     cwd: cwd.clone(),
                     model: routed(
                         sql_model(sql_text(row, 0)),
@@ -182,6 +203,7 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
                 title,
                 title_fallback,
                 client,
+                machine: label.clone(),
                 cwd,
                 model: routed(
                     sql_model(sql_text(row, 6)),
