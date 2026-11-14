@@ -11,12 +11,20 @@
 //! and not that its profile is free. What a look changes is decided in
 //! `settle.rs`, and a look that reached nothing changes nothing.
 //!
+//! A look that missed a reply is not whole (`Seen::missed`): a control
+//! socket was there and did not answer in time, or could not be read or
+//! trusted, or its gateway is still starting. Whoever did not answer may
+//! still claim what it claimed, so such a look settles no contest.
+//!
 //! A look is taken when the observer starts and then by the clock, and
 //! at once when a follower asks: it lost its socket, it found another
 //! instance at its home, its gateway serves other profiles than before,
 //! or a call was refused as another gateway's profile. It asks `identify`
 //! and nothing else, with nothing locked.
-use super::{control, followers::Followers};
+use super::{
+    control::{self, Silent},
+    followers::Followers,
+};
 use agent_hud_agents::hermes::gateway::{identify, identify_line, Identified, Instance, Profile};
 use serde_json::Value;
 use std::{
@@ -33,6 +41,9 @@ pub(super) struct Seen {
     pub(super) instances: BTreeMap<String, Found>,
     /// Which instance answered at the home of each profile.
     pub(super) at: BTreeMap<Profile, String>,
+    /// A home that has a gateway to ask gave no answer to go by: this
+    /// look does not know every claim there is.
+    pub(super) missed: bool,
 }
 
 /// One gateway, as it answered.
@@ -101,13 +112,26 @@ fn look(all: &Followers) -> Option<Seen> {
         if !all.active() {
             return None;
         }
-        let Ok(answer) = control::ask(&*all.route, home, &line, all.pace.answer) else {
-            continue;
+        let answer = match control::ask(&*all.route, home, &line, all.pace.answer) {
+            Ok(answer) => answer,
+            // No socket, or nobody listening: no gateway to ask.
+            Err(Silent::Absent) => continue,
+            Err(Silent::TimedOut | Silent::Garbled | Silent::Unsafe(_)) => {
+                seen.missed = true;
+                continue;
+            }
         };
         // Named once the answer came, as a follower names them.
         let (named, root) = (all.route.named(home), all.route.named(root));
-        let Identified::Ready(instance) = identify(&answer, &named, &root) else {
-            continue;
+        let instance = match identify(&answer, &named, &root) {
+            Identified::Ready(instance) => instance,
+            // Starting or draining: what it will serve is not said yet.
+            Identified::Wait(_) => {
+                seen.missed = true;
+                continue;
+            }
+            // It said what it is, and it is no gateway to follow.
+            Identified::Unsupported(_) | Identified::Failed(_) => continue,
         };
         // A home that is no profile of the root, as the gateway writes it,
         // was not verified as the profile the route takes it for.

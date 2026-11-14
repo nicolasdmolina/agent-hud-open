@@ -168,7 +168,7 @@ impl Hermes {
     fn held(&self, session: &SessionRef) -> Option<&Stream> {
         let stream = self
             .streams
-            .get(&(session.profile.clone(), session.id().to_owned()))?;
+            .get(&(session.route().clone(), session.id().to_owned()))?;
         (!stream.epoch.is_empty()).then_some(stream)
     }
     /// Where the last poll read the session's events from, in order.

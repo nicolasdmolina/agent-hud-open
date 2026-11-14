@@ -57,8 +57,11 @@ pub(super) fn work(shared: Arc<Shared>) {
                 (wait, dialing) = (shared.pace.retry, false);
                 if let Some(failure) = follow(&shared, &mut socket) {
                     shared.apply(Input::Lost(failure));
-                    // What became of the gateway is looked for.
-                    shared.look.want();
+                    // What became of the gateway is looked for, by a
+                    // follower that still follows it.
+                    if shared.active() {
+                        shared.look.want();
+                    }
                 }
                 socket.close();
                 Next::Soon

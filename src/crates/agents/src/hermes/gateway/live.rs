@@ -55,7 +55,7 @@ impl Gateway {
         let sessions = self
             .statuses()
             .into_iter()
-            .filter(|(at, _)| self.told.fresh.contains(&at.profile))
+            .filter(|(at, _)| self.told.fresh.contains(at.route()))
             .map(|(at, status)| (at.hud_id(), status.live()))
             .collect();
         LiveStates {

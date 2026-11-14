@@ -45,7 +45,15 @@ pub struct Instance {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Served {
+    /// The profile its sessions are named by, in every id made of one: by
+    /// its home's path alone (`Profile::of_home`), exactly as the hooks
+    /// and the `state.db` reader name it, so one session has one id.
     pub profile: Profile,
+    /// The profile as Hermes names it and routes a call by: by its place
+    /// in the machine's root (`Profile::in_root`). It differs from
+    /// `profile` only for a root that itself lies at `…/profiles/<name>`,
+    /// which Hermes calls `default` and its ids call `<name>`.
+    pub route: Profile,
     pub profile_id: String,
 }
 
@@ -106,11 +114,12 @@ pub enum Identified {
 /// Reads the control socket's answer to `identify` for the gateway whose
 /// socket is under `home`, on a machine whose Hermes root home is `root`.
 /// Both are compared as written: the caller resolves links before asking,
-/// as Hermes's client does. The root says which profile each served home
-/// is (`Profile::in_root`): the root itself is the default profile, in
-/// whatever folder it lies, and `<root>/profiles/<name>` is a named one. A
-/// served home that is no profile of this root is left out: nothing here
-/// could name its sessions.
+/// as Hermes's client does. The root says how Hermes routes to each
+/// served home (`Served::route`): the root itself is its default profile,
+/// in whatever folder it lies, and `<root>/profiles/<name>` a named one.
+/// It never names a session: that is the home's path alone
+/// (`Served::profile`). A served home that is no profile of this root is
+/// left out: no call could be routed to it.
 pub fn identify(answer: &Value, home: &str, root: &str) -> Identified {
     if let Some(denied) = refused(answer) {
         return denied.into();
@@ -135,9 +144,10 @@ pub fn identify(answer: &Value, home: &str, root: &str) -> Identified {
         .flatten()
         .filter_map(|entry| {
             let profile_id = crate::text(&entry["profile_id"])?.to_owned();
-            let profile = Profile::in_root(root, crate::text(&entry["home"])?)?;
+            let home = crate::text(&entry["home"])?;
             Some(Served {
-                profile,
+                profile: Profile::of_home(home),
+                route: Profile::in_root(root, home)?,
                 profile_id,
             })
         })

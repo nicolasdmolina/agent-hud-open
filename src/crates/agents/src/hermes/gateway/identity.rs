@@ -206,7 +206,12 @@ fn write(key: Option<&str>, profile: &Profile, id: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionRef {
     pub gateway: GatewayId,
+    /// The profile the session's ids are made of (`Served::profile`).
     pub profile: Profile,
+    /// Hermes routes a call for it to its default profile, whatever its
+    /// ids call that profile (`Served::route`): the one way the two names
+    /// of a profile differ, for a root that lies in a `profiles` folder.
+    rooted: bool,
     /// Checked when the session is named (`new`), so every id made of it
     /// can be written.
     id: String,
@@ -216,12 +221,29 @@ impl SessionRef {
     /// The session the gateway calls `id` in `profile`. None for an id
     /// that can be no session's.
     pub fn new(gateway: GatewayId, profile: Profile, id: &str) -> Option<Self> {
+        let route = profile.clone();
+        Self::routed(gateway, profile, route, id)
+    }
+    /// The same, where Hermes routes to the profile as `route`, which is
+    /// another name than its sessions' ids hold only for a root that lies
+    /// in a `profiles` folder: Hermes calls that one `default`.
+    pub fn routed(gateway: GatewayId, profile: Profile, route: Profile, id: &str) -> Option<Self> {
         let id = names_a_session(id).then(|| id.to_owned())?;
+        let rooted = route == Profile::Default;
         Some(Self {
             gateway,
             profile,
+            rooted,
             id,
         })
+    }
+    /// The profile Hermes routes a call for this session by.
+    pub fn route(&self) -> &Profile {
+        static ROOT: Profile = Profile::Default;
+        match self.rooted {
+            true => &ROOT,
+            false => &self.profile,
+        }
     }
     /// The gateway's `session_id`, which is `sessions.id` in the profile's
     /// `state.db` and `session_id` in its hook payloads.

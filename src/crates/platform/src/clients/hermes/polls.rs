@@ -53,6 +53,11 @@ pub(super) fn run(shared: &Shared, socket: &mut Socket) -> Result<Option<Ran>, F
         let mut asked: HashMap<u64, Step> = HashMap::new();
         let mut alone = Vec::new();
         for step in steps {
+            // A follower that ended asks nothing more: a reply that was
+            // held comes back to no next round, and no next call.
+            if !shared.active() {
+                return Ok(None);
+            }
             if matches!(step, Step::Snapshot(_)) {
                 alone.push(step);
             } else {
@@ -90,6 +95,9 @@ pub(super) fn run(shared: &Shared, socket: &mut Socket) -> Result<Option<Ran>, F
             poll.failed(&step);
         }
         for step in alone {
+            if !shared.active() {
+                return Ok(None);
+            }
             snapshots += 1;
             match snapshot(shared, &instance, &step) {
                 Some(told) => poll.answer(&step, &told),

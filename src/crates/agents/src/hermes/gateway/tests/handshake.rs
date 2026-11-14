@@ -89,6 +89,7 @@ fn a_gateway_describes_itself_and_grants_a_ticket() {
         live.served,
         [Served {
             profile: Profile::Default,
+            route: Profile::Default,
             profile_id: HOME.into()
         }]
     );

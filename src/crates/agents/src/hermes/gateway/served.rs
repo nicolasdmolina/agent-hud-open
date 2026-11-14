@@ -13,19 +13,21 @@ use std::collections::BTreeSet;
 impl Instance {
     /// The profile a gateway running as this instance is named by: the
     /// default profile if it serves it, else its named profile that sorts
-    /// first. `served` holds only profiles of the machine's root, named by
-    /// it, so this is `identity::anchor` of the homes it was read from.
+    /// first, each as Hermes routes to it (`Served::route`). `served` holds
+    /// only profiles of the machine's root, so this is `identity::anchor`
+    /// of the homes it was read from. It names the gateway and its reader,
+    /// never a session.
     pub fn anchor(&self) -> Option<Profile> {
         self.served
             .iter()
-            .map(|served| &served.profile)
+            .map(|served| &served.route)
             .min()
             .cloned()
     }
 
-    /// Whether the instance serves `profile`.
+    /// Whether the instance serves `profile`, as Hermes routes to it.
     pub fn serves(&self, profile: &Profile) -> bool {
-        self.served.iter().any(|served| served.profile == *profile)
+        self.served.iter().any(|served| served.route == *profile)
     }
 }
 
@@ -55,19 +57,19 @@ impl Gateway {
     pub(super) fn retire(&mut self, gone: &BTreeSet<Profile>, effects: &mut Vec<Effect>) {
         let left = |profile: &Profile| gone.contains(profile);
         let cards: Vec<_> = self.cards.keys().cloned().collect();
-        let held = self.held.iter().any(left) || cards.iter().any(|(at, _)| left(&at.profile));
+        let held = self.held.iter().any(left) || cards.iter().any(|(at, _)| left(at.route()));
         if !held {
             return;
         }
         self.polls += 1;
         self.held.retain(|profile| !left(profile));
-        self.listed.retain(|at, _| !left(&at.profile));
-        self.snapshotted.retain(|at, _| !left(&at.profile));
-        for key in cards.iter().filter(|(at, _)| left(&at.profile)) {
+        self.listed.retain(|at, _| !left(at.route()));
+        self.snapshotted.retain(|at, _| !left(at.route()));
+        for key in cards.iter().filter(|(at, _)| left(at.route())) {
             self.close(key, Closed::Retired, effects);
         }
         if let Connection::Ready(instance) = &mut self.connection {
-            instance.served.retain(|served| !left(&served.profile));
+            instance.served.retain(|served| !left(&served.route));
         }
     }
 

@@ -104,9 +104,15 @@ impl Gateway {
     pub fn waiting(&self) -> impl Iterator<Item = &Pending> {
         self.cards.values().map(|card| &card.pending)
     }
-    /// None for an id that can be no session's.
-    pub fn session(&self, profile: &Profile, id: &str) -> Option<SessionRef> {
-        SessionRef::new(self.id.clone(), profile.clone(), id)
+    /// The session `id` of the profile Hermes routes to as `route`. None
+    /// for an id that can be no session's.
+    pub fn session(&self, route: &Profile, id: &str) -> Option<SessionRef> {
+        let served = match &self.connection {
+            Connection::Ready(instance) => instance.served.iter().find(|s| s.route == *route),
+            _ => None,
+        };
+        let profile = served.map_or(route, |served| &served.profile).clone();
+        SessionRef::routed(self.id.clone(), profile, route.clone(), id)
     }
     /// What a live session is doing: waiting while a request of its own
     /// shows here, else what the last poll listed. None for a session that
@@ -147,7 +153,8 @@ impl Gateway {
                 Ask::Question(_) | Ask::Approval(_) => of.prompts.push(key.clone()),
             }
         }
-        let served = instance.served.iter().map(|served| served.profile.clone());
+        let served = instance.served.iter();
+        let served = served.map(|served| (served.route.clone(), served.profile.clone()));
         // Counted from the latest time the model was told of.
         let recent = self
             .snapshotted
@@ -204,7 +211,7 @@ impl Gateway {
                     self.reset(Closed::GatewayRestarted, effects);
                 }
                 self.instance = Some(instance.id.clone());
-                self.held = instance.served.iter().map(|s| s.profile.clone()).collect();
+                self.held = instance.served.iter().map(|s| s.route.clone()).collect();
                 self.connect(Connection::Ready(instance), effects);
             }
             Identified::Wait(_) => self.connect(Connection::Connecting, effects),

@@ -390,17 +390,21 @@ fn a_home_in_a_profiles_folder_with_a_profiles_name_stays_named() {
     }
     // A root that is itself at `…/profiles/<name>` reads as that named
     // profile by its path alone, which is all the hooks and the reader
-    // have. Whoever knows the root is not misled, and a gateway is read by
-    // its root (ticket 26): the root is the default profile.
+    // have, and so do the ids of its gateway's sessions (ticket 26): one
+    // session has one id. Whoever knows the root is not misled about what
+    // Hermes calls it: the gateway is anchored at the default profile and
+    // its calls are routed to `default`.
     let root = "/srv/profiles/work";
+    let work = Profile::named("work").unwrap();
     assert_eq!(anchor(root, [root]), Some(Profile::Default));
     assert_eq!(Profile::in_root(root, root), Some(Profile::Default));
-    assert_eq!(Profile::of_home(root), Profile::named("work").unwrap());
-    let served = serving(root, root).served;
-    assert_eq!(served[0].profile, Profile::Default);
-    let nested = "/srv/profiles/work/profiles/work";
-    let named = serving(root, nested).served;
-    assert_eq!(named[0].profile, Profile::named("work").unwrap());
+    assert_eq!(Profile::of_home(root), work);
+    let instance = serving(root, root);
+    assert_eq!(instance.served[0].profile, work);
+    assert_eq!(instance.served[0].route, Profile::Default);
+    assert_eq!(instance.anchor(), Some(Profile::Default));
+    assert_eq!(read_in(root).unwrap(), ["hermes:work:s1"]);
+    assert_eq!(hook_in(root).as_deref(), Some("hermes:work:s1"));
 }
 
 #[test]

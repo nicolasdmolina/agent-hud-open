@@ -31,7 +31,7 @@ impl Gateway {
         // list failed keeps what was known.
         let unlisted = |listed: Option<&Option<bool>>| matches!(listed, Some(None | Some(false)));
         self.listed
-            .retain(|at, _| unlisted(poll.profiles.get(&at.profile)));
+            .retain(|at, _| unlisted(poll.profiles.get(at.route())));
         self.told.read(&poll, now_ms);
         for (at, look) in &poll.sessions {
             self.listed.insert(at.clone(), look.status);
@@ -49,7 +49,7 @@ impl Gateway {
             look.is_some_and(|look| look.status == Status::Waiting)
         };
         self.snapshotted
-            .retain(|at, _| unlisted(poll.profiles.get(&at.profile)) || waits(at));
+            .retain(|at, _| unlisted(poll.profiles.get(at.route())) || waits(at));
         for (at, look) in &poll.sessions {
             if look.snapshot && look.status == Status::Waiting {
                 self.snapshotted.insert(at.clone(), now_ms);
@@ -60,7 +60,7 @@ impl Gateway {
                 continue;
             };
             // No card opens for a profile two instances claim (`served.rs`).
-            if self.withheld.contains(&at.profile) {
+            if self.withheld.contains(at.route()) {
                 continue;
             }
             for (ask, wait_ms) in reading.asks {
@@ -90,7 +90,7 @@ impl Gateway {
         effects: &mut Vec<Effect>,
     ) -> Option<Closed> {
         let (at, asked) = key;
-        match poll.profiles.get(&at.profile) {
+        match poll.profiles.get(at.route()) {
             // The gateway no longer serves the profile.
             None => return Some(Closed::SessionEnded),
             Some(Some(true)) => {}

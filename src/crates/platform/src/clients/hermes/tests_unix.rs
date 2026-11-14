@@ -56,6 +56,8 @@ mod verifier;
 mod verifier2;
 #[path = "tests/verifier25.rs"]
 mod verifier25;
+#[path = "tests/verifier26.rs"]
+mod verifier26;
 #[path = "tests/verifier3.rs"]
 mod verifier3;
 #[path = "tests/verifier4.rs"]

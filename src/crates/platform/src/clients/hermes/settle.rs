@@ -19,7 +19,14 @@
 //! missing socket and a gateway that does not run are none of these.
 //!
 //! Where two instances both say they serve a profile, no card is opened
-//! for it by either until a look finds one of them alone.
+//! for it by either until a whole look finds one of them alone. A look
+//! that missed a reply resolves no contest: it takes no profile from a
+//! gateway that did not answer, and frees no profile that was contested.
+//!
+//! A follower that lives is never ended or renamed for its name. Where a
+//! gateway found would be named as a follower already is (that follower
+//! kept its id after its anchor profile left it), the newcomer waits: it
+//! gets its follower once the name is free, and not before.
 use super::{
     discovery::{Found, Seen},
     follower::{End, Shared},
@@ -69,8 +76,7 @@ impl Followers {
         if !self.active() {
             return;
         }
-        let contested = seen.contested();
-        self.say(&contested);
+        let contested = self.contest(seen);
         let mut ended = Ended::new();
         let mut index = 0;
         while index < set.len() {
@@ -84,7 +90,7 @@ impl Followers {
             }
         }
         for found in seen.instances.values() {
-            self.found(&mut set, found, seen, &mut ended);
+            self.found(&mut set, found, &mut ended);
         }
         for follower in set.iter() {
             follower.withhold(&contested);
@@ -100,17 +106,35 @@ impl Followers {
         }
     }
 
-    /// Says which profiles two instances claim, when that changes.
-    fn say(&self, contested: &BTreeSet<Profile>) {
+    /// The profiles two instances claim, as of `seen`, said when that
+    /// changes. A whole look says which there are. One that missed a reply
+    /// only adds what it saw: whoever did not answer may still claim.
+    fn contest(&self, seen: &Seen) -> BTreeSet<Profile> {
         let mut last = self
             .contested
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if *last != *contested {
+        let mut contested = seen.contested();
+        if seen.missed {
+            contested.extend(last.iter().cloned());
+        }
+        if *last != contested {
             let names: Vec<&str> = contested.iter().map(Profile::name).collect();
             self.log
                 .line(&format!("contested profiles=[{}]", names.join(",")));
             *last = contested.clone();
+        }
+        contested
+    }
+
+    /// Says once that the gateway running as `instance` waits for the
+    /// name `reader`.
+    fn waits(&self, reader: &str, instance: &str) {
+        let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+        if waiting.insert(instance.to_owned()) {
+            let short: String = instance.chars().take(8).collect();
+            self.log
+                .line(&format!("gateway waits id={reader} instance={short}"));
         }
     }
 
@@ -128,7 +152,10 @@ impl Followers {
         let heard = seen.instances.get(&bound);
         let left = |profile: &&Profile| match heard {
             Some(found) => !found.instance.serves(profile),
-            None => seen.sole(profile).is_some(),
+            // Not heard: another instance serving it takes it, where the
+            // look was whole. One that missed a reply may have missed this
+            // gateway's, and takes nothing from it.
+            None => !seen.missed && seen.sole(profile).is_some(),
         };
         if let (None, Some(other)) = (heard, at_asked) {
             // Its home answers as another instance and its own was heard
@@ -178,7 +205,7 @@ impl Followers {
     /// Makes the follower of a gateway that has none. One that a follower
     /// is about to find at the home it asks is left to that follower,
     /// which is asked to look now.
-    fn found(&self, set: &mut Vec<Arc<Shared>>, found: &Found, seen: &Seen, ended: &mut Ended) {
+    fn found(&self, set: &mut Vec<Arc<Shared>>, found: &Found, ended: &mut Ended) {
         let instance = &found.instance;
         let follows = |follower: &Arc<Shared>| follower.bound().as_ref() == Some(&instance.id);
         if set.iter().any(follows) {
@@ -193,20 +220,11 @@ impl Followers {
         };
         let id = GatewayId::new(self.machine.clone(), anchor.clone());
         let reader = id.to_string();
-        if let Some(index) = set.iter().position(|kept| kept.reader == reader) {
-            // The id is kept by a follower whose gateway serves that
-            // profile no more. It gives the id up once its own gateway was
-            // heard, and the next look makes it again under the profile
-            // that gateway is named by now.
-            let holder = &set[index];
-            let heard = |bound: String| seen.instances.contains_key(&bound);
-            let serves = holder.model().gateway.holds().contains(&anchor);
-            if serves || !holder.bound().is_some_and(heard) {
-                return;
-            }
-            set.remove(index).end(End::Replaced);
-            ended.push((reader.clone(), "replaced"));
-            self.look.want();
+        if set.iter().any(|kept| kept.reader == reader) {
+            // The name is a living follower's, which kept it after its
+            // anchor profile left its gateway. That follower is not ended
+            // and not renamed: this gateway waits until the name is free.
+            return self.waits(&reader, &instance.id);
         }
         // The anchor's own home is asked, where it answered.
         let Some(asked) = [&anchor]
