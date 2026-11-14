@@ -3,7 +3,7 @@
 //! is not this machine is refused before anything is dialled.
 use super::super::{
     control::Silent,
-    route::{local::Local, Home, Route, Stop},
+    route::{local::Local, Home, Inventory, Route, Stop},
     socket::Socket,
 };
 use super::{
@@ -34,13 +34,18 @@ pub struct Way {
     /// A route that is shut tells of no home, as one whose machine cannot
     /// be reached.
     pub shut: AtomicBool,
-    /// Holds `prepare`, or a stream that `dial` has just got, until
-    /// released, whether or not the one who asked has stopped: a route
-    /// that does not listen.
+    /// Holds `prepare`, an `exchange`, or a stream that `dial` has just
+    /// got, until released, whether or not the one who asked has stopped:
+    /// a route that does not listen.
     pub held: Mutex<Option<(&'static str, Arc<Hold>)>>,
     /// Where `dial` leads in place of the gateway: somewhere that takes
     /// the stream and never says a word on it.
     pub mute: Mutex<Option<SocketAddr>>,
+    /// The profiles whose homes do not answer in time, by name: a control
+    /// socket that is slow, with its gateway as it was.
+    pub slow: Mutex<Vec<String>>,
+    /// Tells of the homes the other way round.
+    pub backwards: AtomicBool,
     pub asked: Mutex<Asked>,
 }
 
@@ -64,6 +69,8 @@ impl Way {
             shut: AtomicBool::new(false),
             held: Mutex::default(),
             mute: Mutex::default(),
+            slow: Mutex::default(),
+            backwards: AtomicBool::new(false),
             asked: Mutex::default(),
         }
     }
@@ -86,17 +93,31 @@ impl Way {
 
 impl Route for Way {
     fn homes(&self) -> Result<Vec<Home>, Silent> {
+        self.inventory().map(|told| told.homes)
+    }
+
+    fn inventory(&self) -> Result<Inventory, Silent> {
         self.asked().homes += 1;
         if self.shut.load(Ordering::Acquire) {
             return Err(Silent::Absent);
         }
-        self.local.homes()
+        let mut told = self.local.inventory()?;
+        if self.backwards.load(Ordering::Acquire) {
+            told.homes.reverse();
+        }
+        Ok(told)
     }
 
     fn exchange(&self, home: &Home, line: &[u8], timeout: Duration) -> Result<Vec<u8>, Silent> {
         let said: Value = serde_json::from_slice(line).unwrap_or_default();
         let verb = said["verb"].as_str().unwrap_or("").to_owned();
         self.asked().verbs.push(verb);
+        self.hold("exchange");
+        let slow = self.slow.lock().unwrap();
+        if slow.iter().any(|name| name == home.profile().name()) {
+            return Err(Silent::TimedOut);
+        }
+        drop(slow);
         self.local.exchange(home, line, timeout)
     }
 
@@ -256,7 +277,7 @@ fn a_stream_that_arrives_once_the_observer_stopped_is_never_spoken_on() {
     until("a stream is dialled", || {
         held.entered.load(Ordering::Acquire)
     });
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     // Stopped with the ticket in hand and the stream on its way.
     lab.observer.take();
     held.released.store(true, Ordering::Release);
@@ -290,7 +311,7 @@ fn stopping_cuts_a_stream_that_is_being_upgraded() {
         asked[..read].starts_with(b"GET "),
         "the upgrade is under way"
     );
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     let began = Instant::now();
     lab.observer.take();
     until("the connection's thread is done", || {

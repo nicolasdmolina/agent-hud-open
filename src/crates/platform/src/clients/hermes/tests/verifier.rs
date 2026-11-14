@@ -233,6 +233,14 @@ fn verifier_hint_on_short_socket_must_request_poll() {
             stopped: false,
         }),
         stopping: (Mutex::new(()), Condvar::new()),
+        reader: "local".into(),
+        asked: Mutex::new(Profile::Default),
+        born: Mutex::default(),
+        found: Mutex::default(),
+        gone: AtomicBool::new(false),
+        awaits: std::sync::atomic::AtomicU64::new(0),
+        look: Arc::default(),
+        ends: Arc::default(),
     };
     let (visit, _) = Visit::begin(&shared, &instance, &session, Duration::from_secs(2)).unwrap();
     visit.end();

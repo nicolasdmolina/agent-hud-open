@@ -8,6 +8,7 @@
 //!
 //! The hooks stay: they report running and finished as pushes, and they are
 //! all there is for a gateway without this connection (`Unsupported`).
+mod answering;
 mod ask;
 mod card;
 mod command;
@@ -23,14 +24,15 @@ mod machine;
 mod poll;
 mod read;
 mod reconcile;
+mod served;
 mod state;
 mod ticket;
 
 pub use ask::{Approval, Ask, Batch, BatchQuestion, Choice, Locked, Pending, Prompt, Question};
 pub use command::{active_list, detach, events_since, resume, Command};
 pub use connection::{
-    identify, refused, Connection, Denied, Failure, Identified, Instance, Served, Unsupported,
-    SESSION_AUTHORITY,
+    identify, refused, served_homes, Connection, Denied, Failure, Identified, Instance, Served,
+    Unsupported, SESSION_AUTHORITY,
 };
 pub use decision::{Answer, NotOffered, Reply};
 pub use effect::{Closed, Effect, Input, Status};

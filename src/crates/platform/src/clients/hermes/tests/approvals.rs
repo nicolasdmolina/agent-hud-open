@@ -117,7 +117,7 @@ fn a_wait_that_runs_out_in_the_hud_sends_hermes_nothing() {
     assert!(lab.cards().is_empty());
     // Polls go on and still find the request waiting in Hermes: it is
     // never answered and its card does not come back.
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     for _ in 0..5 {
         shared.want_poll();
         std::thread::sleep(Duration::from_millis(100));

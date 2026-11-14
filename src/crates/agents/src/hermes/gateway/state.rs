@@ -13,11 +13,10 @@
 use super::ask::{Ask, Pending};
 use super::connection::{identify, Connection, Denied, Failure, Identified, Unsupported};
 use super::effect::{Closed, Effect, Input, Status};
-use super::frame::{answered, Answered, Refusal};
 use super::identity::{GatewayId, Profile, SessionRef};
 use super::poll::{Poll, Shown};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// How long to wait between polls while any session starts, works or
 /// waits, or a card shows.
@@ -68,6 +67,11 @@ pub struct Gateway {
     pub(super) now_ms: i64,
     /// What the HUD can be told of `listed`, and since when (`live.rs`).
     pub(super) told: super::live::Told,
+    /// The profiles the gateway served when it was last ready, less the
+    /// ones retired since (`served.rs`).
+    pub(super) held: BTreeSet<Profile>,
+    /// The profiles no card is opened for just now (`served.rs`).
+    pub(super) withheld: BTreeSet<Profile>,
 }
 
 impl Gateway {
@@ -82,6 +86,8 @@ impl Gateway {
             snapshotted: BTreeMap::new(),
             now_ms: 0,
             told: Default::default(),
+            held: BTreeSet::new(),
+            withheld: BTreeSet::new(),
         }
     }
     pub fn id(&self) -> &GatewayId {
@@ -165,6 +171,9 @@ impl Gateway {
         match input {
             Input::Dialing => self.connect(Connection::Connecting, &mut effects),
             Input::Identified { answer, home } => self.identified(answer, home, &mut effects),
+            Input::Restarted => self.reset(Closed::GatewayRestarted, &mut effects),
+            Input::Retired(profiles) => self.retire(profiles, &mut effects),
+            Input::Withheld(profiles) => self.withhold(profiles, &mut effects),
             Input::Denied(Denied::Failed(failure)) | Input::Lost(failure) => {
                 self.lost(failure, &mut effects)
             }
@@ -193,6 +202,7 @@ impl Gateway {
                     self.reset(Closed::GatewayRestarted, effects);
                 }
                 self.instance = Some(instance.id.clone());
+                self.held = instance.served.iter().map(|s| s.profile.clone()).collect();
                 self.connect(Connection::Ready(instance), effects);
             }
             Identified::Wait(_) => self.connect(Connection::Connecting, effects),
@@ -227,7 +237,7 @@ impl Gateway {
 
     /// Closes every card and forgets the sessions: what a poll of the
     /// gateway as it was says no longer counts.
-    fn reset(&mut self, why: Closed, effects: &mut Vec<Effect>) {
+    pub(super) fn reset(&mut self, why: Closed, effects: &mut Vec<Effect>) {
         self.polls += 1;
         self.listed.clear();
         self.snapshotted.clear();
@@ -247,51 +257,5 @@ impl Gateway {
                 why,
             });
         }
-    }
-
-    fn key(&self, request: &str) -> Option<Key> {
-        let is = |card: &&Card| card.pending.id() == request;
-        let pending = &self.cards.values().find(is)?.pending;
-        Some((pending.session.clone(), pending.ask.key().to_owned()))
-    }
-
-    /// An answer was written. Nothing replies to the answer to a set of
-    /// questions, so only a poll tells what became of it.
-    fn sent(&mut self, request: &str, now_ms: i64, effects: &mut Vec<Effect>) {
-        let Some(card) = self.key(request).and_then(|key| self.cards.get_mut(&key)) else {
-            return;
-        };
-        card.sent_ms = Some(now_ms);
-        if matches!(card.pending.ask, Ask::Batch(_)) {
-            effects.push(Effect::Poll);
-        }
-    }
-
-    /// Hermes replied to an answer. Resolved, already resolved and a turn
-    /// that is over all mean the request is over: the card closes, a poll
-    /// begun before the reply is dropped (it may still say the request
-    /// waits), and a new one is asked for at once.
-    fn responded(&mut self, request: &str, reply: &Value, effects: &mut Vec<Effect>) {
-        let Some(key) = self.key(request) else {
-            return;
-        };
-        let why = match answered(reply) {
-            Answered::Resolved => Closed::Answered,
-            Answered::AlreadyResolved => Closed::AlreadyResolved,
-            Answered::Refused(Refusal::StaleGeneration) => Closed::StaleGeneration,
-            Answered::Refused(refusal) => {
-                if let Some(card) = self.cards.get_mut(&key) {
-                    card.sent_ms = None;
-                    effects.push(Effect::Unanswered {
-                        pending: card.pending.clone(),
-                        why: Some(refusal),
-                    });
-                }
-                return;
-            }
-        };
-        self.polls += 1;
-        self.close(&key, why, effects);
-        effects.push(Effect::Poll);
     }
 }

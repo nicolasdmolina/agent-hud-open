@@ -11,8 +11,13 @@ use std::time::Duration;
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Silent {
-    /// No socket, or nothing listening on it: no gateway runs.
+    /// No socket, or nothing listening on it: no gateway runs. Only what
+    /// says so for certain: nothing is there to ask, or nobody takes the
+    /// connection.
     Absent,
+    /// Something may listen there, and the exchange failed in a way that
+    /// does not tell: a permission error, a connection that was reset.
+    Unclear,
     /// It did not answer in time. Worth one more try before giving up.
     TimedOut,
     /// The home, the pointer, the socket or its listener is not the user's

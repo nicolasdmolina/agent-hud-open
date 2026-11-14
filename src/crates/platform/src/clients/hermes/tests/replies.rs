@@ -84,7 +84,7 @@ fn a_reply_is_applied_with_the_model_still_held_from_the_look_at_its_card() {
             lab.follow();
             lab.hears(&gateway, recording, request);
             let id = lab.card()["id"].as_str().unwrap().to_owned();
-            let shared = lab.observer.as_ref().unwrap().shared.clone();
+            let shared = lab.observer.as_ref().unwrap().local();
             // No poll closes the card first: the reply meets it open, which
             // is the branch that gives the reply to the model.
             let poll = Arc::new(Hold::default());

@@ -187,6 +187,20 @@ pub fn identify(answer: &Value, home: &str) -> Identified {
     })
 }
 
+/// The homes an `identify` answer says its gateway serves, as it wrote
+/// them. Whoever knows the machine's root home picks the gateway's anchor
+/// from them (`identity::anchor`); no session is named by that.
+pub fn served_homes(answer: &Value) -> Vec<&str> {
+    let told = match answer.get("result") {
+        Some(result) if result.is_object() => result,
+        _ => answer,
+    };
+    let served = told["served_profiles"].as_array().into_iter().flatten();
+    served
+        .filter_map(|entry| crate::text(&entry["home"]))
+        .collect()
+}
+
 /// A control socket refusal (`{ok: false, error}`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Denied {

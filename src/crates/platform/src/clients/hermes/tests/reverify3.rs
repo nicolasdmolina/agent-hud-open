@@ -106,7 +106,7 @@ fn run(before_ticket: bool) {
         quick(),
     )
     .unwrap();
-    let shared = observer.shared.clone();
+    let shared = observer.local();
     *route.owner.lock().unwrap() = Some(Arc::downgrade(&shared));
     route.installed.notify_all();
     until("opening held after prepare", || {

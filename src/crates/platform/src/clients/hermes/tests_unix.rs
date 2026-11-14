@@ -26,6 +26,10 @@ mod cancelled;
 mod cards;
 #[path = "tests/fake.rs"]
 mod fake;
+#[path = "tests/followers.rs"]
+mod followers;
+#[path = "tests/gateways.rs"]
+mod gateways;
 #[path = "tests/handshake.rs"]
 mod handshake;
 #[path = "tests/live.rs"]
@@ -36,8 +40,14 @@ mod reconnect;
 mod replies;
 #[path = "tests/reverify25.rs"]
 mod reverify25;
+#[path = "tests/reverify26.rs"]
+mod reverify26;
 #[path = "tests/reverify3.rs"]
 mod reverify3;
+#[path = "tests/round3.rs"]
+mod round3;
+#[path = "tests/round4.rs"]
+mod round4;
 #[path = "tests/route.rs"]
 mod route;
 #[path = "tests/script.rs"]
@@ -52,6 +62,8 @@ mod verifier;
 mod verifier2;
 #[path = "tests/verifier25.rs"]
 mod verifier25;
+#[path = "tests/verifier26.rs"]
+mod verifier26;
 #[path = "tests/verifier3.rs"]
 mod verifier3;
 #[path = "tests/verifier4.rs"]
@@ -72,6 +84,10 @@ fn quick() -> Pace {
         // Longer than in the app, so that a test can stop the observer
         // or close a card while a write still waits on the gateway.
         write: Duration::from_secs(3),
+        // No look at the machine by the clock: these tests follow one
+        // gateway and count what is asked of its route. `followers.rs`
+        // turns it on.
+        discover: None,
         trace: false,
     }
 }
@@ -106,13 +122,17 @@ fn lab() -> Lab {
 impl Lab {
     /// Starts following the gateway of the home, as turning hooks on does.
     fn follow(&mut self) {
+        self.follow_at(quick());
+    }
+    /// The same, at `pace`.
+    fn follow_at(&mut self, pace: Pace) {
         let wake = Arc::new(|| {});
         let observer = Observer::start_on(
             self.route.clone(),
             &self.data,
             self.requests.clone(),
             wake,
-            quick(),
+            pace,
         );
         self.observer = Some(observer.unwrap());
     }

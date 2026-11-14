@@ -3,10 +3,11 @@
 use super::ask::Pending;
 use super::connection::{Connection, Denied, Failure};
 use super::frame::Refusal;
-use super::identity::SessionRef;
+use super::identity::{Profile, SessionRef};
 use super::poll::Poll;
 use crate::LiveState;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 /// What a session is doing, as `session.active_list` says it. A session
 /// waiting on a set of questions reports `working`.
@@ -47,6 +48,18 @@ pub enum Input<'a> {
     Dialing,
     /// The control socket answered `identify` for the gateway under `home`.
     Identified { answer: &'a Value, home: &'a str },
+    /// The gateway this model followed is gone: its home answers as another
+    /// instance. Nothing it asked survives; whoever follows the new
+    /// instance starts from nothing (`served.rs`).
+    Restarted,
+    /// These profiles are no longer this gateway's: its own verified answer
+    /// dropped them, or a verified discovery shows another instance serving
+    /// them. Their cards close and their sessions are forgotten.
+    Retired(&'a BTreeSet<Profile>),
+    /// The profiles more than one instance claims just now. No card is
+    /// opened for a session of one of them until this says otherwise; the
+    /// cards that show are kept, and close as Hermes says.
+    Withheld(&'a BTreeSet<Profile>),
     /// The control socket refused the ticket.
     Denied(Denied),
     /// The gateway could not be reached, or the socket closed.
@@ -79,6 +92,9 @@ pub enum Closed {
     /// What Hermes says of the session no longer holds it.
     Gone,
     SessionEnded,
+    /// The session's profile left this gateway while it runs: it serves
+    /// the profile no longer, or another instance does.
+    Retired,
     GatewayRestarted,
     Unsupported,
 }
