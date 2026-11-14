@@ -8,6 +8,7 @@ import {
 } from "../src/machines/machine-label.ts";
 import { whoBesideMachine } from "../src/alerts/row-head-label.ts";
 import { mayDecide, outOfReach } from "../src/permissions/answer-gate.ts";
+import type { RequestDecision } from "@agent-hud/protocol";
 
 const source = (path: string) =>
   readFileSync(new URL(path, import.meta.url), "utf8");
@@ -61,14 +62,15 @@ test("a row without a machine draws exactly what it drew before", () => {
 test("a card out of reach takes no decision but leaving it alone", () => {
   const marked = { unreachable: "Hermes on Studio cannot be reached" };
   assert.equal(outOfReach(marked), marked.unreachable);
-  for (const decision of [
+  const decisions: RequestDecision[] = [
     { kind: "allow" },
     { kind: "deny" },
     { kind: "always" },
     { kind: "answer", answers: { q: { selected: ["A"] } } },
     { kind: "approve_plan", acceptEdits: false },
     { kind: "keep_planning", message: "more" },
-  ] as const)
+  ];
+  for (const decision of decisions)
     assert.equal(mayDecide(marked, decision), false, decision.kind);
   assert.equal(mayDecide(marked, { kind: "leave" }), true);
   for (const reachable of [{}, { unreachable: null }, { unreachable: "" }]) {

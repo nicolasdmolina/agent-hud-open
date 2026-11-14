@@ -21,5 +21,5 @@ export function rowHeadLabel(
 /** "Who" beside a far machine's label: as wide as {@link rowHeadLabel} lets it, but it gives way first, so the
  * machine's label stays readable where the row is narrow; a few letters of it stay. */
 export function whoBesideMachine(style: CSSProperties): CSSProperties {
-  return { ...style, flexShrink: 1000, minWidth: 24 };
+  return { ...style, flexShrink: 1000, minWidth: 44 };
 }

@@ -32,14 +32,15 @@ export function MachineLabel({
         gap: 3,
         flex: "0 1 auto",
         minWidth: 0,
-        maxWidth: "100%",
-        padding: "0 4px",
+        // Never wider than a short name, however few its characters.
+        maxWidth: "min(13em, 100%)",
+        padding: "1px 4px",
         borderRadius: 4,
         boxShadow: `inset 0 0 0 1px ${edge}`,
         color: ink,
         fontSize: size,
         fontWeight: 500,
-        lineHeight: `${size + 5}px`,
+        lineHeight: `${size + 4}px`,
         whiteSpace: "nowrap",
         ...style,
       }}

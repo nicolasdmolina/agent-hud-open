@@ -74,7 +74,8 @@ export function RequestActions({
             display: "flex",
             alignItems: "flex-start",
             gap: 5,
-            color: errorColor,
+            // The ASK badge's warning ink, readable on a light card too.
+            color: alertText("warning", ground),
             fontSize: 11,
             fontWeight: 500,
             lineHeight: 1.4,

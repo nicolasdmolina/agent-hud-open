@@ -162,27 +162,27 @@ export function SessionRow({
         <strong style={{ ...clipped, fontSize: 13, fontWeight: 600 }}>
           {session.title || (zh ? "未命名会话" : "Untitled session")}
         </strong>
+        <span style={{ ...line, ...clipped }}>
+          {sessionWhere(session, client).join(" · ")}
+        </span>
         {session.machine ? (
-          // Where it runs, its own tag: the line before it gives way first.
+          // Where it runs, its own tag beside how long ago: the time line
+          // has the room, and the line above stays as it is.
           <span style={{ ...line, ...row, gap: 6 }}>
-            <span style={{ ...clipped, flex: "0 1000 auto", minWidth: 32 }}>
-              {sessionWhere(session, client).join(" · ")}
+            <span style={{ ...clipped, flexShrink: 0 }}>
+              {statusLine(session, now, zh)}
             </span>
             <MachineLabel
               label={session.machine}
               ink={theme.secondary}
               edge={theme.divider}
-              style={{ maxWidth: "70%" }}
             />
           </span>
         ) : (
           <span style={{ ...line, ...clipped }}>
-            {sessionWhere(session, client).join(" · ")}
+            {statusLine(session, now, zh)}
           </span>
         )}
-        <span style={{ ...line, ...clipped }}>
-          {statusLine(session, now, zh)}
-        </span>
       </span>
       <span style={{ minWidth: 0 }}>
         {bars && bars.length > 0 ? (
