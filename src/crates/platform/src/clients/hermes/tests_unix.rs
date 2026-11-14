@@ -26,6 +26,14 @@ mod cancelled;
 mod cards;
 #[path = "tests/fake.rs"]
 mod fake;
+#[path = "tests/far.rs"]
+mod far;
+#[path = "tests/far_long.rs"]
+mod far_long;
+#[path = "tests/far_mini.rs"]
+mod far_mini;
+#[path = "tests/far_timing.rs"]
+mod far_timing;
 #[path = "tests/followers.rs"]
 mod followers;
 #[path = "tests/gateways.rs"]

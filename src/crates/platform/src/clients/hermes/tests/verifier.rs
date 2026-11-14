@@ -235,6 +235,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         }),
         stopping: (Mutex::new(()), Condvar::new()),
         reader: "local".into(),
+        label: None,
         asked: Mutex::new(Profile::Default),
         born: Mutex::default(),
         found: Mutex::default(),

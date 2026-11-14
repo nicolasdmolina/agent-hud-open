@@ -14,6 +14,7 @@ mod decisions;
 mod fake;
 mod far;
 mod handshake;
+mod installs;
 mod live;
 mod machines;
 mod reach;

@@ -147,6 +147,11 @@ impl<'a> Visit<'a> {
         wait: Duration,
         still: &dyn Fn() -> bool,
     ) -> Option<(Self, Value)> {
+        // A test that only reads a real machine begins no visit at all.
+        #[cfg(test)]
+        if super::tap::reads_only() {
+            return None;
+        }
         let turned = |why: String| -> Option<(Self, Value)> {
             let line = format!("visit failed session={} why={why}", session.hud_id());
             shared.log.line(&line);

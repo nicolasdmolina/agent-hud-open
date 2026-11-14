@@ -31,7 +31,7 @@ mod ticket;
 
 pub use ask::{Approval, Ask, Batch, BatchQuestion, Choice, Locked, Pending, Prompt, Question};
 pub use card::out_of_reach;
-pub use command::{active_list, detach, events_since, resume, Command};
+pub use command::{active_list, detach, events_since, profiles_list, resume, Command};
 pub use connection::{
     identify, refused, served_homes, Connection, Denied, Failure, Identified, Instance, Served,
     Unsupported, SESSION_AUTHORITY,
@@ -42,7 +42,9 @@ pub use frame::{answered, event, frame, hints, refusal, Answered, Cursor, Event,
 pub use identity::{
     anchor, hud_session_id, stored_session_id, GatewayId, Profile, ProfileName, SessionRef,
 };
-pub use machine::{identities_agree, machine_key, Machine, MachineKey, NoKey, StoredKey};
+pub use machine::{
+    identities_agree, machine_key, reported_install, Machine, MachineKey, NoKey, StoredKey,
+};
 pub use poll::{Poll, Step};
 pub use state::{Gateway, BUSY_POLL_MS, IDLE_POLL_MS, SNAPSHOT_EVERY_MS};
 pub use ticket::{

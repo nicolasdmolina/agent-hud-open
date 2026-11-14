@@ -32,6 +32,21 @@ pub static GATEWAY: Channel = Channel {
     },
 };
 
+/// The way to the gateways of a far machine, over SSH: the system's `ssh`
+/// as a master Agent HUD owns, a relay that asks each far control socket
+/// as the login user, and a forwarded port for each gateway's WebSocket
+/// (`platform/src/clients/hermes/route/ssh.rs`). Verified on macOS
+/// against an `sshd` on loopback, with this Mac as the far side too; the
+/// same code never ran on Linux, and Windows' OpenSSH has no control
+/// sockets to carry it.
+pub static FAR_ROUTE: PerOs<()> = PerOs {
+    macos: Support::Verified(()),
+    windows: Support::Unsupported(
+        "a far Hermes is reached over an SSH master, which Windows' OpenSSH does not have",
+    ),
+    linux: Support::Unverified(()),
+};
+
 static SOURCES: [Source; 1] = [Source {
     reads_as: "hermes",
     location: Location::home(&["HERMES_HOME"], &[".hermes"], ""),
