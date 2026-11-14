@@ -122,11 +122,17 @@ fn one_gateway_for_each_of_two_profiles_has_two_followers_and_no_call_names_the_
     until("a card from each gateway shows", || lab.shown() == both);
     assert_eq!(lab.readers(), ["local", "local/reports"]);
     // Each session is told to core by the follower of its own gateway.
-    let states = lab.requests.native_states();
+    // A card is registered a moment before its follower's reading is
+    // told, so the reading is waited for.
     let read = |reader: &str| {
-        let reading = states.of("hermes", reader).unwrap();
-        reading.sessions.keys().cloned().collect::<Vec<_>>()
+        let states = lab.requests.native_states();
+        let reading = states.of("hermes", reader);
+        let sessions = reading.map(|reading| reading.sessions.keys().cloned().collect());
+        sessions.unwrap_or_else(Vec::new)
     };
+    until("each follower told its session", || {
+        !read("local").is_empty() && !read("local/reports").is_empty()
+    });
     assert_eq!(read("local"), ["hermes:s-default"]);
     assert_eq!(read("local/reports"), ["hermes:reports:s-reports"]);
     lab.looks(3);
