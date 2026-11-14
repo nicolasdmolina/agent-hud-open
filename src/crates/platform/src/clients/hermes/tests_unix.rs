@@ -34,6 +34,8 @@ mod gateways;
 mod handshake;
 #[path = "tests/live.rs"]
 mod live;
+#[path = "tests/receipts.rs"]
+mod receipts;
 #[path = "tests/reconnect.rs"]
 mod reconnect;
 #[path = "tests/replies.rs"]
@@ -44,6 +46,18 @@ mod reverify25;
 mod reverify26;
 #[path = "tests/reverify3.rs"]
 mod reverify3;
+#[path = "tests/reviewer27.rs"]
+mod reviewer27;
+#[path = "tests/reviewer27_extra.rs"]
+mod reviewer27_extra;
+#[path = "tests/reviewer27_round3.rs"]
+mod reviewer27_round3;
+#[path = "tests/reviewer27_round4.rs"]
+mod reviewer27_round4;
+#[path = "tests/reviewer27_round5.rs"]
+mod reviewer27_round5;
+#[path = "tests/reviewer27_round6.rs"]
+mod reviewer27_round6;
 #[path = "tests/round3.rs"]
 mod round3;
 #[path = "tests/round4.rs"]
@@ -56,6 +70,10 @@ mod script;
 mod stalled;
 #[path = "tests/states.rs"]
 mod states;
+#[path = "tests/unreachable.rs"]
+mod unreachable;
+#[path = "tests/unreachable_late.rs"]
+mod unreachable_late;
 #[path = "tests/verifier.rs"]
 mod verifier;
 #[path = "tests/verifier2.rs"]
@@ -189,6 +207,30 @@ fn ask(home: &Path, line: &Value, wait: Duration) -> Result<Value, Silent> {
     let route = Local::at(home);
     let home = route.homes()?.remove(0);
     control::ask(&route, &home, line, wait)
+}
+
+/// The one receipt of an answer that never got out because its request
+/// was over first: it failed, and nothing confirmed it (ticket 27, the
+/// fourth review). Before that such an answer had no receipt at all.
+fn failed_once(lab: &Lab, id: &str) {
+    let rows = lab.requests.deliveries(crate::hooks::now_ms());
+    let of: Vec<&Value> = rows.iter().filter(|row| row["id"] == id).collect();
+    assert_eq!(of.len(), 1, "{rows:?}");
+    assert_eq!(of[0]["state"], "failed", "{rows:?}");
+    assert!(of[0]["reason"].as_str().is_some_and(|why| !why.is_empty()));
+}
+
+/// Whether a card says its gateway cannot be reached (ticket 27).
+fn marked(card: &Value) -> bool {
+    card["unreachable"]
+        .as_str()
+        .is_some_and(|why| !why.is_empty())
+}
+
+/// The card without its mark: a marked card is the same card but for that.
+fn plain(mut card: Value) -> Value {
+    card.as_object_mut().unwrap().remove("unreachable");
+    card
 }
 
 /// Waits for `met`, which takes hundredths of a second; the limit is for a

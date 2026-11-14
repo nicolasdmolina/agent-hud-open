@@ -228,6 +228,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
             waiters: HashMap::new(),
             opened: HashMap::new(),
             answered: HashMap::new(),
+            taken: HashMap::new(),
             visits: HashMap::new(),
             visited: 0,
             stopped: false,
@@ -241,6 +242,8 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         awaits: std::sync::atomic::AtomicU64::new(0),
         look: Arc::default(),
         ends: Arc::default(),
+        shows: Default::default(),
+        deaf: AtomicBool::new(false),
     };
     let (visit, _) = Visit::begin(&shared, &instance, &session, Duration::from_secs(2)).unwrap();
     visit.end();

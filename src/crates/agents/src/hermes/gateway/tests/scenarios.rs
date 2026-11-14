@@ -254,6 +254,7 @@ pub const SCENARIOS: &[(&str, &[&str])] = &[
             "live sessions: 1 (0 working, 1 waiting)",
             "-- socket closed 1006",
             "connection Failed(Closed(1006))",
+            "out of reach d4dcbc0f",
             "-- identify: ConnectionRefusedError",
             "connection Failed(Unreachable)",
             "-- identify: starting",

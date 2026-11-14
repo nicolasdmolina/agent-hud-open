@@ -55,6 +55,10 @@ fn expected() -> Vec<String> {
         |instance: &str| format!("connection ready instance={instance} profiles=2 draining=false");
     let lost = "connection failed reason=Closed(1006)".to_owned();
     let connecting = "connection connecting".to_owned();
+    // A card whose gateway is out of reach says so, and says it no more
+    // once a poll finds the request waiting again (ticket 27).
+    let unreachable = |of| format!("unreachable id={}", id(of));
+    let reached = |of| format!("reached id={}", id(of));
     vec![
         connecting.clone(),
         "connection failed reason=Unreachable".to_owned(),
@@ -67,11 +71,14 @@ fn expected() -> Vec<String> {
         close(ONCE, "Answered"),
         open(HERE, "question"),
         lost.clone(),
+        unreachable(HERE),
         connecting.clone(),
         ready("aaaaaaaa"),
+        reached(HERE),
         close(HERE, "Settled"),
         open(RESTART, "approval"),
         lost.clone(),
+        unreachable(RESTART),
         connecting.clone(),
         close(RESTART, "GatewayRestarted"),
         ready("bbbbbbbb"),
@@ -165,6 +172,8 @@ fn a_scripted_run_leaves_the_same_log_line_for_line() {
     lab.card();
     cut(&gateway);
     said(&lab, "connection ready", 2);
+    // The first poll on the new socket finds the question still waiting.
+    said(&lab, "reached id=", 1);
     assert_eq!(lab.cards().len(), 1);
     gateway.play("question-answered-here", Some("clarify.settled"));
     until("the second question's card goes", || lab.cards().is_empty());

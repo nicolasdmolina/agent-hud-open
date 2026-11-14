@@ -77,6 +77,13 @@ impl Model {
 impl Shared {
     /// Whether any visit is writing right now, for tests of a write that
     /// the gateway does not take.
+    /// How many visits are writing right now (the second review of
+    /// ticket 27).
+    pub(super) fn reviewer27_writing_count(&self) -> usize {
+        let model = self.model();
+        model.visits.values().filter(|held| held.writing).count()
+    }
+
     pub(super) fn writing(&self) -> bool {
         self.model().visits.values().any(|held| held.writing)
     }
@@ -212,26 +219,26 @@ impl<'a> Visit<'a> {
         &mut self,
         write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
     ) -> Option<T> {
-        self.write_marked(|_| {}, write)
+        self.write_marked(|_| true, write)
     }
 
     /// The same, with `marked` run under the lock in the very step that
     /// marks the visit as writing: what the model has to know of the write
-    /// before anything can end what it is for.
+    /// before anything can end what it is for. It may still say no, and
+    /// then nothing is written.
     pub(super) fn write_marked<T>(
         &mut self,
-        marked: impl FnOnce(&mut Model),
+        marked: impl FnOnce(&mut Model) -> bool,
         write: impl FnOnce(&mut Socket) -> Result<T, Failure>,
     ) -> Option<T> {
         {
             let mut model = self.shared.model();
-            if !self.wanted(&model) {
+            if !self.wanted(&model) || !marked(&mut model) {
                 return None;
             }
             if let Some(held) = model.visits.get_mut(&self.key) {
                 held.writing = true;
             }
-            marked(&mut model);
         }
         let done = write(&mut self.socket);
         if let Some(held) = self.shared.model().visits.get_mut(&self.key) {

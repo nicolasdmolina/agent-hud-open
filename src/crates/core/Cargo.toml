@@ -9,6 +9,11 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Places where another crate's tests may hold core between two of its steps,
+# or read what it was told: `requests::probes`. Off in every build of the app.
+probes = []
+
 [dependencies]
 agent-hud-agents.workspace = true
 agent-hud-l10n.workspace = true

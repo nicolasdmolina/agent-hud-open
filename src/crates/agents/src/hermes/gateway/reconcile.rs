@@ -74,8 +74,13 @@ impl Gateway {
                     wait_ms,
                 };
                 effects.push(Effect::Open(pending.clone()));
-                let sent_ms = None;
-                self.cards.insert(key, Card { pending, sent_ms });
+                let (sent_ms, marked) = (None, false);
+                let card = Card {
+                    pending,
+                    sent_ms,
+                    marked,
+                };
+                self.cards.insert(key, card);
             }
         }
     }
@@ -114,6 +119,8 @@ impl Gateway {
             card.pending.wait_ms = *wait_ms;
             effects.push(Effect::Changed(card.pending.clone()));
         }
+        // Read whole, and the request waits: it can be answered again.
+        card.in_reach(effects);
         let dropped = matches!(card.pending.ask, Ask::Batch(_))
             && card
                 .sent_ms

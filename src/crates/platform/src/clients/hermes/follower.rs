@@ -10,16 +10,17 @@
 //! reach. Ending is one step, taken once: what it was writing is cut,
 //! its cards are closed or withdrawn, and core is told its reader has
 //! ended, before any follower that takes its place is made.
-use super::{log, out, route::Route, signal::Signal, visit, Pace};
+use super::{log, route::Route, signal::Signal, Model, Pace};
 use crate::hooks::Wake;
+#[cfg(test)]
+use agent_hud_agents::hermes::gateway::Instance;
 use agent_hud_agents::hermes::{
-    gateway::{Connection, Gateway, GatewayId, Input, Instance, Profile},
+    gateway::{Input, Profile},
     AGENT,
 };
-use agent_hud_core::requests::{Requests, Ticket as Waiter};
+use agent_hud_core::requests::Requests;
 use serde_json::Value;
 use std::{
-    collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex, MutexGuard, PoisonError,
@@ -71,51 +72,14 @@ pub(super) struct Shared {
     /// Every reader that was ended in core, for the tests that count them.
     #[cfg(test)]
     pub(super) ends: Arc<Mutex<Vec<String>>>,
-}
-
-/// The gateway as the model knows it, and what core holds for its cards.
-/// Locked only to change it, never across a wait on the network.
-pub(super) struct Model {
-    pub(super) gateway: Gateway,
-    /// Where the answer to each card arrives from core.
-    pub(super) waiters: HashMap<String, Waiter>,
-    /// When each card first opened, which its view keeps.
-    pub(super) opened: HashMap<String, i64>,
-    /// The answers given here that are out, or on their way out, and whose
-    /// receipt is still to give (`answer.rs`).
-    pub(super) answered: HashMap<String, out::Out>,
-    /// Every short socket that is open now (`visit.rs`), so that stopping,
-    /// or closing a card, can cut the ones that are writing.
-    pub(super) visits: HashMap<u64, visit::Held>,
-    /// Counts the visits begun, which numbers them.
-    pub(super) visited: u64,
-    pub(super) stopped: bool,
-}
-
-impl Model {
-    pub(super) fn new(id: GatewayId) -> Self {
-        Self {
-            gateway: Gateway::new(id),
-            waiters: HashMap::new(),
-            opened: HashMap::new(),
-            answered: HashMap::new(),
-            visits: HashMap::new(),
-            visited: 0,
-            stopped: false,
-        }
-    }
-
-    /// Whether an answer to `request` may still go to `instance`: the
-    /// follower has not ended, the request still has its card, and the
-    /// gateway that is ready is still the instance that asked. Anything
-    /// else and the answer is for nobody.
-    pub(super) fn current(&self, request: &str, instance: &Instance) -> bool {
-        let same = matches!(
-            self.gateway.connection(),
-            Connection::Ready(ready) if ready.id == instance.id
-        );
-        !self.stopped && same && self.gateway.pending(request).is_some()
-    }
+    /// How often a card was registered with core, for the tests of a
+    /// card that must come back without being registered again.
+    #[cfg(test)]
+    pub(super) shows: std::sync::atomic::AtomicUsize,
+    /// Keeps the answers' thread from taking decisions from core, for the
+    /// tests of a decision that waits there while its card is marked.
+    #[cfg(test)]
+    pub(super) deaf: AtomicBool,
 }
 
 /// Why a follower ends.
@@ -143,6 +107,18 @@ impl Shared {
         self.model.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Whether the follower is ending, or has ended. Ending says so first
+    /// (`active`) and takes the model after, to end there (`stopped`). A
+    /// thread that has the model in between has seen the end, and what it
+    /// brings is not news: a poll that was dropped is no lost socket, and
+    /// an answer that found its way shut is not one that failed. So
+    /// everything a thread does to the cards asks this first, with the
+    /// model in hand: taking an input, giving a request back, noting a
+    /// receipt. Turning client hooks off leaves no receipt.
+    pub(super) fn ending(&self, model: &Model) -> bool {
+        model.stopped || !self.active()
+    }
+
     /// The profile whose home is asked.
     pub(super) fn asked(&self) -> Profile {
         let asked = self.asked.lock().unwrap_or_else(PoisonError::into_inner);
@@ -154,7 +130,7 @@ impl Shared {
     /// back to a model that no longer takes anything.
     pub(super) fn apply(&self, input: Input<'_>) {
         let mut model = self.model();
-        if model.stopped {
+        if self.ending(&model) {
             return;
         }
         self.take(&mut model, input);
@@ -163,27 +139,26 @@ impl Shared {
     /// The model, already locked, takes what happened. What it says is
     /// done, and core is told what the sessions are doing whether or not
     /// anything changed: every input goes through here.
+    ///
+    /// Nothing is taken once the follower is ending: whichever thread
+    /// brings it has the model in hand before the end does, and the end
+    /// decides what becomes of the cards, not what a thread found a
+    /// moment before it.
     pub(super) fn take(&self, model: &mut Model, input: Input<'_>) {
+        if self.ending(model) {
+            return;
+        }
         let now = crate::hooks::now_ms();
         let effects = model.gateway.apply(input, now);
         self.carry(model, effects, now);
         self.tell(&model.gateway, now);
     }
 
-    /// The instance to answer `request` on: the one that is ready, while
-    /// the follower runs and the request still has its card. A gateway
-    /// that restarted since the card was answered closed the card, and
-    /// its new instance never asked.
+    /// The instance to answer `request` on, as it is now, for the tests
+    /// that ask from outside an answer (`Model::instance_of`).
+    #[cfg(test)]
     pub(super) fn instance_of(&self, request: &str) -> Option<Instance> {
-        let model = self.model();
-        if model.stopped {
-            return None;
-        }
-        model.gateway.pending(request)?;
-        match model.gateway.connection() {
-            Connection::Ready(instance) => Some(instance.clone()),
-            _ => None,
-        }
+        self.model().instance_of(request)
     }
 
     /// Whether an answer to `request` may still go to `instance`, for the
@@ -268,6 +243,7 @@ impl Shared {
                 model.answered.clear();
             }
         }
+        model.taken.clear();
         model.waiters.clear();
         model.opened.clear();
         drop(model);

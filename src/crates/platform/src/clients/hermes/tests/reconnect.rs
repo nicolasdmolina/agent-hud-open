@@ -57,8 +57,12 @@ fn a_socket_that_drops_keeps_the_card_and_the_connection_comes_back() {
         let lists = gateway.world().calls("session.active_list");
         lists.iter().any(|(socket, _)| *socket == 2)
     });
-    // The same instance: the request still waits, under the same card.
-    assert_eq!(lab.cards(), [card]);
+    // The same instance: the request still waits, under the same card. It
+    // said its gateway was out of reach while the socket was down, and is
+    // as it was once a poll on the new socket has found the request
+    // waiting (ticket 27).
+    assert_eq!(lab.cards().len(), 1);
+    until("the card is as it was", || lab.cards() == [card.clone()]);
     assert!(!lab.log().contains("close id="), "{}", lab.log());
 
     gateway.play("question-answered-elsewhere", Some("clarify.settled"));

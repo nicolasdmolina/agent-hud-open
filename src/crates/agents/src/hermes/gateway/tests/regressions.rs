@@ -306,8 +306,11 @@ fn same_instance_reconnect_preserves_card_and_deadline() {
     assert_eq!(identified(&mut g, "instance-1").len(), 1);
     assert_eq!(names(&g), ["kept"]);
     assert_eq!(g.waiting().next().unwrap().wait_ms, Some(20_000));
-    // Read again after the reconnect, it is the same card: nothing is said.
-    assert_eq!(poll(&mut g, &mut h, 200), []);
+    // Read again after the reconnect, it is the same card: nothing is said
+    // of it but that it can be answered again (ticket 27).
+    let kept = g.waiting().next().unwrap().clone();
+    assert_eq!(poll(&mut g, &mut h, 200), [Effect::Unmarked(kept)]);
+    assert_eq!(poll(&mut g, &mut h, 300), []);
 }
 
 #[test]

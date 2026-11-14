@@ -63,6 +63,23 @@ impl Pending {
         }
         view
     }
+
+    /// The same card while its gateway cannot be reached (`reach.rs`):
+    /// it says so in `unreachable`, which a card that can be answered
+    /// does not have at all, and takes no answer while it does.
+    pub fn view_out_of_reach(&self, now_ms: i64, machine: Option<&str>) -> Value {
+        let mut view = self.view(now_ms, machine);
+        view["unreachable"] = json!(out_of_reach());
+        view
+    }
+}
+
+/// Why a card takes no answer while its gateway cannot be reached.
+pub fn out_of_reach() -> String {
+    l10n::text(
+        "暂时连不上 Hermes，恢复后才能回答",
+        "Hermes cannot be reached right now. This can be answered once it is back.",
+    )
 }
 
 /// The label the sessions of `profile` go by (`Hermes Agent · <profile>`).

@@ -12,9 +12,10 @@
 //! core with it, before the lock is let go and so before any follower
 //! that takes its place is made.
 use super::{
-    answer, discovery,
-    follower::{End, Model, Shared},
+    decisions, discovery,
+    follower::{End, Shared},
     link, log,
+    model::Model,
     route::Route,
     signal::Signal,
     Pace,
@@ -180,6 +181,10 @@ impl Followers {
             look: self.look.clone(),
             #[cfg(test)]
             ends: self.ends.clone(),
+            #[cfg(test)]
+            shows: Default::default(),
+            #[cfg(test)]
+            deaf: AtomicBool::new(false),
         });
         let owned = shared.clone();
         thread::Builder::new()
@@ -189,7 +194,7 @@ impl Followers {
         let owned = shared.clone();
         if thread::Builder::new()
             .name("Hermes answers".into())
-            .spawn(move || answer::watch(owned))
+            .spawn(move || decisions::watch(owned))
             .is_err()
         {
             shared.end(End::Off);

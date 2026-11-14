@@ -19,6 +19,8 @@ impl Requests {
         if !matches!(delivery, "confirmed" | "failed" | "uncertain") {
             return;
         }
+        #[cfg(feature = "probes")]
+        self.0.probes.noted(id, delivery);
         let at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(now_ms)
             .map(|date| date.to_rfc3339());
         {

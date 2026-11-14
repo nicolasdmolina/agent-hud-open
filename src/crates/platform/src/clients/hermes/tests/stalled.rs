@@ -79,10 +79,12 @@ fn a_card_that_closes_cuts_the_answer_being_written_to_it() {
         gateway.world().visit_over()
     });
     assert!(gateway.world().calls("clarify.respond").is_empty());
-    // The request is over: nothing comes back, and nothing is said of it.
+    // The request is over: nothing comes back. The answer has its one
+    // receipt, which says it failed (ticket 27, the fourth review; before
+    // that nothing was said of it).
     std::thread::sleep(Duration::from_millis(100));
     assert!(lab.cards().is_empty());
-    assert!(lab.requests.deliveries(crate::hooks::now_ms()).is_empty());
+    super::failed_once(&lab, &id);
     assert!(!lab.log().contains("answer sent"), "{}", lab.log());
     assert!(shared.model().gateway.pending(&id).is_none());
 }

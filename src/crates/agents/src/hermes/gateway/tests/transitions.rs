@@ -291,18 +291,34 @@ fn a_restart_closes_every_card_and_a_dropped_socket_closes_none() {
     // may be lost, so its card is shown again.
     let effects = g.apply(Input::Lost(Failure::Closed(1006)), 5);
     let pending = g.pending(&request).unwrap().clone();
+    // Both cards stay, marked as out of reach (ticket 27).
+    let both: Vec<Pending> = g.waiting().cloned().collect();
     assert_eq!(
         effects,
         [
-            Effect::Unanswered { pending, why: None },
+            Effect::Unanswered {
+                pending: pending.clone(),
+                why: None
+            },
             Effect::Connection(Connection::Failed(Failure::Closed(1006))),
+            Effect::Marked(both[0].clone()),
+            Effect::Marked(both[1].clone()),
         ]
     );
+    assert_eq!(both[0], pending);
     assert_eq!(names(&g), ["p1", "srq-1"]);
 
-    // The same instance again: nothing was lost.
+    // The same instance again: nothing was lost, and the poll that finds
+    // both still waiting takes their marks away.
     assert!(closed(&identified(&mut g, "one")).is_empty());
-    assert_eq!(poll(&mut g, &mut h, 6), []);
+    assert_eq!(
+        poll(&mut g, &mut h, 6),
+        [
+            Effect::Unmarked(both[0].clone()),
+            Effect::Unmarked(both[1].clone())
+        ]
+    );
+    assert_eq!(poll(&mut g, &mut h, 7), []);
     assert_eq!(names(&g).len(), 2);
 
     // Another instance is a restart, even on the same port.

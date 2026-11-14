@@ -1,14 +1,18 @@
 //! Doing what the model says: each effect becomes a call on core's
 //! requests. A card opens once under its request id, changes in place, and
-//! is withdrawn when Hermes says the request is over. What the sessions
-//! are doing is told to core in one place, `tell`, after everything the
-//! model takes in, under the follower's own reader name.
+//! is withdrawn when Hermes says the request is over. It is never
+//! withdrawn for being out of reach: it is marked in place, and a card
+//! core put away for an answer that did not land is given back as it was
+//! (`back`), never registered anew. What the sessions are doing is told to
+//! core in one place, `tell`, after everything the model takes in, under
+//! the follower's own reader name.
 use super::{answer::NO_REPLY, Model, Shared};
 use agent_hud_agents::hermes::{
-    gateway::{Ask, Closed, Connection, Effect, Gateway, Pending, Refusal},
+    gateway::{Ask, Closed, Connection, Effect, Gateway, Input, Pending, Refusal},
     AGENT,
 };
 use agent_hud_core::l10n;
+use serde_json::Value;
 
 /// The machine label on the cards made here: none, since every gateway
 /// this channel follows runs on this machine.
@@ -36,34 +40,46 @@ impl Shared {
                 Effect::Changed(pending) => {
                     let id = pending.id();
                     self.log.line(&format!("change id={id}"));
-                    let opened = model.opened.get(&id).copied().unwrap_or(now);
-                    let view = pending.view(opened, MACHINE);
+                    let view = self.view(model, &pending, now);
+                    self.requests.refresh_native(&id, view);
+                }
+                // Out of reach, or found waiting again: the same request,
+                // changed in place. Its time, its hold and whether it
+                // was dismissed are core's, and are not touched.
+                Effect::Marked(pending) => self.lost(model, &pending, now),
+                Effect::Unmarked(pending) => {
+                    let id = pending.id();
+                    self.log.line(&format!("reached id={id}"));
+                    let view = self.view(model, &pending, now);
                     self.requests.refresh_native(&id, view);
                 }
                 Effect::Close { id, session, why } => {
                     self.log.line(&format!("close id={id} why={why:?}"));
-                    model.waiters.remove(&id);
+                    let waiter = model.waiters.remove(&id);
                     model.opened.remove(&id);
                     // An answer to it that is being written is cut.
                     model.cut_writing(|request| request == Some(id.as_str()));
-                    self.requests.settle_native(&id);
-                    self.closed(model, &id, &session.hud_id(), &why, now);
+                    // Core ends the request and says, from what it took
+                    // under its own lock, whether a decision is on record
+                    // for it. One that never reached this follower ends
+                    // with the card as one that is out, and what waits in
+                    // the channel is not looked at: core hands over
+                    // nothing it has taken back here.
+                    let taken = self.requests.close_native(&id);
+                    let out = model.taken.remove(&id).or(taken);
+                    #[cfg(test)]
+                    super::answer::at_close(self, &id);
+                    drop(waiter);
+                    self.closed(model, &id, &session.hud_id(), &why, out, now);
                 }
                 Effect::Unanswered { pending, why } => {
                     let id = pending.id();
                     self.log.line(&format!("unanswered id={id} why={why:?}"));
                     model.answered.remove(&id);
                     // Core put the card away when it was answered; this
-                    // brings it back, since the request still waits.
-                    self.requests.settle_native(&id);
-                    self.show(model, &pending, now);
-                    let (state, reason) = match &why {
-                        Some(Refusal::Other(word)) if word == NO_REPLY => {
-                            ("uncertain", unconfirmed())
-                        }
-                        Some(refusal) => ("failed", refused(refusal)),
-                        None => ("uncertain", unconfirmed()),
-                    };
+                    // gives it back as it was, since the request still waits.
+                    self.back(model, &pending, now);
+                    let (state, reason) = unlanded(why.as_ref());
                     self.note(&id, &pending.session.hud_id(), state, Some(reason), now);
                 }
                 Effect::Poll => self.want_poll(),
@@ -72,31 +88,76 @@ impl Shared {
         (self.wake)();
     }
 
-    /// An answer that could not be sent at all: its card comes back, saying
-    /// why, for as long as Hermes still waits on it.
-    pub(super) fn undelivered(&self, pending: &Pending, reason: String) {
+    /// An answer that could not be sent at all (the decision taken in
+    /// `wait`): nothing of it was written. Its card comes back as it was,
+    /// marked, for as long as Hermes still waits on it, and the answer has
+    /// one receipt that says it failed. Nothing comes back where the
+    /// request is over meanwhile, the follower ended, or the answer is
+    /// not the one that is out now.
+    pub(super) fn undelivered(&self, pending: &Pending, wait: u64, reason: String) {
         let mut model = self.model();
         let id = pending.id();
-        if model.stopped || model.gateway.pending(&id).is_none() {
+        let out = model.taken.get(&id) == Some(&wait);
+        if self.ending(&model) || model.gateway.pending(&id).is_none() || !out {
             return;
         }
         let now = crate::hooks::now_ms();
-        self.log.line(&format!("undelivered id={id}"));
-        self.requests.settle_native(&id);
-        self.show(&mut model, pending, now);
-        self.note(&id, &pending.session.hud_id(), "failed", Some(reason), now);
-        self.tell(&model.gateway, now);
+        // The gateway took no answer just now: the model marks the card
+        // until a poll finds the request waiting again, and the mark
+        // gives the request back (`out.rs`, `lost`). A card that was
+        // marked already is given back here.
+        self.take(&mut model, Input::Unsent { request: &id });
+        // One receipt for one decision: where the mark gave the request
+        // back, it also said that the answer was not delivered.
+        if model.taken.contains_key(&id) {
+            self.log.line(&format!("undelivered id={id}"));
+            self.back(&mut model, pending, now);
+            self.note(&id, &pending.session.hud_id(), "failed", Some(reason), now);
+        }
         (self.wake)();
+    }
+
+    /// The card as it shows now: marked while its gateway is out of reach.
+    pub(super) fn view(&self, model: &Model, pending: &Pending, now: i64) -> Value {
+        let id = pending.id();
+        let opened = model.opened.get(&id).copied().unwrap_or(now);
+        if model.gateway.marked(&id) {
+            pending.view_out_of_reach(opened, MACHINE)
+        } else {
+            pending.view(opened, MACHINE)
+        }
     }
 
     /// Registers the card with core and keeps where its answer will arrive.
     /// Core refuses one it already holds, which changes nothing.
     fn show(&self, model: &mut Model, pending: &Pending, now: i64) {
         let id = pending.id();
-        let opened = *model.opened.entry(id.clone()).or_insert(now);
-        let view = pending.view(opened, MACHINE);
+        model.opened.entry(id.clone()).or_insert(now);
+        let view = self.view(model, pending, now);
+        #[cfg(test)]
+        (self.shows).fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         if let Some(waiter) = self.requests.register_native(id.clone(), view, now) {
             model.waiters.insert(id, waiter);
+        }
+    }
+
+    /// Gives core back a card it put away for an answer that did not land:
+    /// the same request, with the time it came and the hold that runs from
+    /// it, and not dismissed (`Requests::put_back`). It is not registered
+    /// again, which would start its hold anew. Nothing comes back where
+    /// the request came to its end for core meanwhile (its hold ran out),
+    /// or where the answer that is out is no longer this one.
+    pub(super) fn back(&self, model: &mut Model, pending: &Pending, now: i64) {
+        let id = pending.id();
+        let Some(wait) = model.taken.remove(&id) else {
+            return;
+        };
+        let view = self.view(model, pending, now);
+        match self.requests.put_back(&id, wait, view, now) {
+            Some(waiter) => {
+                model.waiters.insert(id, waiter);
+            }
+            None => self.log.line(&format!("over id={id}")),
         }
     }
 
@@ -113,6 +174,10 @@ impl Shared {
             Closed::Gone | Closed::Settled | Closed::Withdrawn(_) if batch => {
                 self.note(id, session, "confirmed", None, now)
             }
+            // The set went another way after its answer was written (its
+            // turn ended, its gateway restarted): whether Hermes took the
+            // answer first, nothing says.
+            _ if batch => self.note(id, session, "uncertain", Some(unconfirmed()), now),
             _ => {}
         }
     }
@@ -178,6 +243,18 @@ fn said(connection: &Connection) -> String {
     }
 }
 
+/// What became of an answer that was written and did not land: failed
+/// where Hermes refused it, uncertain where it said nothing (`why` is
+/// None, or the word for no reply). The same for a card that still shows
+/// and for one a poll closed before the reply came.
+pub(super) fn unlanded(why: Option<&Refusal>) -> (&'static str, String) {
+    match why {
+        Some(Refusal::Other(word)) if word == NO_REPLY => ("uncertain", unconfirmed()),
+        Some(refusal) => ("failed", refused(refusal)),
+        None => ("uncertain", unconfirmed()),
+    }
+}
+
 fn refused(refusal: &Refusal) -> String {
     match refusal {
         Refusal::InvalidParams => l10n::text(
@@ -195,7 +272,7 @@ fn refused(refusal: &Refusal) -> String {
     }
 }
 
-fn unconfirmed() -> String {
+pub(super) fn unconfirmed() -> String {
     l10n::text(
         "Hermes 没有确认收到这个回答",
         "Hermes did not confirm receipt of the answer.",

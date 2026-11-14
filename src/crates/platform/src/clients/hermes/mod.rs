@@ -24,6 +24,7 @@ mod answer;
 mod asking;
 mod control;
 mod cost;
+mod decisions;
 mod discovery;
 mod effects;
 pub mod far;
@@ -32,6 +33,7 @@ mod follower;
 mod followers;
 mod link;
 mod log;
+mod model;
 mod opening;
 mod out;
 mod pace;
@@ -43,7 +45,8 @@ mod socket;
 mod visit;
 mod wire;
 
-use follower::{Model, Shared};
+use follower::Shared;
+use model::Model;
 pub(crate) use pace::Pace;
 pub(crate) use route::Route;
 

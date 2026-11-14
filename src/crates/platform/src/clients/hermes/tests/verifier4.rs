@@ -16,6 +16,14 @@
 //! found that the moved pause no longer tells a handler with two holds
 //! from one with one; `replies.rs` checks that at the place itself. Only
 //! pretend gateways and temporary homes.
+//!
+//! Two assertions changed with ticket 27's fourth review, which gives
+//! every answer core took one receipt. The two probes of an answer cut by
+//! its card closing (before its first byte, and partly written) ended
+//! with "no receipt at all". They end with exactly one, which says the
+//! answer failed (`failed_once`). What they are about stands: nothing
+//! confirms an answer that did not get out, no complete frame reaches the
+//! gateway, and nothing is kept of it.
 use super::super::{answer, visit::Visit};
 use super::{
     fake::{Fake, Hold},
@@ -209,7 +217,7 @@ fn verifier4_cut_before_first_answer_byte_never_confirms_or_retains_any_kind() {
         visit.end();
         until("cut visit ends", || gateway.world().ended.contains(&socket));
         assert!(lab.cards().is_empty());
-        assert!(lab.requests.deliveries(crate::hooks::now_ms()).is_empty());
+        super::failed_once(&lab, &id);
         let world = gateway.world();
         if kind == "batch" {
             assert!(!world
@@ -372,7 +380,7 @@ fn verifier4_partial_batch_write_cut_by_poll_close_never_confirms() {
         .received
         .iter()
         .any(|(_, f)| f["id"] == "srq-be9ca8d8cb91"));
-    assert!(lab.requests.deliveries(crate::hooks::now_ms()).is_empty());
+    super::failed_once(&lab, &id);
     assert!(lab.cards().is_empty());
-    eprintln!("PARTIAL BATCH CUT: no complete frame, no receipt, no retained Out");
+    eprintln!("PARTIAL BATCH CUT: no complete frame, one failed receipt, no retained Out");
 }

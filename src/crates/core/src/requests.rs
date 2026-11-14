@@ -9,10 +9,16 @@ use std::{
 };
 
 mod answer;
+mod back;
 mod deliveries;
+mod hold;
 mod native;
+#[cfg(feature = "probes")]
+mod probes;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod unreachable_tests;
 mod views;
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -23,14 +29,24 @@ pub struct Requests(Arc<Shared>);
 struct Shared {
     state: Mutex<State>,
     wake: Mutex<Option<Wake>>,
+    #[cfg(feature = "probes")]
+    probes: probes::Probes,
 }
 struct State {
     epoch: u128,
     sequence: u64,
+    /// Counts the waits begun: each registration and each put-back is one.
+    waits: u64,
     revision: u64,
     hold_ms: u64,
     pending: VecDeque<Pending>,
     dismissed: HashSet<String>,
+    /// The native requests a decision was taken for, each until its
+    /// adapter sent it or gave the request back (`back.rs`).
+    taken: HashMap<String, back::Taken>,
+    /// The waits of decisions that were taken back with their request
+    /// before they were handed over: handing one over does nothing.
+    back: HashSet<u64>,
     reviewers: HashMap<(String, String, String), Reviewer>,
     deliveries: VecDeque<Value>,
     /// What each native channel's readers say of their sessions.
@@ -55,11 +71,18 @@ struct Pending {
     created_ms: i64,
     deadline_ms: i64,
     sender: mpsc::Sender<Option<Value>>,
+    wait: u64,
+    /// How often the request was marked as out of reach (`back.rs`).
+    marks: u64,
 }
 pub struct Ticket {
     pub id: String,
     pub response: mpsc::Receiver<Option<Value>>,
     pub deadline_ms: i64,
+    /// Which wait of the request this is. A decision arrives through the
+    /// ticket of the wait it was taken in, and only that wait can be given
+    /// back (`Requests::put_back`).
+    pub wait: u64,
 }
 
 impl Default for Requests {
@@ -71,16 +94,21 @@ impl Default for Requests {
                     .unwrap_or_default()
                     .as_nanos(),
                 sequence: 0,
+                waits: 0,
                 revision: 0,
                 hold_ms: 600_000,
                 pending: VecDeque::new(),
                 dismissed: HashSet::new(),
+                taken: HashMap::new(),
+                back: HashSet::new(),
                 reviewers: HashMap::new(),
                 deliveries: VecDeque::new(),
                 native: native::Readers::default(),
                 machines: BTreeMap::new(),
             }),
             wake: Mutex::new(None),
+            #[cfg(feature = "probes")]
+            probes: probes::Probes::default(),
         }))
     }
 }
@@ -107,18 +135,22 @@ impl Requests {
             state.sequence = state.sequence.wrapping_add(1);
             let id = format!("hook:{}:{}:{}", request.source, state.epoch, state.sequence);
             let deadline_ms = now_ms.saturating_add(state.hold_ms as i64);
+            let wait = state.begin_wait();
             state.pending.push_back(Pending {
                 id: id.clone(),
                 content: Content::Hook(request),
                 created_ms: now_ms,
                 deadline_ms,
                 sender,
+                wait,
+                marks: 0,
             });
             state.revision = state.revision.wrapping_add(1);
             Ticket {
                 id,
                 response,
                 deadline_ms,
+                wait,
             }
         };
         self.wake();
@@ -135,18 +167,22 @@ impl Requests {
             }
             let deadline_ms = now_ms.saturating_add(state.hold_ms as i64);
             view["id"] = Value::String(id.clone());
+            let wait = state.begin_wait();
             state.pending.push_back(Pending {
                 id: id.clone(),
                 content: Content::Native(view),
                 created_ms: now_ms,
                 deadline_ms,
                 sender,
+                wait,
+                marks: 0,
             });
             state.revision = state.revision.wrapping_add(1);
             Ticket {
                 id,
                 response,
                 deadline_ms,
+                wait,
             }
         };
         self.wake();
@@ -178,6 +214,8 @@ impl Requests {
     pub fn cancel(&self, id: &str) {
         let removed = {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+            // Withdrawn: a decision taken for it is given back to nobody.
+            state.taken.remove(id);
             let item = state
                 .pending
                 .iter()
@@ -203,36 +241,6 @@ impl Requests {
             .dismissed
             .remove(id);
     }
-    pub fn expire(&self, now_ms: i64) {
-        let (expired, lapsed) = {
-            let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-            let mut expired = Vec::new();
-            let mut index = 0;
-            while index < state.pending.len() {
-                if state.pending[index].deadline_ms <= now_ms {
-                    let item = state.pending.remove(index).expect("pending index exists");
-                    if matches!(&item.content, Content::Native(_)) {
-                        state.dismissed.insert(item.id.clone());
-                    }
-                    expired.push(item);
-                } else {
-                    index += 1;
-                }
-            }
-            // A reader's reading of its sessions is believed for so long.
-            let lapsed = state.native.lapse(now_ms);
-            if !expired.is_empty() || lapsed {
-                state.revision = state.revision.wrapping_add(1);
-            }
-            (expired, lapsed)
-        };
-        if !expired.is_empty() || lapsed {
-            for item in expired {
-                let _ = item.sender.send(None);
-            }
-            self.wake();
-        }
-    }
     pub fn clear(&self) {
         let (pending, changed) = {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -244,28 +252,12 @@ impl Requests {
             state.native.clear();
             state.machines.clear();
             state.dismissed.clear();
+            state.taken.clear();
             (std::mem::take(&mut state.pending), changed)
         };
         for item in pending {
             let _ = item.sender.send(None);
         }
-        if changed {
-            self.wake();
-        }
-    }
-    pub fn set_hold_ms(&self, hold_ms: u64) {
-        let changed = {
-            let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-            if state.hold_ms == hold_ms {
-                false
-            } else {
-                state.hold_ms = hold_ms;
-                for item in &mut state.pending {
-                    item.deadline_ms = item.created_ms.saturating_add(hold_ms as i64);
-                }
-                true
-            }
-        };
         if changed {
             self.wake();
         }

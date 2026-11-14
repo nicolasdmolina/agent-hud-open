@@ -67,6 +67,12 @@ export interface Approval {
    * it here; null when nothing on this Mac would. */
   answerFix?: AnswerFix | null;
   answersPlan?: boolean;
+  /** From the client's adapter: why the request takes no answer just now,
+   * because its client cannot be reached (a Hermes gateway that stopped,
+   * or whose connection dropped). The card stays, since the client may
+   * still wait; Core refuses every decision for it but leaving it alone.
+   * Absent or null when it can be answered. */
+  unreachable?: string | null;
 }
 /** What lets Agent HUD answer a client's questions: install the client's
  * Agent HUD plugin (Settings → Agent plugins), load it in the session that

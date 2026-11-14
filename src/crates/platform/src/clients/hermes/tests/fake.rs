@@ -406,6 +406,11 @@ impl Fake {
     /// Stops as a killed gateway does: every socket cut, the control socket
     /// gone. The home stays.
     pub fn kill(mut self) {
+        self.stop();
+    }
+
+    /// The same, with what the gateway received still there to look at.
+    pub fn stop(&mut self) {
         self.running.store(false, Ordering::Release);
         for worker in self.workers.drain(..) {
             let _ = worker.join();

@@ -39,6 +39,8 @@ pub(super) struct Card {
     pub(super) pending: Pending,
     /// When its answer was written, until Hermes says what became of it.
     pub(super) sent_ms: Option<i64>,
+    /// Its gateway is out of reach, as far as is known (`reach.rs`).
+    pub(super) marked: bool,
 }
 
 #[derive(Debug)]
@@ -181,6 +183,7 @@ impl Gateway {
             Input::Polled(poll) => self.reconcile(poll, now_ms, &mut effects),
             Input::Sent { request } => self.sent(request, now_ms, &mut effects),
             Input::Responded { request, reply } => self.responded(request, reply, &mut effects),
+            Input::Unsent { request } => self.unsent(request, &mut effects),
         }
         effects
     }
@@ -218,8 +221,8 @@ impl Gateway {
     }
 
     /// The socket is gone. What waits keeps waiting in Hermes, so the cards
-    /// stay; an answer on its way may not have arrived, so its card is
-    /// shown again. A poll under way cannot end.
+    /// stay, marked as out of reach; an answer on its way may not have
+    /// arrived, so its card is shown again. A poll under way cannot end.
     fn lost(&mut self, failure: Failure, effects: &mut Vec<Effect>) {
         self.polls += 1;
         // What happened while nothing was read is not known.
@@ -233,6 +236,7 @@ impl Gateway {
             }
         }
         self.connect(Connection::Failed(failure), effects);
+        self.out_of_reach(effects);
     }
 
     /// Closes every card and forgets the sessions: what a poll of the
