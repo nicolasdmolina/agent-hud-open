@@ -75,6 +75,7 @@ pub fn read(path: &Path) -> rusqlite::Result<Page> {
         id: format!("opencode:{}", v.session),
         title: None,
         client: None,
+        machine: None,
         title_fallback: None,
         cwd,
         model: format!("{model}#{provider}"),

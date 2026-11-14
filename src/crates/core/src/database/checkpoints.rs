@@ -7,6 +7,7 @@ use std::{
 };
 
 mod log_head;
+mod session_row;
 
 pub(crate) use log_head::LogHead;
 

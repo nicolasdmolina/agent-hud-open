@@ -64,7 +64,7 @@ fn the_cards_are_the_ones_the_model_shows() {
     ] {
         let card = &contract[key];
         assert_eq!(card["recording"], name);
-        assert_eq!(asked(name).view(0), card["card"], "{name}");
+        assert_eq!(asked(name).view(0, None), card["card"], "{name}");
     }
 }
 

@@ -22,6 +22,31 @@ impl MachineKey {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+    /// The key as a file Agent HUD writes keeps it (`StoredKey`).
+    pub fn stored(&self) -> StoredKey {
+        StoredKey(self.0.clone())
+    }
+}
+
+/// A machine key read back from a file Agent HUD wrote itself: a mirror's
+/// `hud_mirror` row, or the bindings of the connection list. It names that
+/// machine's stored sessions, the way a verified key names them, and proves
+/// nothing: anyone can write 16 hex characters into a file. There is no
+/// way from it to a `MachineKey`, so no `Machine::Far`, no `GatewayId`, no
+/// route, poll, card or answer is ever made from it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StoredKey(String);
+
+impl StoredKey {
+    /// The key written in `text`: exactly 16 lowercase hex characters, the
+    /// form `machine_key` makes. None for anything else, never tidied.
+    pub fn parse(text: &str) -> Option<Self> {
+        let hex = |c: u8| c.is_ascii_digit() || (b'a'..=b'f').contains(&c);
+        (text.len() == KEY_LENGTH && text.bytes().all(hex)).then(|| Self(text.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Why an identity makes no key. None of them holds what was reported.

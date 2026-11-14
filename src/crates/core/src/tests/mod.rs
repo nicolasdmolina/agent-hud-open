@@ -6,6 +6,7 @@ mod claude_desktop;
 mod conversation_feed;
 mod forks;
 mod hermes_custom_roots;
+mod hermes_mirror;
 mod hermes_questions;
 mod ingestion;
 mod machines;

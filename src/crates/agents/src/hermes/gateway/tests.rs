@@ -18,6 +18,7 @@ mod machines;
 mod regressions;
 mod replay;
 mod scenarios;
+mod stored;
 mod transitions;
 mod world;
 

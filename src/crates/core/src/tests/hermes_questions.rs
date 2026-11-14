@@ -84,7 +84,7 @@ fn open(core: &AgentHudCore, pending: &Pending) -> requests::Ticket {
     let now = Utc::now().timestamp_millis();
     let ticket = core
         .requests()
-        .register_native(pending.id(), pending.view(now), now)
+        .register_native(pending.id(), pending.view(now, None), now)
         .expect("a new card");
     core.requests()
         .set_native_waiting("hermes", SOLE_READER, &[pending.session.hud_id()], now);
@@ -99,7 +99,7 @@ fn answered(core: &mut AgentHudCore, pending: &Pending, decision: Value) -> Opti
         "answer_request",
         json!({"id": pending.id(), "decision": decision}),
     )
-    .unwrap_or_else(|error| panic!("{error}: {decision} on {}", pending.view(0)));
+    .unwrap_or_else(|error| panic!("{error}: {decision} on {}", pending.view(0, None)));
     let given = ticket.response.recv().unwrap().expect("a decision");
     assert_eq!(given, decision);
     match pending.reply(&given, Scope::Host).unwrap()? {
@@ -237,7 +237,7 @@ fn a_decision_on_the_card_becomes_the_exact_frame_hermes_gets() {
             "blue".into(),
         ));
     }
-    let view = locked.view(0);
+    let view = locked.view(0, None);
     assert_eq!(
         view["questions"][0]["lock"],
         json!({"state": "answered", "answer": "blue"})
