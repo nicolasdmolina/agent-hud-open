@@ -80,6 +80,27 @@ impl Requests {
             .filter_map(|item| Some((item.id.clone(), call(item)?)))
             .collect()
     }
+    /// The session each waiting native card belongs to, by source, with when
+    /// its first card came. A native channel can ask before its client's log
+    /// names the session.
+    pub fn native_sessions(&self) -> HashMap<(String, String), i64> {
+        let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut result: HashMap<(String, String), i64> = HashMap::new();
+        for item in &state.pending {
+            let Content::Native(view) = &item.content else {
+                continue;
+            };
+            if let (Some(source), Some(session)) =
+                (view["source"].as_str(), view["sessionId"].as_str())
+            {
+                let at = result
+                    .entry((source.into(), session.into()))
+                    .or_insert(item.created_ms);
+                *at = (*at).min(item.created_ms);
+            }
+        }
+        result
+    }
     /// Small per-snapshot index: presentation never locks this owner once for
     /// every historical transcript, or clones tool payloads just to sort sessions.
     pub fn session_attention(&self) -> HashMap<String, HashMap<String, Vec<Value>>> {
