@@ -8,6 +8,13 @@
 //! observer has stopped. The assertions stand, and the last test has three
 //! more: no forward was made, and nothing was asked of the gateway and
 //! nothing dialled after the preparation began.
+//!
+//! One wait in the first test moved, after the fourth review: it waited
+//! for every ticket granted to have become a socket after dropping the
+//! observer. An opening that a stop overtakes drops its ticket and opens
+//! nothing, so that count need not catch up once the observer is gone,
+//! and the test failed 2 runs in 30. It now waits while the observer
+//! still runs, and drops it after.
 use super::super::{
     control::Silent,
     route::{local::Local, Home, Route, Stop},
@@ -200,11 +207,11 @@ fn reverify25_prepare_builds_a_reusable_forward_and_every_route_call_is_outside_
         )
         .unwrap();
     assert_eq!(lab.delivery(&id)["state"], "confirmed");
-    drop(observer);
     until("all ticketed sockets reached the fake gateway", || {
         let world = gateway.world();
         world.sockets == world.granted.len()
     });
+    drop(observer);
     let events = route.events.lock().unwrap().clone();
     eprintln!(
         "FORWARD count={} ticketed_sockets={} events={}",

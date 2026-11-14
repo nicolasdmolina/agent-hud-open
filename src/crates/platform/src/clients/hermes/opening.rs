@@ -15,9 +15,16 @@
 //! What this does not promise: a step that looked a moment before the
 //! observer stopped still begins. One exchange with the control socket,
 //! or one dial, can start in that instant; what it brings is dropped,
-//! the ticket unused and the stream unspoken on. The model is locked to
-//! list the stream and to take it off, never across the route or the
-//! socket.
+//! the stream unspoken on and the ticket unused. A ticket dropped that
+//! way is not without effect at Hermes: it expires within the 30 s a
+//! ticket lasts, and until then Hermes counts a client as attaching,
+//! which can hold back a gateway's idle exit or a restart it has pending
+//! for that long. And a socket whose upgrade ended just as the observer
+//! stopped is off the list by then: its caller closes it, which writes a
+//! WebSocket Close frame after the stop. That is tidying up, as a visit
+//! that was not writing has always been let to do; no answer and no
+//! `session.resume` goes out. The model is locked to list the stream and
+//! to take it off, never across the route or the socket.
 use super::{
     control::{self, Silent},
     link::{home, silent},
