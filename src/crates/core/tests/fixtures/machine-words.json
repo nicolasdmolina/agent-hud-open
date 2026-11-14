@@ -1,0 +1,34 @@
+{
+  "about": "What a channel tells core of its machines, and what the snapshot then carries in each language. The Rust test core/tests/machine_words.rs checks core's side; app/test/machines-list.test.ts draws the Chinese list from it.",
+  "source": "far-client",
+  "listNote": "无法读取连接列表。",
+  "told": [
+    { "id": "here", "label": "This MacBook", "state": "connected", "here": true },
+    { "id": "mini", "label": "Mac mini Lab", "state": "connected", "contactMs": 1760000000000, "historyMs": 1759996400000 },
+    { "id": "boot", "label": "Office iMac", "state": "connecting" },
+    { "id": "pi", "label": "Raspberry Pi", "state": "not-trusted" },
+    { "id": "gone", "label": "Travel laptop", "state": "cannot-reach" },
+    { "id": "cloud", "label": "Hermes Cloud", "state": "not-covered", "note": "不跟随云端连接" },
+    { "id": "dup", "label": "Mini (Tailscale)", "state": "same-machine", "note": "Mac mini Lab" }
+  ],
+  "snapshot": {
+    "zh-CN": [
+      { "id": "here", "label": "This MacBook", "state": "connected", "stateText": "已连接", "here": true },
+      { "id": "mini", "label": "Mac mini Lab", "state": "connected", "stateText": "已连接", "lastContactAt": "2025-10-09T08:53:20+00:00", "historyCheckedAt": "2025-10-09T07:53:20+00:00" },
+      { "id": "boot", "label": "Office iMac", "state": "connecting", "stateText": "正在连接" },
+      { "id": "pi", "label": "Raspberry Pi", "state": "not-trusted", "stateText": "尚未信任" },
+      { "id": "gone", "label": "Travel laptop", "state": "cannot-reach", "stateText": "无法连接" },
+      { "id": "cloud", "label": "Hermes Cloud", "state": "not-covered", "stateText": "不支持", "note": "不跟随云端连接" },
+      { "id": "dup", "label": "Mini (Tailscale)", "state": "same-machine", "stateText": "与另一项是同一台机器", "note": "Mac mini Lab" }
+    ],
+    "en": [
+      { "id": "here", "label": "This MacBook", "state": "connected", "stateText": "Connected", "here": true },
+      { "id": "mini", "label": "Mac mini Lab", "state": "connected", "stateText": "Connected", "lastContactAt": "2025-10-09T08:53:20+00:00", "historyCheckedAt": "2025-10-09T07:53:20+00:00" },
+      { "id": "boot", "label": "Office iMac", "state": "connecting", "stateText": "Connecting" },
+      { "id": "pi", "label": "Raspberry Pi", "state": "not-trusted", "stateText": "Not trusted yet" },
+      { "id": "gone", "label": "Travel laptop", "state": "cannot-reach", "stateText": "Cannot reach" },
+      { "id": "cloud", "label": "Hermes Cloud", "state": "not-covered", "stateText": "Not covered", "note": "不跟随云端连接" },
+      { "id": "dup", "label": "Mini (Tailscale)", "state": "same-machine", "stateText": "Same machine as another entry", "note": "Mac mini Lab" }
+    ]
+  }
+}
