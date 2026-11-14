@@ -11,6 +11,8 @@ use std::{
     fs::{self, File},
     io::Read,
     os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -193,6 +195,14 @@ fn the_deadline_ends_a_busy_query() {
     link.close();
 }
 
+/// The deadline is counted from the reader's `started`, and so is this
+/// test: from the moment that line reaches the pipe the test holds, to
+/// the moment the link returns the reader's status. How long the reader
+/// took to start is outside that, so the bound is tight on any machine: a
+/// 2 s deadline, and no more than the 2 s margin the caller's slot allows
+/// for the status to come back. An earlier form of this test counted from
+/// the launch and allowed 23 s, and a reader that lived 15 s on its 2 s
+/// deadline passed it (fifth review).
 #[test]
 #[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn the_deadline_ends_a_blocked_write() {
@@ -203,33 +213,42 @@ fn the_deadline_ends_a_blocked_write() {
     let link = world.link();
     let asked: Vec<&str> = ids.iter().map(String::as_str).collect();
     let watch = Watch::start(&world);
-    let began = Instant::now();
-    let ran = raw(
-        &link,
-        &world.home,
-        Duration::from_secs(2),
-        &sessions(&asked),
-    );
-    let took = began.elapsed();
+    let done = AtomicBool::new(false);
+    let (ran, started, ended) = thread::scope(|scope| {
+        // `started` is the first thing in the pipe.
+        let first_byte = scope.spawn(|| {
+            while !done.load(Ordering::SeqCst) {
+                if waiting(&held) > 0 {
+                    return Some(Instant::now());
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            None
+        });
+        let ran = raw(
+            &link,
+            &world.home,
+            Duration::from_secs(2),
+            &sessions(&asked),
+        );
+        let ended = Instant::now();
+        done.store(true, Ordering::SeqCst);
+        (ran, first_byte.join().unwrap(), ended)
+    });
+    let after = ended - started.expect("the reader wrote `started`");
     assert_eq!(ran.end, End::Ended(3), "{}", ran.stderr);
     assert_eq!(readers(&world.mark()), Vec::<u32>::new());
     let samples = watch.finish();
     // It was blocked in the write, not in the read: part of its answer
     // waits in the pipe, more than its first line and less than the whole.
     let pending = waiting(&held);
-    let seen: Vec<Instant> = samples
-        .iter()
-        .filter(|look| !look.readers.is_empty())
-        .map(|look| look.at)
-        .collect();
-    let lived = *seen.last().unwrap() - seen[0];
-    println!("  ended with status 3 after {took:?}; alive for {lived:?}; {pending} bytes of its answer wait unread");
+    println!(
+        "  ended with status 3, {after:?} after its `started` reached the pipe; {pending} bytes of its answer wait unread"
+    );
     assert!(pending > 4096 && pending < 200_000, "{pending}");
-    // Alive for about its deadline once started, and for no more than
-    // that and the twenty seconds it has to start in.
     assert!(
-        lived > Duration::from_millis(1_200) && lived < Duration::from_secs(23),
-        "{lived:?}"
+        after > Duration::from_millis(1_800) && after < Duration::from_secs(4),
+        "{after:?}"
     );
     assert_eq!(most(&samples).0, 1);
     link.close();
