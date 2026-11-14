@@ -679,6 +679,11 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
             let mut world = world.lock().unwrap();
             if world.hold_next.as_ref().is_some_and(|(method, _)| {
                 frame["method"] == *method
+                    // The first read of a session, which asks where its
+                    // stream is and names no epoch.
+                    || (*method == "stream-probe"
+                        && frame["method"] == "session.events.since"
+                        && frame["params"].get("replay_epoch").is_none())
                     || (*method == "nonempty-replay"
                         && frame["method"] == "session.events.since"
                         && reply.as_ref().is_some_and(|r| {

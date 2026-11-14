@@ -4,11 +4,14 @@
 //! with its follower, with the session going idle, and with the reads
 //! being quick again.
 use super::{
-    fake::{Fake, PROFILE},
+    fake::{Fake, Hold, PROFILE},
     lab, marked, plain, quick, until, Lab, Pace,
 };
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::{
+    sync::{atomic::Ordering, Arc},
+    time::Duration,
+};
 
 const SLOW: &str = "s-m-slow";
 const OTHER: &str = "s-a-other";
@@ -175,17 +178,45 @@ fn a_lane_ends_when_the_polls_no_longer_want_the_session_read() {
 
 #[test]
 fn a_lane_ends_with_its_follower_and_asks_nothing_more() {
-    let (mut lab, gateway) = slowed();
+    // The slow session alone, so every read of events is its lane's.
+    let mut lab = lab();
+    let gateway = Fake::start(&lab.home, "instance-1");
+    gateway.tells_quietly(PROFILE, SLOW, "message.start", json!({}));
+    gateway.world().slow_replay = Some((SLOW.into(), HELD));
+    lab.follow_at(pace());
+    until("the slow session is read apart", || lanes(&lab) == 1);
     gateway.asks_quietly(PROFILE, SLOW, "p-slow");
     until("the slow session's card", || shows(&lab, "p-slow"));
+
+    // The lane's next reading is held at its first reply, with its read
+    // of the events still to ask, and the follower ends meanwhile:
+    // client hooks were turned off.
+    let held = Arc::new(Hold::default());
+    gateway.world().hold_next = Some(("stream-probe", held.clone()));
+    until("a read of the lane's is held", || {
+        held.entered.load(Ordering::Acquire)
+    });
     let shared = lab.observer.as_ref().unwrap().local();
     lab.observer.take();
     assert!(lab.cards().is_empty(), "withdrawn");
+    let asked = gateway.world().received.len();
+    held.released.store(true, Ordering::Release);
+
+    // The reply comes back to a lane whose follower ended: it sends no
+    // next call, ends, and brings no card back.
     until("its lane ends", || shared.apart.count() == 0);
-    // What the gateway got once the lane ended is all it gets.
-    let received = gateway.world().received.len();
     std::thread::sleep(HELD * 3);
-    assert_eq!(gateway.world().received.len(), received);
+    let world = gateway.world();
+    let after: Vec<&Value> = world.received[asked..]
+        .iter()
+        .map(|(_, frame)| frame)
+        .collect();
+    assert_eq!(
+        after,
+        Vec::<&Value>::new(),
+        "asked after its follower ended"
+    );
+    drop(world);
     assert!(lab.cards().is_empty());
     assert!(!lab.log().contains("together session="), "{}", lab.log());
 }

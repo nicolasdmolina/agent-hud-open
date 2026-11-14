@@ -36,9 +36,9 @@ pub static GATEWAY: Channel = Channel {
 /// as a master Agent HUD owns, a relay that asks each far control socket
 /// as the login user, and a forwarded port for each gateway's WebSocket
 /// (`platform/src/clients/hermes/route/ssh.rs`). Verified on macOS
-/// against an `sshd` on loopback, with this Mac as the far side too; the
-/// same code never ran on Linux, and Windows' OpenSSH has no control
-/// sockets to carry it.
+/// against an `sshd` on loopback, with this Mac as the far side too, and
+/// read-only against a far Mac; the same code never ran on Linux, and
+/// Windows' OpenSSH has no control sockets to carry it.
 pub static FAR_ROUTE: PerOs<()> = PerOs {
     macos: Support::Verified(()),
     windows: Support::Unsupported(
