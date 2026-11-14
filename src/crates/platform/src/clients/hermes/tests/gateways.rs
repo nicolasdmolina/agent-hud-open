@@ -128,7 +128,8 @@ fn one_gateway_for_each_of_two_profiles_has_two_followers_and_no_call_names_the_
         let states = lab.requests.native_states();
         let reading = states.of("hermes", reader);
         let sessions = reading.map(|reading| reading.sessions.keys().cloned().collect());
-        sessions.unwrap_or_else(Vec::new)
+        let sessions: Option<Vec<String>> = sessions;
+        sessions.unwrap_or_default()
     };
     until("each follower told its session", || {
         !read("local").is_empty() && !read("local/reports").is_empty()
