@@ -9,8 +9,9 @@
 //!
 //! A waiting session whose row its transcript now gives, in place of one
 //! only its cards or hooks made, is the same wait: each card that already
-//! sounded and still waits stands for one new transcript sighting of its own
-//! kind, which makes no sound. A sighting no such card can stand for sounds.
+//! sounded, still waits and names no call stands for one new transcript
+//! sighting of its own kind, which makes no sound. A card a call names is
+//! that call only. A sighting no such card can stand for sounds.
 use super::*;
 
 mod requests;
@@ -127,18 +128,24 @@ impl Tracker {
             // A row its transcript now gives, in place of one only its cards
             // or hooks made, shows what those cards already told: the
             // transcript's sightings of them, which it may not pair with
-            // them one to one. Each card told before that still waits can
-            // stand for one new sighting of its own kind (`absorbs`); a
-            // sighting none can stand for is a request of its own.
+            // them one to one. Each card told before that still waits, and
+            // that no call names (its `callId`, or the one possible pairing,
+            // already makes it that call), can stand for one new sighting
+            // of its own kind (`absorbs`); a sighting none can stand for is a
+            // request of its own.
             let mut absorbs: HashMap<&str, usize> = HashMap::new();
             if let Some(p) = previous.as_ref().filter(|p| transcript && !p.transcript) {
                 for heard in &p.requests {
                     let card = !heard.names[0].starts_with("log:");
-                    if card
-                        && now_requests
-                            .iter()
-                            .any(|r| r.names.contains(&heard.names[0]))
-                    {
+                    let unnamed = now_requests
+                        .iter()
+                        .find(|r| r.names.contains(&heard.names[0]))
+                        .is_some_and(|r| {
+                            r.names
+                                .iter()
+                                .all(|n| !n.starts_with("call:") && !n.starts_with("log:"))
+                        });
+                    if card && unnamed {
                         *absorbs.entry(heard.kind.as_str()).or_default() += 1;
                     }
                 }

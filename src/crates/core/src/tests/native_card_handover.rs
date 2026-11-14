@@ -70,11 +70,18 @@ fn write_rollout(folder: &Path, now: i64) {
 
 /// A rollout whose one call is `call`, a `request_user_input_async` at `at`.
 fn write_rollout_call(folder: &Path, now: i64, call: &str, at: i64) {
-    let lines = [
+    write_rollout_calls(folder, now, &[call], at);
+}
+
+/// A rollout whose `calls` are each a `request_user_input_async` at `at`.
+fn write_rollout_calls(folder: &Path, now: i64, calls: &[&str], at: i64) {
+    let mut lines = vec![
         json!({"timestamp":crate::iso(now-3000),"type":"session_meta","payload":{"id":THREAD,"timestamp":crate::iso(now-3000),"source":"vscode","originator":"Codex Desktop","cwd":"/synthetic"}}),
         json!({"timestamp":crate::iso(now-2000),"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-41"}}),
-        json!({"timestamp":crate::iso(at),"type":"response_item","payload":{"type":"function_call","call_id":call,"name":"request_user_input_async","arguments":"{}"}}),
     ];
+    for call in calls {
+        lines.push(json!({"timestamp":crate::iso(at),"type":"response_item","payload":{"type":"function_call","call_id":call,"name":"request_user_input_async","arguments":"{}"}}));
+    }
     let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
     fs::write(folder.join(format!("rollout-{THREAD}.jsonl")), text).unwrap();
 }
@@ -219,4 +226,42 @@ fn a_new_question_in_the_transcript_beside_an_older_permission_sounds() {
 #[test]
 fn a_new_question_card_after_its_transcript_sighting_is_not_left_silent() {
     question_beside_an_older_permission(false);
+}
+
+/// A native card naming its call (`callId`) is that call: when the rollout
+/// shows it beside a new question, the new question sounds, and its card
+/// after it adds no second sound. The third verifier's
+/// `round3_core_named_native_card_cannot_absorb_two_sightings`.
+#[test]
+fn a_named_native_card_stands_for_no_second_sighting() {
+    let temp = tempfile::tempdir().unwrap();
+    let now = Utc::now().timestamp_millis();
+    let _clock = Clock::at(now);
+    let (mut core, folder) = codex_core(temp.path());
+    let view = json!({"source":"codex","sessionId":THREAD,"kind":"question","title":"Known question","callId":"known-question"});
+    let _known = core
+        .requests()
+        .register_native("named-native-card".into(), view, now)
+        .unwrap();
+    let first = core.request("request_snapshot", json!({})).unwrap();
+    assert_eq!(needs_you(&first).len(), 1);
+    crate::snapshot::PINNED_CLOCK.set(Some(now + 1000));
+    write_rollout_calls(
+        &folder,
+        now,
+        &["known-question", "brand-new-question"],
+        now + 1000,
+    );
+    let takeover = core.request("refresh", json!({})).unwrap();
+    assert_eq!(row(&takeover)[0]["evidence"], Value::Null);
+    assert_eq!(
+        needs_you(&takeover).len(),
+        2,
+        "brand-new-question is a new question"
+    );
+    let _new = question(&core, 9, now + 2000);
+    let later = core.request("request_snapshot", json!({})).unwrap();
+    let again = core.request("request_snapshot", json!({})).unwrap();
+    assert_eq!(needs_you(&later).len(), 2);
+    assert_eq!(needs_you(&again).len(), 2);
 }
