@@ -6,6 +6,7 @@ use super::*;
 use serde_json::Value;
 use std::path::PathBuf;
 
+mod apart;
 mod boundaries;
 mod buttons;
 mod completeness;

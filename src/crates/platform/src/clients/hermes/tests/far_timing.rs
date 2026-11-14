@@ -30,7 +30,8 @@ const BUSY_MOST: Duration = Duration::from_secs(6);
 const IDLE: Duration = Duration::from_secs(13);
 /// A request no read shows: a snapshot, taken every 30 s, and one poll.
 const HIDDEN: Duration = Duration::from_secs(32);
-/// One poll's own time over the link: 19 polls in 20 within this.
+/// One whole poll over the link, a slow replay in it or not: 19 polls in
+/// 20 within this.
 const POLL: Duration = Duration::from_secs(1);
 const PROFILE: &str = "default";
 
@@ -250,6 +251,28 @@ fn card_behind_a_slow_replay() {
     held("card_behind_a_slow_replay", took, BUSY, BUSY_MOST, 1);
 }
 
+/// The session that is slow to read has cards of its own. Its events
+/// are read apart from the polls, one reading after another, so a card
+/// of it waits for that read and no longer: held to the bound of any
+/// busy session.
+#[test]
+#[ignore = "waits on the clock: run by hand"]
+fn card_in_the_session_that_is_slow_to_read() {
+    let Some((far, gateway)) = following(Pace::default()) else {
+        return;
+    };
+    for session in ["s-a-early", "s-m-slow"] {
+        works(&gateway, session);
+    }
+    gateway.world().slow_replay = Some(("s-m-slow".into(), SLOW));
+    until("the slow session is read apart", || {
+        far.log().contains("apart session=")
+    });
+    let took = twenty(&far, &gateway, &["s-m-slow"], SLOW, "own");
+    let name = "card_in_the_session_that_is_slow_to_read";
+    held(name, took, BUSY, BUSY_MOST, 1);
+}
+
 #[test]
 #[ignore = "waits on the clock: run by hand"]
 fn a_request_no_read_shows() {
@@ -340,22 +363,22 @@ fn poll_time_over_the_link() {
         1,
     );
 
-    // With one session's events slow to read, a poll takes as long as the
-    // gateway holds that read back, and the link's own part on top: that
-    // part is held to the same bound.
-    gateway.world().slow_replay = Some(("s-m-slow".into(), SLOW));
+    // With one session's events slow to read: every whole poll as the
+    // connection times it, with nothing taken off. Counted from the
+    // moment the read turns slow, so the poll that finds it out is one
+    // of the twenty, and is the one a bound of 19 in 20 leaves room for.
     let from = poll_times(&far).len();
-    until("a poll behind the slow read", || {
-        poll_times(&far)[from..].iter().any(|took| *took >= SLOW)
+    gateway.world().slow_replay = Some(("s-m-slow".into(), SLOW));
+    until("twenty polls from then", || {
+        poll_times(&far).len() >= from + 20
     });
-    let slow = twenty_more(&far);
-    let own: Vec<Duration> = slow.iter().map(|took| took.saturating_sub(SLOW)).collect();
-    assert!(slow.iter().all(|took| *took >= SLOW), "{slow:?}");
-    held(
-        "poll_time_over_the_link_less_a_slow_replay",
-        own,
-        POLL,
-        POLL * 3,
-        1,
-    );
+    let slow = poll_times(&far)[from..from + 20].to_vec();
+    let met = slow.iter().any(|took| *took >= SLOW);
+    assert!(met, "no poll met the slow read: {slow:?}");
+    assert!(far.log().contains("apart session="), "{}", far.log());
+    let name = "poll_time_over_the_link_with_a_slow_replay";
+    held(name, slow, POLL, POLL * 3, 1);
+    // And the twenty after those, with the slow session read apart.
+    let name = "poll_time_over_the_link_beside_a_slow_replay";
+    held(name, twenty_more(&far), POLL, POLL, 0);
 }

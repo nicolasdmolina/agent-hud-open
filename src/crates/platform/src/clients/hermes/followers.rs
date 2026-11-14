@@ -190,6 +190,7 @@ impl Followers {
             gone: AtomicBool::new(false),
             awaits: AtomicU64::new(0),
             look: self.look.clone(),
+            apart: Default::default(),
             #[cfg(test)]
             ends: self.ends.clone(),
             #[cfg(test)]

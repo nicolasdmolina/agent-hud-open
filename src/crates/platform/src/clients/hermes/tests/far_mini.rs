@@ -378,7 +378,7 @@ fn run(
     drop(observer);
     receipt.say(format!(
         "observer stopped; masters left: {:?}",
-        masters(&folder)
+        masters(folder)
     ));
 
     // After: the same hashes, over a link of its own.

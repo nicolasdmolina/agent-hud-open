@@ -8,9 +8,10 @@
 use super::ask::{Ask, Pending};
 use super::effect::{Closed, Effect, Status};
 use super::identity::SessionRef;
-use super::poll::{Poll, Read};
+use super::poll::{Look, Poll, Read};
 use super::state::{Card, Gateway, Key};
 use super::Connection;
+use std::collections::BTreeMap;
 
 /// How long a sent answer to a set of questions may go unconfirmed before
 /// a poll that still lists the set means the answer was dropped, which
@@ -19,6 +20,10 @@ const UNCONFIRMED_MS: i64 = 5_000;
 
 impl Gateway {
     pub(super) fn reconcile(&mut self, poll: Poll, now_ms: i64, effects: &mut Vec<Effect>) {
+        // A reading of one session apart from the polls (`apart.rs`).
+        if let Some(apart) = poll.apart.clone() {
+            return self.reconcile_apart(poll, &apart, now_ms, effects);
+        }
         // Only this gateway's newest poll counts, and only while it is
         // ready. Any other was begun before something it cannot know of: a
         // newer poll, an answer Hermes took, a restart, a dropped socket.
@@ -36,6 +41,7 @@ impl Gateway {
         for (at, look) in &poll.sessions {
             self.listed.insert(at.clone(), look.status);
         }
+        self.keep_apart();
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {
             if let Some(why) = self.over(&poll, &key, now_ms, effects) {
                 self.close(&key, why, effects);
@@ -55,7 +61,12 @@ impl Gateway {
                 self.snapshotted.insert(at.clone(), now_ms);
             }
         }
-        for (at, look) in poll.sessions {
+        self.open(poll.sessions, effects);
+    }
+
+    /// Opens a card for each request a reading found that has none.
+    pub(super) fn open(&mut self, read: BTreeMap<SessionRef, Look>, effects: &mut Vec<Effect>) {
+        for (at, look) in read {
             let Read::Done(reading) = look.read else {
                 continue;
             };
@@ -87,7 +98,7 @@ impl Gateway {
 
     /// Why the card is over by this poll, or None where it still waits or
     /// the poll cannot tell. A card that still waits is brought up to date.
-    fn over(
+    pub(super) fn over(
         &mut self,
         poll: &Poll,
         key: &Key,
