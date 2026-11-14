@@ -47,7 +47,12 @@ impl Shared {
                 // changed in place. Its time, its hold and whether it
                 // was dismissed are core's, and are not touched.
                 Effect::Marked(pending) => self.lost(model, &pending, now),
-                Effect::Unmarked(pending) => self.reach(model, &pending, "reached", now),
+                Effect::Unmarked(pending) => {
+                    let id = pending.id();
+                    self.log.line(&format!("reached id={id}"));
+                    let view = self.view(model, &pending, now);
+                    self.requests.refresh_native(&id, view);
+                }
                 Effect::Close { id, session, why } => {
                     self.log.line(&format!("close id={id} why={why:?}"));
                     model.waiters.remove(&id);
@@ -106,17 +111,8 @@ impl Shared {
         (self.wake)();
     }
 
-    /// Shows the card as the model has it now, marked or not, under the
-    /// request it already has; `word` is what the log says of it.
-    pub(super) fn reach(&self, model: &Model, pending: &Pending, word: &str, now: i64) {
-        let id = pending.id();
-        self.log.line(&format!("{word} id={id}"));
-        self.requests
-            .refresh_native(&id, self.view(model, pending, now));
-    }
-
     /// The card as it shows now: marked while its gateway is out of reach.
-    fn view(&self, model: &Model, pending: &Pending, now: i64) -> Value {
+    pub(super) fn view(&self, model: &Model, pending: &Pending, now: i64) -> Value {
         let id = pending.id();
         let opened = model.opened.get(&id).copied().unwrap_or(now);
         if model.gateway.marked(&id) {

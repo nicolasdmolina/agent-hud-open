@@ -429,3 +429,65 @@ fn an_answer_is_not_sent_on_a_connection_that_is_back_and_not_yet_read() {
     });
     assert_eq!(gateway.world().calls("clarify.respond").len(), 1);
 }
+
+/// A decision that waits where core left it when its card is marked:
+/// core took it and handed it over, and the answers' thread has not
+/// picked it up. The mark takes it from there, in the very step that
+/// marks the card: the card is back at once, marked, with that thread
+/// still not looking. Then the connection is found again and a poll
+/// finds the request waiting. The old decision is never sent, and a new
+/// answer to the card goes through as any other.
+#[test]
+fn a_decision_that_waits_to_be_picked_up_is_taken_out_when_its_card_is_marked() {
+    use agent_hud_agents::hermes::gateway::identify_line;
+    let mut lab = lab();
+    let gateway = started(&mut lab);
+    let id = asks(&lab, &gateway);
+    let card = lab.card();
+    let before = times(&lab, &card);
+    let shared = follower(&lab);
+    let said = super::ask(&lab.home, &identify_line(), Duration::from_secs(5)).unwrap();
+    let home = lab.home.to_string_lossy().into_owned();
+    // The answers' thread takes nothing from core, from here to the end.
+    shared.deaf.store(true, Ordering::Release);
+    lab.requests.answer(&id, &red(), now()).unwrap();
+    assert!(lab.cards().is_empty(), "core took the decision");
+    {
+        let mut model = shared.model();
+        assert!(model.waiters.contains_key(&id) && !model.taken.contains_key(&id));
+        shared.take(&mut model, Input::Lost(Failure::Closed(1006)));
+        // Taken out in that step: the card is back before anything else
+        // happens, and what waits for the thread now is a new wait.
+        let back = lab.cards();
+        assert_eq!(back.len(), 1, "given back at the mark");
+        assert!(marked(&back[0]));
+        assert_eq!(plain(back[0].clone()), card);
+        assert!(!model.taken.contains_key(&id), "no answer is out");
+        let waiter = model.waiters.get(&id).expect("its new wait");
+        assert!(waiter.response.try_recv().is_err(), "nothing waits in it");
+        let found = Input::Identified {
+            answer: &said,
+            home: &home,
+        };
+        shared.take(&mut model, found);
+    }
+    assert_eq!(times(&lab, &card), before);
+    assert_eq!(lab.delivery(&id)["state"], "failed");
+    assert_eq!(lab.log().matches("undelivered id=").count(), 1);
+    until("a poll finds the request waiting again", || {
+        lab.cards() == [card.clone()]
+    });
+    // Nothing of the old decision is left to send, deaf or not.
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(gateway.world().calls("clarify.respond").is_empty());
+    assert!(gateway.world().calls("session.resume").is_empty());
+    assert_eq!(shows(&lab), 1, "register_native was not called again");
+
+    // A new answer, taken after the mark, goes through.
+    shared.deaf.store(false, Ordering::Release);
+    lab.requests.answer(&id, &red(), now()).unwrap();
+    until("the new answer is confirmed", || {
+        lab.delivery(&id)["state"] == "confirmed"
+    });
+    assert_eq!(gateway.world().calls("clarify.respond").len(), 1);
+}

@@ -13,6 +13,8 @@ mod back;
 mod deliveries;
 mod hold;
 mod native;
+#[cfg(feature = "probes")]
+mod probes;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -27,6 +29,8 @@ pub struct Requests(Arc<Shared>);
 struct Shared {
     state: Mutex<State>,
     wake: Mutex<Option<Wake>>,
+    #[cfg(feature = "probes")]
+    probes: probes::Probes,
 }
 struct State {
     epoch: u128,
@@ -65,6 +69,8 @@ struct Pending {
     deadline_ms: i64,
     sender: mpsc::Sender<Option<Value>>,
     wait: u64,
+    /// How often the request was marked as out of reach (`back.rs`).
+    marks: u64,
 }
 pub struct Ticket {
     pub id: String,
@@ -97,6 +103,8 @@ impl Default for Requests {
                 machines: BTreeMap::new(),
             }),
             wake: Mutex::new(None),
+            #[cfg(feature = "probes")]
+            probes: probes::Probes::default(),
         }))
     }
 }
@@ -131,6 +139,7 @@ impl Requests {
                 deadline_ms,
                 sender,
                 wait,
+                marks: 0,
             });
             state.revision = state.revision.wrapping_add(1);
             Ticket {
@@ -162,6 +171,7 @@ impl Requests {
                 deadline_ms,
                 sender,
                 wait,
+                marks: 0,
             });
             state.revision = state.revision.wrapping_add(1);
             Ticket {

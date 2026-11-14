@@ -243,6 +243,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         look: Arc::default(),
         ends: Arc::default(),
         shows: Default::default(),
+        deaf: AtomicBool::new(false),
     };
     let (visit, _) = Visit::begin(&shared, &instance, &session, Duration::from_secs(2)).unwrap();
     visit.end();

@@ -4,6 +4,15 @@
 //! request still waits in the client, and the adapter gives it back: the
 //! same request as it was, not a new one. A request that came to its end
 //! meanwhile is given back to nobody.
+//!
+//! Which decisions are not to be sent is kept here too, where no order of
+//! threads can get it wrong. A request counts how often it was marked as
+//! out of reach, and a decision is taken at the count of that moment, in
+//! the one locked step that takes the card away. A mark counts on, in a
+//! locked step of its own, whether the request still shows or its decision
+//! is already taken. So a decision is stale exactly when its request was
+//! marked after it was taken, however long the decision then took to
+//! reach its adapter, and whatever became of the mark since.
 use super::{Content, Pending, Requests, State, Ticket};
 use serde_json::Value;
 use std::sync::{mpsc, PoisonError};
@@ -14,6 +23,10 @@ use std::sync::{mpsc, PoisonError};
 pub(super) struct Taken {
     pub(super) wait: u64,
     pub(super) created_ms: i64,
+    /// The request's mark count when the decision was taken.
+    pub(super) epoch: u64,
+    /// Its mark count now: marks go on counting while it is taken.
+    pub(super) marks: u64,
 }
 
 impl State {
@@ -46,7 +59,9 @@ impl Requests {
             if state.taken.get(id)?.wait != wait || state.pending.iter().any(|p| p.id == id) {
                 return None;
             }
-            let created_ms = state.taken.remove(id)?.created_ms;
+            let Taken {
+                created_ms, marks, ..
+            } = state.taken.remove(id)?;
             let deadline_ms = created_ms.saturating_add(state.hold_ms as i64);
             state.dismissed.remove(id);
             view["id"] = Value::String(id.into());
@@ -64,6 +79,7 @@ impl Requests {
                     deadline_ms,
                     sender,
                     wait,
+                    marks,
                 },
             );
             state.revision = state.revision.wrapping_add(1);
@@ -76,5 +92,52 @@ impl Requests {
         };
         self.wake();
         Some(ticket)
+    }
+
+    /// Marks the native request `id` as out of reach: its client cannot be
+    /// reached from now on. `view` is its card saying so (`unreachable`),
+    /// shown in place of the one it has where the request still waits, as
+    /// `refresh_native` shows one. Where a decision was already taken for
+    /// it, nothing shows, and that decision is stale from this step on
+    /// (`current`): the mark counts for a request that waits and for one
+    /// whose decision is on its way alike.
+    pub fn mark_native(&self, id: &str, mut view: Value) {
+        let changed = {
+            let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(taken) = state.taken.get_mut(id) {
+                taken.marks = taken.marks.wrapping_add(1);
+            }
+            view["id"] = Value::String(id.into());
+            let waits = state.pending.iter_mut().find(|p| p.id == id);
+            let changed = waits.is_some_and(|item| {
+                item.marks = item.marks.wrapping_add(1);
+                match &mut item.content {
+                    Content::Native(shown) if *shown != view => {
+                        *shown = view;
+                        true
+                    }
+                    _ => false,
+                }
+            });
+            if changed {
+                state.revision = state.revision.wrapping_add(1);
+            }
+            changed
+        };
+        if changed {
+            self.wake();
+        }
+    }
+
+    /// Whether the decision taken in `wait` for the native request `id`
+    /// is still one to send: it is the decision that is out for the
+    /// request, and the request was not marked as out of reach since it
+    /// was taken. An adapter asks when the decision reaches it, which can
+    /// be a while after it was taken. A decision that is not current is
+    /// not sent; its request can be put back (`put_back`) for a new one.
+    pub fn current(&self, id: &str, wait: u64) -> bool {
+        let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let taken = state.taken.get(id);
+        taken.is_some_and(|taken| taken.wait == wait && taken.epoch == taken.marks)
     }
 }

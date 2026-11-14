@@ -77,6 +77,13 @@ impl Model {
 impl Shared {
     /// Whether any visit is writing right now, for tests of a write that
     /// the gateway does not take.
+    /// How many visits are writing right now (the second review of
+    /// ticket 27).
+    pub(super) fn reviewer27_writing_count(&self) -> usize {
+        let model = self.model();
+        model.visits.values().filter(|held| held.writing).count()
+    }
+
     pub(super) fn writing(&self) -> bool {
         self.model().visits.values().any(|held| held.writing)
     }

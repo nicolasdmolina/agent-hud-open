@@ -60,13 +60,23 @@ impl Requests {
                 // A decision that is to be sent may yet come back unsent
                 // (`back.rs`); leaving the card alone sends nothing.
                 if response.is_some() {
-                    let (wait, created_ms) = (item.wait, item.created_ms);
-                    state.taken.insert(id.into(), Taken { wait, created_ms });
+                    // Taken at the card's mark count as it is in this very
+                    // step: a mark that comes later, even before the
+                    // decision below is handed over, makes it stale.
+                    let taken = Taken {
+                        wait: item.wait,
+                        created_ms: item.created_ms,
+                        epoch: item.marks,
+                        marks: item.marks,
+                    };
+                    state.taken.insert(id.into(), taken);
                 }
             }
             state.revision = state.revision.wrapping_add(1);
             (item, response)
         };
+        #[cfg(feature = "probes")]
+        self.0.probes.accepted(id);
         let delivered = item.sender.send(response).is_ok();
         self.wake();
         if delivered {

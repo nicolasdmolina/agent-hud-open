@@ -304,3 +304,58 @@ fn a_hook_request_is_never_put_back() {
         .is_none());
     assert!(requests.views(3_000).is_empty());
 }
+
+/// A decision is stale exactly when its request was marked after it was
+/// taken: whether the request still showed at the mark or its decision
+/// was already on its way, and whatever became of the mark since.
+#[test]
+fn a_decision_taken_before_its_request_was_marked_is_not_current() {
+    let requests = Requests::default();
+    let ticket = requests
+        .register_native("native:1".into(), question(), 1_000)
+        .unwrap();
+    assert!(!requests.current("native:1", ticket.wait), "none taken yet");
+    requests.answer("native:1", &pick(), 2_000).unwrap();
+    assert!(requests.current("native:1", ticket.wait));
+    assert!(!requests.current("native:1", ticket.wait + 1));
+    assert!(!requests.current("native:2", ticket.wait));
+
+    // Marked with its decision already taken: nothing shows, nothing
+    // wakes, and the decision is stale. It stays stale.
+    let revision = requests.revision();
+    requests.mark_native("native:1", marked());
+    assert_eq!(requests.revision(), revision);
+    assert!(requests.views(2_500).is_empty());
+    assert!(!requests.current("native:1", ticket.wait));
+    requests.refresh_native("native:1", question());
+    assert!(!requests.current("native:1", ticket.wait));
+
+    // Put back, it is the request it was, and a decision taken now is
+    // current, though the request was marked before.
+    let back = requests
+        .put_back("native:1", ticket.wait, question(), 3_000)
+        .expect("a stale decision's request can still be put back");
+    assert_eq!(back.deadline_ms, 1_000 + HOLD);
+    assert!(!requests.current("native:1", ticket.wait));
+    requests.answer("native:1", &pick(), 4_000).unwrap();
+    assert_eq!(back.response.recv().unwrap(), Some(pick()));
+    assert!(requests.current("native:1", back.wait));
+    assert!(!requests.current("native:1", ticket.wait));
+
+    // Marked while it shows: the card says so and takes no decision. Its
+    // mark gone, a decision taken then is current.
+    let again = requests
+        .put_back("native:1", back.wait, question(), 5_000)
+        .unwrap();
+    requests.mark_native("native:1", marked());
+    assert_eq!(requests.views(5_500)[0]["unreachable"], WHY);
+    assert_eq!(requests.deadline("native:1"), Some(1_000 + HOLD));
+    assert!(requests.answer("native:1", &pick(), 5_600).is_err());
+    assert!(!requests.current("native:1", again.wait), "none was taken");
+    requests.refresh_native("native:1", question());
+    requests.answer("native:1", &pick(), 6_000).unwrap();
+    assert!(requests.current("native:1", again.wait));
+    // Marking a request that is not there does nothing.
+    requests.mark_native("native:9", marked());
+    assert!(requests.views(6_500).is_empty());
+}

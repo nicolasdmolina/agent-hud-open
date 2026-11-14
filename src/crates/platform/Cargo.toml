@@ -45,3 +45,5 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Secu
 
 [dev-dependencies]
 tempfile.workspace = true
+# The places where a test may hold core between two of its steps.
+agent-hud-core = { workspace = true, features = ["probes"] }

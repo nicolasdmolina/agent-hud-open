@@ -16,6 +16,11 @@ pub(super) struct Out {
     pub(super) written: bool,
     /// Its card closed before what became of the answer was known, and why.
     pub(super) closed: Option<Closed>,
+    /// The wait core took its decision in: whose answer this record is.
+    /// A card that came back can be answered again while the thread of the
+    /// answer before is still on its way out, and that thread must find
+    /// that what is filed is not its own.
+    pub(super) taken: u64,
 }
 
 impl Shared {
@@ -68,20 +73,31 @@ impl Shared {
     /// An answer being written to it is cut, as when a card closes
     /// (`visit.rs`): a write that was let through and has not begun never
     /// begins, and one under way never completes. A frame that was fully
-    /// queued before this may still be read. Then the card is shown
-    /// marked, from which moment core takes no decision for it; so a
-    /// decision found waiting after that is all there was. That one, and
-    /// one the answers' thread already holds, is given back: the request
-    /// waits again as it was, and its answer counts as not delivered.
+    /// queued before this may still be read. Then core is told of the
+    /// mark (`Requests::mark_native`). It shows the card marked where the
+    /// request still waits, and it counts the mark against a decision it
+    /// has already taken, in its own locked step: such a decision is
+    /// stale when it arrives, however late (`decisions.rs`). A decision
+    /// that already arrived, or that waits to be picked up, is given
+    /// back here: the request waits again as it was, and its answer
+    /// counts as not delivered.
     pub(super) fn lost(&self, model: &mut Model, pending: &Pending, now: i64) {
         let id = pending.id();
         model.cut_writing(|request| request == Some(id.as_str()));
-        self.reach(model, pending, "unreachable", now);
-        let decided = model.waiters.get(&id).map(|waiter| {
+        self.log.line(&format!("unreachable id={id}"));
+        self.requests
+            .mark_native(&id, self.view(model, pending, now));
+        // A decision core already handed over, which the answers' thread
+        // has not picked up, is taken from it here, so that its card is
+        // back at once and not at that thread's next look. This is not
+        // what keeps a stale decision from being sent: one that core has
+        // taken and not yet handed over is not seen here, and is stale
+        // all the same when it arrives.
+        let handed = model.waiters.get(&id).map(|waiter| {
             let said = waiter.response.try_recv();
             (said, waiter.wait)
         });
-        match decided {
+        match handed {
             Some((Ok(Some(_)), wait)) => {
                 model.waiters.remove(&id);
                 model.taken.insert(id.clone(), wait);
