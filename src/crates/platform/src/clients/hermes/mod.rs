@@ -21,6 +21,7 @@ use agent_hud_core::requests::Requests;
 use std::{path::Path, sync::Arc};
 
 mod answer;
+mod asking;
 mod control;
 mod cost;
 mod discovery;

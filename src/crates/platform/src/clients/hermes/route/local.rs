@@ -3,7 +3,7 @@
 //! same user, and only where the home, the pointer, the socket and its
 //! listener are the user's own (`unix.rs`). Its address is dialled as the
 //! gateway gave it, and only where that is this machine.
-use super::{Home, Route, Stop};
+use super::{Home, Inventory, Route, Stop};
 use crate::clients::hermes::control::Silent;
 use agent_hud_agents::hermes::{
     gateway::{Failure, Instance, Profile},
@@ -59,10 +59,16 @@ impl Local {
 impl Route for Local {
     /// The root home, then the home of each named profile, by name.
     fn homes(&self) -> Result<Vec<Home>, Silent> {
+        self.inventory().map(|told| told.homes)
+    }
+
+    /// The root home is told wherever it is there. The named profiles'
+    /// are whole only where `profiles` and everything in it could be read.
+    fn inventory(&self) -> Result<Inventory, Silent> {
         let root = std::fs::canonicalize(&self.root).map_err(|_| Silent::Absent)?;
         let mut homes = vec![Home::at(self.root.clone(), root, Profile::Default)];
-        homes.extend(named(&self.root));
-        Ok(homes)
+        let whole = named(&self.root, &mut homes);
+        Ok(Inventory { homes, whole })
     }
 
     fn exchange(&self, home: &Home, line: &[u8], timeout: Duration) -> Result<Vec<u8>, Silent> {
@@ -95,22 +101,39 @@ impl Route for Local {
     }
 }
 
-/// The homes of the named profiles of the Hermes root `root`: each folder
-/// in its `profiles` that Hermes would name a profile by. A `profiles`
-/// that cannot be read lists none, which says nothing of which there are.
-fn named(root: &Path) -> Vec<Home> {
-    let Ok(folders) = std::fs::read_dir(root.join("profiles")) else {
-        return Vec::new();
+/// Adds the homes of the named profiles of the Hermes root `root`: each
+/// folder in its `profiles` that Hermes would name a profile by. Says
+/// whether those are all of them. They are where there is no `profiles`,
+/// and where it and every folder in it could be read. They are not where
+/// `profiles` cannot be opened, an entry of it cannot be read, or a
+/// folder in it cannot be resolved though it is there: a home that is
+/// missing from such a list is not known to be gone.
+fn named(root: &Path, homes: &mut Vec<Home>) -> bool {
+    use std::io::ErrorKind::NotFound;
+    let folders = match std::fs::read_dir(root.join("profiles")) {
+        Ok(folders) => folders,
+        Err(error) => return error.kind() == NotFound,
     };
-    let home = |folder: std::fs::DirEntry| {
-        let profile = Profile::folder(folder.file_name().to_str()?)?;
-        let path = std::fs::canonicalize(folder.path()).ok()?;
-        path.is_dir()
-            .then(|| Home::at(folder.path(), path, profile))
-    };
-    let mut homes: Vec<Home> = folders.flatten().filter_map(home).collect();
-    homes.sort_by(|a, b| a.profile().cmp(b.profile()));
-    homes
+    let (mut whole, first) = (true, homes.len());
+    for folder in folders {
+        let Ok(folder) = folder else {
+            whole = false;
+            continue;
+        };
+        let name = folder.file_name();
+        let Some(profile) = name.to_str().and_then(Profile::folder) else {
+            continue;
+        };
+        match std::fs::canonicalize(folder.path()) {
+            Ok(path) if path.is_dir() => homes.push(Home::at(folder.path(), path, profile)),
+            Ok(_) => {}
+            // Removed since it was listed: not there.
+            Err(error) if error.kind() == NotFound => {}
+            Err(_) => whole = false,
+        }
+    }
+    homes[first..].sort_by(|a, b| a.profile().cmp(b.profile()));
+    whole
 }
 
 /// The folder Hermes makes for the socket of `home` where the home cannot

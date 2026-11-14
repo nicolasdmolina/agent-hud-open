@@ -46,6 +46,8 @@ mod reverify26;
 mod reverify3;
 #[path = "tests/round3.rs"]
 mod round3;
+#[path = "tests/round4.rs"]
+mod round4;
 #[path = "tests/route.rs"]
 mod route;
 #[path = "tests/script.rs"]

@@ -3,7 +3,7 @@
 //! is not this machine is refused before anything is dialled.
 use super::super::{
     control::Silent,
-    route::{local::Local, Home, Route, Stop},
+    route::{local::Local, Home, Inventory, Route, Stop},
     socket::Socket,
 };
 use super::{
@@ -93,15 +93,19 @@ impl Way {
 
 impl Route for Way {
     fn homes(&self) -> Result<Vec<Home>, Silent> {
+        self.inventory().map(|told| told.homes)
+    }
+
+    fn inventory(&self) -> Result<Inventory, Silent> {
         self.asked().homes += 1;
         if self.shut.load(Ordering::Acquire) {
             return Err(Silent::Absent);
         }
-        let mut homes = self.local.homes()?;
+        let mut told = self.local.inventory()?;
         if self.backwards.load(Ordering::Acquire) {
-            homes.reverse();
+            told.homes.reverse();
         }
-        Ok(homes)
+        Ok(told)
     }
 
     fn exchange(&self, home: &Home, line: &[u8], timeout: Duration) -> Result<Vec<u8>, Silent> {

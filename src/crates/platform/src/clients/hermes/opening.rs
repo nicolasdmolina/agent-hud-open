@@ -26,8 +26,9 @@
 //! `session.resume` goes out. The model is locked to list the stream and
 //! to take it off, never across the route or the socket.
 use super::{
+    asking::home,
     control::{self, Silent},
-    link::{home, silent},
+    link::silent,
     socket::Socket,
     visit::Held,
     wire::Line,

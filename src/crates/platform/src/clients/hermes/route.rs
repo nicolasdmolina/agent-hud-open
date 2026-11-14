@@ -76,6 +76,16 @@ pub(crate) trait Stop: Sync {
     fn wait(&self, time: Duration) -> bool;
 }
 
+/// The homes of a machine, as one reading found them.
+pub(crate) struct Inventory {
+    pub(crate) homes: Vec<Home>,
+    /// Every home there is was read, so one that is not among `homes` is
+    /// not there. Not so where some could not be read (a `profiles`
+    /// folder that cannot be opened): what is missing then is not known
+    /// to be gone.
+    pub(crate) whole: bool,
+}
+
 pub(crate) trait Route: Send + Sync {
     /// The Hermes homes on the machine, each with its links resolved: the
     /// root home, which is the default profile's, and the home of every
@@ -83,6 +93,14 @@ pub(crate) trait Route: Send + Sync {
     /// says nothing of which homes there are; and a home that is not
     /// listed is not known to be gone.
     fn homes(&self) -> Result<Vec<Home>, Silent>;
+
+    /// The same homes, with whether they are all there are. A route that
+    /// cannot tell says they are: it then errs in `homes` where it cannot
+    /// read them.
+    fn inventory(&self) -> Result<Inventory, Silent> {
+        let (homes, whole) = (self.homes()?, true);
+        Ok(Inventory { homes, whole })
+    }
 
     /// One exchange with the control socket of `home`: `line` goes in,
     /// and what the gateway answers comes back, its first line whole.

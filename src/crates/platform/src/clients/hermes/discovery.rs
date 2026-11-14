@@ -12,11 +12,13 @@
 //! `settle.rs`, and a look that reached nothing changes nothing.
 //!
 //! A look that missed a reply is not whole (`Seen::missed`): a control
-//! socket was there and did not answer in time, or could not be read or
-//! trusted, or its gateway is still starting. Whoever did not answer may
-//! still claim what it claimed, so such a look settles no contest. A
-//! home with no socket misses nothing by itself; a gateway that was
-//! followed and was not heard keeps its claims all the same (`settle.rs`).
+//! socket was there and did not answer in time, or answered what cannot
+//! be read, or its gateway is still starting. Something is there and may
+//! claim, so such a look settles no contest. A home with no socket, one
+//! that cannot be entered and one that is not the user's own miss
+//! nothing by themselves: no gateway there can be asked, now or at the
+//! next look. A gateway that was followed and was not heard keeps its
+//! claims all the same, whatever its home answers (`settle.rs`).
 //!
 //! A look is taken when the observer starts and then by the clock, and
 //! at once when a follower asks: it lost its socket, it found another
@@ -104,10 +106,15 @@ fn look(all: &Followers) -> Option<Seen> {
         }
         let answer = match control::ask(&*all.route, home, &line, all.pace.answer) {
             Ok(answer) => answer,
-            // No socket, or nobody listening. Whether that leaves a claim
-            // open is for whoever knows who answered there before.
-            Err(Silent::Absent) => continue,
-            Err(Silent::TimedOut | Silent::Garbled | Silent::Unsafe(_) | Silent::Unclear) => {
+            // No gateway to ask there, or none that can be asked: nobody
+            // listens, the way to the socket is closed to this user, or
+            // what is there is not the user's own. Such a home hides no
+            // claim that is on its way. Whether it leaves a claim open is
+            // for whoever knows who answered there before: a follower
+            // whose gateway was not heard keeps what it claims.
+            Err(Silent::Absent | Silent::Unclear | Silent::Unsafe(_)) => continue,
+            // Something is there and was not heard: it may claim.
+            Err(Silent::TimedOut | Silent::Garbled) => {
                 seen.missed = true;
                 continue;
             }
