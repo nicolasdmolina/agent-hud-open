@@ -26,6 +26,7 @@ const drafts = new Map<
 export function PermissionQuestionCard({
   request,
   disabled,
+  canDismiss = !disabled,
   pending,
   light = false,
   zh = false,
@@ -34,6 +35,8 @@ export function PermissionQuestionCard({
 }: {
   request: Approval;
   disabled: boolean;
+  /** Dismiss still works where answering does not (an unreachable client). */
+  canDismiss?: boolean;
   pending: boolean;
   light?: boolean;
   zh?: boolean;
@@ -117,7 +120,7 @@ export function PermissionQuestionCard({
     return (
       <QuestionAnswerElsewhere
         request={request}
-        disabled={disabled}
+        disabled={!canDismiss}
         light={light}
         zh={zh}
         openSettings={openSettings}

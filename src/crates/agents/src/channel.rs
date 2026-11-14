@@ -78,6 +78,20 @@ impl MachineState {
             Self::SameMachine => "same-machine",
         }
     }
+
+    /// The state a snapshot word names, as [`Self::word`] writes it.
+    pub fn from_word(word: &str) -> Option<Self> {
+        [
+            Self::Connected,
+            Self::Connecting,
+            Self::NotTrusted,
+            Self::CannotReach,
+            Self::NotCovered,
+            Self::SameMachine,
+        ]
+        .into_iter()
+        .find(|state| state.word() == word)
+    }
 }
 
 /// One machine a source's native channel knows, as it last said: the
@@ -92,6 +106,9 @@ pub struct MachineStatus {
     pub note: Option<String>,
     pub contact_ms: Option<i64>,
     pub history_checked_ms: Option<i64>,
+    /// The entry leads to the machine Agent HUD runs on. A list of only such
+    /// entries, with no note on it, is not shown.
+    pub here: bool,
 }
 
 /// Everything a source's native channel says of its machines, whole: the

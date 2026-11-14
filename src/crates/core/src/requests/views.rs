@@ -1,7 +1,7 @@
 //! What waits on the user, as the HUD and the hosts read it: the cards, the
 //! sessions they belong to, and when they next change.
 use super::{Content, Requests};
-use agent_hud_agents::{MachineStatus, Machines};
+use agent_hud_agents::{MachineState, MachineStatus, Machines};
 use serde_json::{Map, Value};
 use std::{collections::HashMap, sync::PoisonError};
 
@@ -193,14 +193,19 @@ impl Requests {
     }
 }
 
-/// One machine as the snapshot shows it; a field the channel did not give
-/// is left out.
+/// One machine as the snapshot shows it, with its state in the app's
+/// words; a field the channel did not give is left out, and `here` is there
+/// only for an entry that is this machine.
 fn machine_view(machine: &MachineStatus) -> Value {
     let mut view = serde_json::json!({
         "id": machine.id,
         "label": machine.label,
         "state": machine.state.word(),
+        "stateText": state_text(machine.state),
     });
+    if machine.here {
+        view["here"] = Value::Bool(true);
+    }
     let optional = [
         ("note", machine.note.clone().map(Value::String)),
         ("lastContactAt", machine.contact_ms.map(crate::iso)),
@@ -215,4 +220,17 @@ fn machine_view(machine: &MachineStatus) -> Value {
         }
     }
     view
+}
+
+/// A machine's state as the machines list says it.
+fn state_text(state: MachineState) -> String {
+    let (zh, en) = match state {
+        MachineState::Connected => ("已连接", "Connected"),
+        MachineState::Connecting => ("正在连接", "Connecting"),
+        MachineState::NotTrusted => ("尚未信任", "Not trusted yet"),
+        MachineState::CannotReach => ("无法连接", "Cannot reach"),
+        MachineState::NotCovered => ("不支持", "Not covered"),
+        MachineState::SameMachine => ("与另一项是同一台机器", "Same machine as another entry"),
+    };
+    crate::l10n::text(zh, en)
 }

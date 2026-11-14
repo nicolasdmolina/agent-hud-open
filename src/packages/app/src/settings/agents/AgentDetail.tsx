@@ -25,6 +25,7 @@ import { PanelBlocks } from "./PanelBlocks";
 import { AgentRelays } from "./AgentRelays";
 import { AgentWebSignIn } from "./AgentWebSignIn";
 import { Connection } from "./Connection";
+import { MachinesSection } from "./MachinesSection";
 
 export interface AgentDetailProps {
   t: Text;
@@ -254,6 +255,7 @@ export function AgentDetail({
             />
           </Section>
         )}
+        <MachinesSection t={t} snapshot={snapshot} source={source} />
         <PanelBlocks
           t={t}
           snapshot={snapshot}

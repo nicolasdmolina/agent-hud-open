@@ -572,3 +572,37 @@
   overflow: auto;
   padding: 4px 24px 32px;
 }
+
+/* The machines list's state dots (Settings → Agents): well, on its way,
+ * needs a look, cannot be reached, or not followed; each in the system
+ * colour of the window's look. */
+.settings-machine-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #8e8e93;
+}
+.settings-machine-dot.is-connected {
+  background: #30d158;
+}
+.settings-machine-dot.is-connecting {
+  background: #ffd60a;
+}
+.settings-machine-dot.is-not-trusted {
+  background: #ff9f0a;
+}
+.settings-machine-dot.is-cannot-reach {
+  background: #ff453a;
+}
+[data-theme="light"] .settings-machine-dot.is-connected {
+  background: #34c759;
+}
+[data-theme="light"] .settings-machine-dot.is-connecting {
+  background: #ffcc00;
+}
+[data-theme="light"] .settings-machine-dot.is-not-trusted {
+  background: #ff9500;
+}
+[data-theme="light"] .settings-machine-dot.is-cannot-reach {
+  background: #ff3b30;
+}

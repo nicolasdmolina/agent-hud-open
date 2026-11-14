@@ -12,6 +12,12 @@ pub const DEMO_REQUESTS: [(&str, i64); 5] = [
     ("demo-read", 9),
 ];
 
+/// A script's own request, as asked at `at`.
+pub fn demo_asked(mut view: Value, at: i64) -> Value {
+    view["createdAt"] = iso(at);
+    view
+}
+
 /// One of the demo's requests, as asked at `at`, in the shape a request card
 /// reads. No client waits behind it.
 pub fn demo_request(id: &str, at: i64) -> Option<Value> {

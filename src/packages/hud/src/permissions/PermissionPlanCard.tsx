@@ -16,12 +16,15 @@ const planDrafts = new Map<string, { noting: boolean; feedback: string }>();
 export function PermissionPlanCard({
   request,
   disabled,
+  canDismiss = !disabled,
   light = false,
   zh = false,
   answer,
 }: {
   request: Approval;
   disabled: boolean;
+  /** Dismiss still works where answering does not (an unreachable client). */
+  canDismiss?: boolean;
   light?: boolean;
   zh?: boolean;
   answer: (decision: RequestDecision) => void | Promise<void>;
@@ -221,7 +224,7 @@ export function PermissionPlanCard({
           </span>
           <span style={{ flex: 1, minWidth: 8 }} />
           <CardButton
-            disabled={disabled}
+            disabled={!canDismiss}
             onClick={() => void answer({ kind: "leave" })}
             edge={ink(0.18)}
             color={secondary}

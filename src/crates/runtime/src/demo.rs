@@ -6,7 +6,10 @@
 //! arrive and leave, what windows read, and when the panel opens.
 use crate::Runtime;
 use agent_hud_core::{
-    demo::{demo_projection, demo_request, DemoAction, DemoScript, DemoSessions, DEMO_REQUESTS},
+    demo::{
+        demo_asked, demo_machines, demo_projection, demo_request, DemoAction, DemoScript,
+        DemoSessions, DEMO_REQUESTS,
+    },
     requests::Ticket,
     AgentHudCore,
 };
@@ -26,6 +29,8 @@ pub(crate) struct Demo {
     next: usize,
     /// Kept so that answering a demo request is delivered; no client waits.
     tickets: HashMap<String, Ticket>,
+    /// The script's own requests as they were asked, to mark in place.
+    views: HashMap<String, serde_json::Value>,
 }
 
 impl Runtime {
@@ -55,7 +60,11 @@ impl Runtime {
             run: 0,
             next: 0,
             tickets: HashMap::new(),
+            views: HashMap::new(),
         };
+        if let Some(script) = &demo.script {
+            core.demo_settings(&script.settings)?;
+        }
         let running = demo.script.as_ref().map(|script| script.running.clone());
         core.seed_demo(now, running.as_deref(), &mut demo.sessions)?;
         core.set_account_projection(demo_projection(now, &demo.used));
@@ -138,6 +147,29 @@ impl Runtime {
                             .set_account_projection(demo_projection(now, &demo.used));
                     }
                     DemoAction::Panel(open) => panel.push(open),
+                    DemoAction::Request(id, view) => {
+                        let view = demo_asked(view, now);
+                        let requests = self.core.requests();
+                        if let Some(ticket) =
+                            requests.register_native(id.clone(), view.clone(), now)
+                        {
+                            demo.tickets.insert(id.clone(), ticket);
+                            demo.views.insert(id, view);
+                        }
+                    }
+                    DemoAction::Mark(id, reason) => {
+                        if let Some(view) = demo.views.get(&id) {
+                            let mut view = view.clone();
+                            if let Some(reason) = reason {
+                                view["unreachable"] = serde_json::Value::String(reason);
+                            }
+                            self.core.requests().refresh_native(&id, view);
+                        }
+                    }
+                    DemoAction::Machines(source, step) => {
+                        let machines = demo_machines(&step, now)?;
+                        self.core.requests().set_machines(&source, &machines);
+                    }
                 }
             }
             Ok(())
@@ -162,6 +194,7 @@ impl Runtime {
         for id in std::mem::take(&mut demo.tickets).into_keys() {
             self.core.requests().cancel(&id);
         }
+        demo.views.clear();
         demo.used = script.used.clone();
         self.core
             .set_account_projection(demo_projection(now, &demo.used));
@@ -247,6 +280,59 @@ mod tests {
         ));
         assert_eq!(waiting(&mut runtime), 0);
         assert_eq!(runtime.demo_next_at(), Some(start + 5_000));
+    }
+
+    #[test]
+    fn a_script_asks_its_own_request_marks_it_in_place_and_tells_machines() {
+        let folder = tempfile::tempdir().unwrap();
+        let view = json!({"title": "Pick", "source": "far-client", "toolName": "ask", "input": "",
+            "sessionId": "far-client:s1", "allowsAlways": false, "kind": "question", "machine": "Studio"});
+        let script = DemoScript::from_json(&json!({
+            "settings": {"language": "zh-CN", "approvalWaitMinutes": 1},
+            "steps": [
+                {"at": 1, "do": "request", "request": "q1", "view": view},
+                {"at": 2, "do": "mark", "request": "q1", "reason": "Out of reach"},
+                {"at": 3, "do": "machines", "source": "far-client", "note": "Unread",
+                    "list": [{"id": "a", "label": "Studio", "state": "connected", "contactAgo": 5}]},
+                {"at": 4, "do": "unmark", "request": "q1"}
+            ]
+        }))
+        .unwrap();
+        let mut runtime = Runtime::demo(folder.path().join("demo"), Some(script)).unwrap();
+        let start = runtime.demo.as_ref().unwrap().started_ms;
+        let card = |runtime: &mut Runtime| {
+            let snapshot = runtime.core.request("snapshot", Value::Null).unwrap();
+            assert_eq!(snapshot["settings"]["language"], "zh-CN");
+            assert_eq!(snapshot["settings"]["approvalWaitMinutes"], 1);
+            snapshot["approvals"][0].clone()
+        };
+        runtime.demo_play(start + 1_000).unwrap();
+        let asked = card(&mut runtime);
+        assert_eq!(asked["machine"], "Studio");
+        assert!(asked.get("unreachable").is_none());
+        runtime.demo_play(start + 2_000).unwrap();
+        let marked = card(&mut runtime);
+        assert_eq!(marked["unreachable"], "Out of reach");
+        assert_eq!(marked["createdAt"], asked["createdAt"], "changed in place");
+        // Core refuses an answer to the marked card and keeps it.
+        let answer = json!({"id": "q1", "decision": {"kind": "answer", "answers": {}}});
+        assert!(runtime
+            .core
+            .request("answer_request", answer.clone())
+            .is_err());
+        assert_eq!(card(&mut runtime)["id"], "q1");
+        runtime.demo_play(start + 3_000).unwrap();
+        let snapshot = runtime.core.request("snapshot", Value::Null).unwrap();
+        assert_eq!(snapshot["machines"]["far-client"][0]["label"], "Studio");
+        // The words follow the language setting, which is one for the whole
+        // process: another test's snapshot may have set it since.
+        let words = &snapshot["machines"]["far-client"][0]["stateText"];
+        assert!(words == "已连接" || words == "Connected", "{words}");
+        assert_eq!(snapshot["machinesNote"]["far-client"], "Unread");
+        runtime.demo_play(start + 4_000).unwrap();
+        let unmarked = card(&mut runtime);
+        assert!(unmarked.get("unreachable").is_none());
+        assert_eq!(unmarked["createdAt"], asked["createdAt"]);
     }
 
     #[test]
