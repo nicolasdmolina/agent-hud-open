@@ -31,6 +31,7 @@ Deliberate differences:
 - The Windows and Linux adapters.
 - Agent HUD Fork, ticket 31: core carries each source's list of machines, and a note when that list could not be read, to the snapshot as `machines` and `machinesNote`, keys Open's snapshot does not have. Both are left out while no channel tells a list, so nothing changes for Open's sources. See c03 #99 and FORK.md, "Machines list".
 - Agent HUD Fork, ticket 27: a native request's card can say that its client cannot be reached (`unreachable`, a key Open's request views do not have). Such a request stays, takes no decision but being left alone, and a request whose taken decision could not be sent is put back as it was, with the hold it had. A view without the key is answered exactly as before. See c03 #100 and FORK.md, "Cards out of reach".
+- Agent HUD Fork, ticket 38: a far session's row, its card and its page show the machine it runs on, a card whose client cannot be reached says so and takes no answer, and Settings lists the machines an agent's channel follows (c06 #114, c07 #114 and #115, c09 #84, c10 #100). Demo scripts take steps of the fork's own to show these from fixture data (c09 #85). See FORK.md, "Machine label and machines list UI".
 - Decided 2026-10-20:
   - during the preview, client hooks default off and install only with a delegated fixed executable, so a preview build never rewrites existing client hooks;
   - the Settings window opens at launch with a Dock icon (since 2026-10-21 the HUD shows from the first run, as in Open; hiding it stays an extra choice);
@@ -53,12 +54,12 @@ Open is the floor, not the ceiling. Next must not do worse than Open; where it c
 | [c03](c03-hooks-store-ledger.md) | Hooks, permissions, collector, store, ledger | 106 | 44 | 8 | 6 | 4 | 8 | 28 | 8 |
 | [c04](c04-models-logic.md) | Models, quota math, session phases, formatting, demo | 122 | 49 | 3 | 7 | 18 | 12 | 26 | 7 |
 | [c05](c05-panel-mcp.md) | Panel layout, HUD style, MCP tools | 96 | 23 | 10 | 1 | 15 | 2 | 44 | 1 |
-| [c06](c06-notch-surface.md) | Island, hover panel, Simple mode, HUD windows | 119 | 40 | 5 | 1 | 18 | 11 | 41 | 3 |
-| [c07](c07-glow-alerts-theme.md) | Glow, alerts, permission cards, theme | 119 | 38 | 3 | 5 | 24 | 6 | 39 | 4 |
+| [c06](c06-notch-surface.md) | Island, hover panel, Simple mode, HUD windows | 120 | 40 | 6 | 1 | 18 | 11 | 41 | 3 |
+| [c07](c07-glow-alerts-theme.md) | Glow, alerts, permission cards, theme | 121 | 38 | 5 | 5 | 24 | 6 | 39 | 4 |
 | [c08](c08-bots.md) | Bots and Clawd | 58 | 35 | 1 | 2 | 1 | 1 | 15 | 3 |
-| [c09](c09-app-settings.md) | App lifecycle, Settings, menu bar | 90 | 25 | 6 | 6 | 6 | 9 | 33 | 5 |
-| [c10](c10-statistics-debug.md) | Statistics, sessions window, debug, recording | 101 | 14 | 1 | 9 | 13 | 8 | 54 | 2 |
-| **Total** | | **1,219** | **407** | **50** | **52** | **176** | **87** | **401** | **46** |
+| [c09](c09-app-settings.md) | App lifecycle, Settings, menu bar | 92 | 25 | 8 | 6 | 6 | 9 | 33 | 5 |
+| [c10](c10-statistics-debug.md) | Statistics, sessions window, debug, recording | 102 | 14 | 2 | 9 | 13 | 8 | 54 | 2 |
+| **Total** | | **1,225** | **407** | **56** | **52** | **176** | **87** | **401** | **46** |
 
 `pnpm run parity:ledger` recounts this table from the rows; `pnpm run check` fails when it is stale.
 
