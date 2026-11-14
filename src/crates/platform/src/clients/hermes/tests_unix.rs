@@ -34,6 +34,8 @@ mod live;
 mod reconnect;
 #[path = "tests/replies.rs"]
 mod replies;
+#[path = "tests/reverify25.rs"]
+mod reverify25;
 #[path = "tests/route.rs"]
 mod route;
 #[path = "tests/script.rs"]

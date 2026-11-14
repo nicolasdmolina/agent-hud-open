@@ -162,6 +162,14 @@ impl Drop for Observer {
     }
 }
 
+/// What a route waits on beside its own work: the observer stopping.
+impl route::Stop for Shared {
+    fn wait(&self, time: Duration) -> bool {
+        self.pause(time);
+        !self.active()
+    }
+}
+
 impl Shared {
     pub(super) fn active(&self) -> bool {
         self.active.load(Ordering::Acquire)

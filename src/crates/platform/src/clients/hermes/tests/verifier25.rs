@@ -44,7 +44,7 @@ fn verifier25_identify_after_home_alias_changes_keeps_forks_refusal() {
 mod ssh_contract {
     use super::super::super::{
         control::Silent,
-        route::{local::Local, Home, Route},
+        route::{local::Local, Home, Route, Stop},
     };
     use super::*;
     use agent_hud_agents::hermes::gateway::{Failure, Instance};
@@ -71,12 +71,12 @@ mod ssh_contract {
         fn named(&self, home: &Home) -> Cow<'_, str> {
             self.local.named(home)
         }
-        fn prepare(&self, instance: &Instance) -> Result<(), Failure> {
+        fn prepare(&self, instance: &Instance, stop: &dyn Stop) -> Result<(), Failure> {
             self.events
                 .lock()
                 .unwrap()
                 .push("accepted-instance/forward".into());
-            self.local.prepare(instance)
+            self.local.prepare(instance, stop)
         }
         fn dial(&self, instance: &Instance) -> Result<TcpStream, Failure> {
             self.events.lock().unwrap().push("dial".into());

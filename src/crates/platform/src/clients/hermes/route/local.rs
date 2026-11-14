@@ -3,7 +3,7 @@
 //! same user, and only where the home, the pointer, the socket and its
 //! listener are the user's own (`unix.rs`). Its address is dialled as the
 //! gateway gave it, and only where that is this machine.
-use super::{Home, Route};
+use super::{Home, Route, Stop};
 use crate::clients::hermes::control::Silent;
 use agent_hud_agents::hermes::{
     gateway::{Failure, Instance},
@@ -75,7 +75,7 @@ impl Route for Local {
     }
 
     /// Nothing stands between this machine and its own gateway.
-    fn prepare(&self, _instance: &Instance) -> Result<(), Failure> {
+    fn prepare(&self, _instance: &Instance, _stop: &dyn Stop) -> Result<(), Failure> {
         Ok(())
     }
 

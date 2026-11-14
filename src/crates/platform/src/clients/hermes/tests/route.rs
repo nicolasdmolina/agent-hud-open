@@ -3,10 +3,13 @@
 //! is not this machine is refused before anything is dialled.
 use super::super::{
     control::Silent,
-    route::{local::Local, Home, Route},
+    route::{local::Local, Home, Route, Stop},
     socket::Socket,
 };
-use super::{fake::Fake, lab, until};
+use super::{
+    fake::{Fake, Hold},
+    lab, until,
+};
 use agent_hud_agents::hermes::gateway::{
     granted, identify, identify_line, ticket_line, Failure, Identified, Instance, Scope,
 };
@@ -17,7 +20,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -30,6 +33,9 @@ pub struct Way {
     /// A route that is shut tells of no home, as one whose machine cannot
     /// be reached.
     pub shut: AtomicBool,
+    /// Holds every `prepare` until released, whether or not the one who
+    /// asked has stopped: a route that does not listen.
+    pub deaf: Mutex<Option<Arc<Hold>>>,
     pub asked: Mutex<Asked>,
 }
 
@@ -51,6 +57,7 @@ impl Way {
         Self {
             local: Local::at(home),
             shut: AtomicBool::new(false),
+            deaf: Mutex::default(),
             asked: Mutex::default(),
         }
     }
@@ -80,9 +87,16 @@ impl Route for Way {
         self.local.named(home)
     }
 
-    fn prepare(&self, instance: &Instance) -> Result<(), Failure> {
+    fn prepare(&self, instance: &Instance, stop: &dyn Stop) -> Result<(), Failure> {
         self.asked().prepared.push(instance.origin.clone());
-        self.local.prepare(instance)
+        let held = self.deaf.lock().unwrap().clone();
+        if let Some(held) = held {
+            held.entered.store(true, Ordering::Release);
+            while !held.released.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        self.local.prepare(instance, stop)
     }
 
     fn dial(&self, instance: &Instance) -> Result<TcpStream, Failure> {
@@ -176,6 +190,34 @@ fn a_route_that_is_shut_reaches_no_gateway_though_one_runs() {
     // The same observer finds it once the route leads there.
     lab.route.shut.store(false, Ordering::Release);
     until("the gateway is found", || gateway.world().sockets == 1);
+}
+
+#[test]
+fn once_the_observer_has_stopped_no_ticket_is_asked_for_whatever_the_route_answers() {
+    let mut lab = lab();
+    let gateway = Fake::start(&lab.home, "instance-1");
+    let held = Arc::new(Hold::default());
+    *lab.route.deaf.lock().unwrap() = Some(held.clone());
+    lab.follow();
+    until("the route is told of the instance", || {
+        held.entered.load(Ordering::Acquire)
+    });
+    // Stopped while the route still prepares. This route does not listen
+    // for that, and says all is well once it is let go.
+    lab.observer.take();
+    held.released.store(true, Ordering::Release);
+    std::thread::sleep(Duration::from_millis(300));
+    let (verbs, dials) = {
+        let asked = lab.route.asked();
+        (asked.verbs.clone(), asked.dials.clone())
+    };
+    assert_eq!(verbs, ["identify"]);
+    assert!(dials.is_empty(), "{dials:?}");
+    let (granted, sockets) = {
+        let world = gateway.world();
+        (world.granted.len(), world.sockets + world.turned_away)
+    };
+    assert_eq!((granted, sockets), (0, 0));
 }
 
 #[test]

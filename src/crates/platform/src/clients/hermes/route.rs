@@ -4,7 +4,8 @@
 //! one of them, and a stream to a gateway the model accepted. Each of the
 //! last two has a step that goes with it: how the home is named once its
 //! gateway has answered (`named`), and what has to be in place for an
-//! accepted gateway before a ticket is asked of it (`prepare`). The
+//! accepted gateway before a ticket is asked of it (`prepare`), which
+//! stops when the connection does (`Stop`). The
 //! connection names no path, no socket and no address of its own; it
 //! asks the route, and hands back what the route gave it.
 //!
@@ -50,6 +51,19 @@ impl Home {
     }
 }
 
+/// Whether whoever asked a route for something still wants it. What a
+/// route does for `prepare` can take time, and the one who asked may stop
+/// meanwhile (client hooks turned off): the route looks here while it
+/// waits, and gives up as soon as this says stopped.
+pub(crate) trait Stop: Sync {
+    /// Waits `time`, or less where the asker stops first, and says whether
+    /// it has stopped. No time at all only asks. Nothing here calls it
+    /// yet: the route to this machine has nothing to prepare, so nothing
+    /// to wait for.
+    #[allow(dead_code)]
+    fn wait(&self, time: Duration) -> bool;
+}
+
 pub(crate) trait Route: Send + Sync {
     /// The Hermes homes on the machine, the root home first, each with
     /// its links resolved. An error where they cannot be told just now,
@@ -73,8 +87,11 @@ pub(crate) trait Route: Send + Sync {
     /// asked for: a ticket lasts thirty seconds, and nothing slow may come
     /// between it and the dial. `instance` is one the model's `identify()`
     /// accepted from a home of this route. Asked before every ticket, so a
-    /// route keeps what it made and makes it once.
-    fn prepare(&self, instance: &Instance) -> Result<(), Failure>;
+    /// route keeps what it made and makes it once. Whatever in it waits,
+    /// waits on `stop` too: once the asker has stopped, the route ends what
+    /// it began for this call and says so with a failure, and nothing of
+    /// it goes on afterwards.
+    fn prepare(&self, instance: &Instance, stop: &dyn Stop) -> Result<(), Failure>;
 
     /// A stream to `instance`, which the model's `identify()` accepted
     /// from a home of this route and `prepare` was asked for. Nothing but

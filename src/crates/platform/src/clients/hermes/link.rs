@@ -125,16 +125,29 @@ fn identified(shared: &Shared) -> Result<Instance, Next> {
 pub(super) enum Shut {
     Denied(Denied),
     Failed(Failure),
+    /// The observer stopped before a ticket was asked for. Nothing more is
+    /// asked of the gateway, and there is nothing to tell anyone.
+    Stopped,
 }
 
 /// A new socket on `instance`, for every profile it serves: the route is
-/// told of the instance, then a ticket is asked for, used once and gone. Nothing is told to the model: a
+/// told of the instance, then a ticket is asked for, used once and gone.
+/// None of it once the observer has stopped. Nothing is told to the model: a
 /// socket for one answer or one snapshot failing says nothing of the
 /// connection the polls run on.
 pub(super) fn opened(shared: &Shared, instance: &Instance) -> Result<Socket, Shut> {
     // What the route needs for this instance is in place before the
-    // ticket is asked for, since a ticket does not last.
-    shared.route.prepare(instance).map_err(Shut::Failed)?;
+    // ticket is asked for, since a ticket does not last. The route hears
+    // of a stop while it works on that, and whatever it answers, no ticket
+    // is asked for and nothing is dialled once the observer has stopped.
+    let prepared = match shared.active() {
+        true => shared.route.prepare(instance, shared),
+        false => return Err(Shut::Stopped),
+    };
+    if !shared.active() {
+        return Err(Shut::Stopped);
+    }
+    prepared.map_err(Shut::Failed)?;
     let (grant, _) = asked(shared, &ticket_line(instance, Scope::Host))
         .map_err(|why| Shut::Failed(silent(why)))?;
     let ticket = granted(&grant, instance).map_err(Shut::Denied)?;
@@ -148,6 +161,7 @@ fn dial(shared: &Shared) -> Result<Socket, Next> {
         match shut {
             Shut::Denied(denied) => shared.apply(Input::Denied(denied)),
             Shut::Failed(failure) => shared.apply(Input::Lost(failure)),
+            Shut::Stopped => {}
         }
         match shared.model().gateway.connection() {
             Connection::Unsupported(_) => Next::Rarely,

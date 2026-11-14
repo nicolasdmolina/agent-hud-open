@@ -134,6 +134,8 @@ impl<'a> Visit<'a> {
             Ok(socket) => socket,
             Err(Shut::Denied(denied)) => return turned(format!("{denied:?}")),
             Err(Shut::Failed(failure)) => return turned(format!("{failure:?}")),
+            // The observer stopped: the visit is over before it began.
+            Err(Shut::Stopped) => return None,
         };
         socket.write_within(shared.pace.write);
         // Listed before anything is written, so a stop always finds it.
