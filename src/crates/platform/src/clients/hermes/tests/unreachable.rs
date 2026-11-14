@@ -50,8 +50,13 @@ pub fn needs(core: &mut AgentHudCore) -> usize {
 
 /// The gateway, followed, with its first polls behind it.
 pub fn started(lab: &mut Lab) -> Fake {
+    started_at(lab, super::quick())
+}
+
+/// The same, followed at `pace`.
+pub fn started_at(lab: &mut Lab, pace: super::super::Pace) -> Fake {
     let gateway = Fake::start(&lab.home, "instance-1");
-    lab.follow();
+    lab.follow_at(pace);
     until("the first polls ran", || {
         gateway.world().calls("session.active_list").len() >= 2
     });

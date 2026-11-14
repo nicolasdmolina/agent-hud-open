@@ -7,7 +7,20 @@
 //! ids, and another test's answer waited at that gate (the verifier ran
 //! its probes one at a time). The gate is now the lab's own requests'
 //! (`Requests::reviewer27_hold_acceptance`), and so are the receipts the
-//! probes read. Two of the five failed on `4525903`:
+//! probes read.
+//!
+//! One more line is changed, in the cut-writer probe: its connection
+//! gives a frame a minute to get out, where the tests' usual pace gives
+//! three seconds. The probe keeps the gateway from reading the new
+//! answer while it lets the old writer return, and the new answer has to
+//! be still on its way when the gateway reads again. On a machine at
+//! load 70 to 155 those steps took over three seconds: the new answer
+//! gave up and its card came back, with its record kept, which is what
+//! the probe is about, and the probe then waited for an answer that was
+//! not coming (4 of 30 runs of the whole suite, and 12 of 36 at load
+//! 200). Nothing the probe asserts depends on that time.
+//!
+//! Two of the five failed on `4525903`:
 //!
 //! - `…acceptance_before_mark_publication_after_reconnect_needs_a_new_click`
 //!   holds core between taking a decision and handing it over, marks the
@@ -193,7 +206,13 @@ fn reviewer27_extra_old_cut_writer_must_not_remove_the_fresh_answers_receipt() {
     use serde_json::json;
     use std::time::Duration;
     let mut lab = lab();
-    let gateway = started(&mut lab);
+    // A minute for a frame to get out, where the tests' pace gives three
+    // seconds (see the top of this file).
+    let patient = super::super::Pace {
+        write: Duration::from_secs(60),
+        ..super::quick()
+    };
+    let gateway = super::unreachable::started_at(&mut lab, patient);
     let id = asks(&lab, &gateway);
     let shared = follower(&lab);
     let poll = Arc::new(Hold::default());
