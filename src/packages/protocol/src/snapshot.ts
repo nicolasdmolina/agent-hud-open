@@ -98,6 +98,10 @@ export interface MachineStatus {
     | "cannot-reach"
     | "not-covered"
     | "same-machine";
+  /** From Core: the state in the app's language. */
+  stateText: string;
+  /** The entry is the machine Agent HUD runs on. */
+  here?: boolean;
   note?: string;
   lastContactAt?: string;
   historyCheckedAt?: string;

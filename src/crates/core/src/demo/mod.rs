@@ -17,6 +17,7 @@ mod accounts;
 mod data;
 mod extra_lines;
 mod live;
+mod machines;
 mod quota;
 mod requests;
 pub mod script;
@@ -24,7 +25,8 @@ mod seed;
 mod transcript;
 
 pub use accounts::demo_projection;
-pub use requests::{demo_request, DEMO_REQUESTS};
+pub use machines::demo_machines;
+pub use requests::{demo_asked, demo_request, DEMO_REQUESTS};
 pub use script::{DemoAction, DemoScript, DemoStep};
 use transcript::{agent_lines, header, jsonl, reply, turn_lines};
 

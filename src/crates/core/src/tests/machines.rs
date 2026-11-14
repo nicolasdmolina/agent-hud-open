@@ -14,14 +14,52 @@ const SOURCE: &str = "far-client";
 /// 2025-10-09T08:53:20Z.
 const AT: i64 = 1_760_000_000_000;
 
-const STATES: [(MachineState, &str); 6] = [
-    (MachineState::Connected, "connected"),
-    (MachineState::Connecting, "connecting"),
-    (MachineState::NotTrusted, "not-trusted"),
-    (MachineState::CannotReach, "cannot-reach"),
-    (MachineState::NotCovered, "not-covered"),
-    (MachineState::SameMachine, "same-machine"),
+/// Each state, its word, and its words in Chinese and English.
+const STATES: [(MachineState, &str, [&str; 2]); 6] = [
+    (
+        MachineState::Connected,
+        "connected",
+        ["已连接", "Connected"],
+    ),
+    (
+        MachineState::Connecting,
+        "connecting",
+        ["正在连接", "Connecting"],
+    ),
+    (
+        MachineState::NotTrusted,
+        "not-trusted",
+        ["尚未信任", "Not trusted yet"],
+    ),
+    (
+        MachineState::CannotReach,
+        "cannot-reach",
+        ["无法连接", "Cannot reach"],
+    ),
+    (
+        MachineState::NotCovered,
+        "not-covered",
+        ["不支持", "Not covered"],
+    ),
+    (
+        MachineState::SameMachine,
+        "same-machine",
+        ["与另一项是同一台机器", "Same machine as another entry"],
+    ),
 ];
+
+/// A machine's view without its state's words, which follow the app's
+/// language (a setting other tests in this process may change), and those
+/// words.
+fn without_words(view: &Value) -> (Value, String) {
+    let mut view = view.clone();
+    let words = view
+        .as_object_mut()
+        .unwrap()
+        .remove("stateText")
+        .expect("every machine has its state's words");
+    (view, words.as_str().unwrap().to_owned())
+}
 
 fn machine(id: &str, state: MachineState) -> MachineStatus {
     MachineStatus {
@@ -31,6 +69,7 @@ fn machine(id: &str, state: MachineState) -> MachineStatus {
         note: Some(format!("Note on {id}")),
         contact_ms: Some(AT),
         history_checked_ms: Some(AT - 60_000),
+        here: false,
     }
 }
 
@@ -72,15 +111,17 @@ fn a_list_told_to_core_reaches_the_snapshot_with_every_field_in_each_state() {
     let temp = tempfile::tempdir().unwrap();
     let (mut core, _) = core(temp.path());
     let list = STATES.iter().enumerate();
-    let list = list.map(|(n, (state, _))| machine(&format!("m{n}"), *state));
+    let list = list.map(|(n, (state, ..))| machine(&format!("m{n}"), *state));
     core.requests
         .set_machines(SOURCE, &told(list.collect(), None));
     let snapshot = snapshot(&mut core);
     let shown = snapshot["machines"][SOURCE].as_array().unwrap();
     assert_eq!(shown.len(), STATES.len());
-    for (n, (_, word)) in STATES.iter().enumerate() {
+    for (n, (_, word, words)) in STATES.iter().enumerate() {
+        let (view, text) = without_words(&shown[n]);
+        assert!(words.contains(&text.as_str()), "{text} for {word}");
         assert_eq!(
-            shown[n],
+            view,
             json!({
                 "id": format!("m{n}"),
                 "label": format!("Label m{n}"),
@@ -106,13 +147,43 @@ fn an_absent_time_or_note_is_absent_from_the_snapshot_never_zero() {
         note: None,
         contact_ms: None,
         history_checked_ms: None,
+        here: false,
     };
     core.requests.set_machines(SOURCE, &told(vec![bare], None));
     let snapshot = snapshot(&mut core);
+    let (view, _) = without_words(&snapshot["machines"][SOURCE][0]);
     assert_eq!(
-        snapshot["machines"][SOURCE],
-        json!([{"id": "m", "label": "Mini", "state": "connecting"}])
+        view,
+        json!({"id": "m", "label": "Mini", "state": "connecting"})
     );
+    assert_eq!(snapshot["machines"][SOURCE].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn an_entry_that_is_this_machine_says_so_and_no_other_does() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut core, _) = core(temp.path());
+    let mut here = machine("here", MachineState::Connected);
+    here.here = true;
+    let far = machine("far", MachineState::Connected);
+    core.requests
+        .set_machines(SOURCE, &told(vec![here, far], None));
+    let snapshot = snapshot(&mut core);
+    assert_eq!(snapshot["machines"][SOURCE][0]["here"], json!(true));
+    assert!(snapshot["machines"][SOURCE][1].get("here").is_none());
+}
+
+#[test]
+fn every_state_has_words_of_its_own_in_each_language() {
+    for language in [0, 1] {
+        let words: std::collections::BTreeSet<_> =
+            STATES.iter().map(|(.., words)| words[language]).collect();
+        assert_eq!(words.len(), STATES.len());
+    }
+    for (state, word, _) in STATES {
+        assert_eq!(MachineState::from_word(word), Some(state));
+    }
+    assert_eq!(MachineState::from_word("asleep"), None);
 }
 
 #[test]
@@ -131,12 +202,13 @@ fn the_same_list_told_again_bumps_nothing_and_wakes_nothing() {
     assert_eq!(again.unwrap(), json!({"unchanged": true}));
 
     // Each changed field is a new list: one revision and one wake each.
-    let changes: [fn(&mut Machines); 7] = [
+    let changes: [fn(&mut Machines); 8] = [
         |m| m.list[0].label = "Mini 2".into(),
         |m| m.list[0].state = MachineState::CannotReach,
         |m| m.list[0].note = None,
         |m| m.list[0].contact_ms = Some(AT + 1_000),
         |m| m.list[0].history_checked_ms = None,
+        |m| m.list[0].here = true,
         |m| m.list_note = Some("y".into()),
         |m| m.list.push(machine("n", MachineState::NotCovered)),
     ];

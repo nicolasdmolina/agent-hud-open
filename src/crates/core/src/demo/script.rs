@@ -25,6 +25,16 @@ pub enum DemoAction {
     Quota(String, f64),
     /// The usage panel opens or closes, as hovering does.
     Panel(bool),
+    /// A request of the script's own arrives: its id, the view a card reads
+    /// (`createdAt` is the moment it arrives) and nothing waiting behind it.
+    Request(String, Value),
+    /// A request's client can no longer be reached, for this reason, or
+    /// (with none) can be again; the card is changed in place.
+    Mark(String, Option<String>),
+    /// A source tells the machines it knows: the list in the snapshot's
+    /// shape, with `contactAgo` and `historyAgo` in seconds before the step
+    /// in place of times, and the note on the list.
+    Machines(String, Value),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -43,6 +53,8 @@ pub struct DemoScript {
     pub steps: Vec<DemoStep>,
     /// Seconds after the last step before the script starts over.
     pub repeat_after: Option<f64>,
+    /// Settings the demo starts with, as the Settings window sets them.
+    pub settings: BTreeMap<String, Value>,
 }
 
 impl DemoScript {
@@ -91,6 +103,16 @@ impl DemoScript {
                         .as_bool()
                         .ok_or("A panel step needs \"open\"")?,
                 ),
+                "request" => DemoAction::Request(
+                    text(step, "request")?,
+                    Some(&step["view"])
+                        .filter(|view| view.is_object())
+                        .cloned()
+                        .ok_or("A request step needs a \"view\"")?,
+                ),
+                "mark" => DemoAction::Mark(text(step, "request")?, Some(text(step, "reason")?)),
+                "unmark" => DemoAction::Mark(text(step, "request")?, None),
+                "machines" => DemoAction::Machines(text(step, "source")?, step.clone()),
                 other => return Err(format!("Unknown demo step \"{other}\"")),
             };
             steps.push(DemoStep { at, action });
@@ -110,6 +132,12 @@ impl DemoScript {
                 .collect(),
             steps,
             repeat_after: value["repeatAfter"].as_f64(),
+            settings: value["settings"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
         })
     }
 
@@ -143,6 +171,7 @@ impl DemoScript {
                 ),
             ],
             repeat_after: Some(6.0),
+            settings: BTreeMap::new(),
         }
     }
 
