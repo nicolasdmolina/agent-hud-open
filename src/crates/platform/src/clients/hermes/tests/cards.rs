@@ -1,7 +1,8 @@
 //! Cards: what Hermes asks shows, what it settles goes, and an answer
 //! given on a card reaches it on a socket of its own.
-use super::{fake::fixture, fake::Fake, fake::PROFILE, lab, until};
+use super::{fake::fixture, fake::Fake, fake::Hold, fake::PROFILE, lab, until};
 use serde_json::{json, Value};
+use std::sync::{atomic::Ordering, Arc};
 
 /// The frame the recorded client sent to `method`, as the connection must
 /// send it: the same parameters, and the profile a host's socket names.
@@ -33,15 +34,78 @@ fn what_hermes_asks_shows_and_goes_when_it_is_settled_elsewhere() {
     );
     let waits = [format!("hermes:{PROFILE}:{session}")];
     until("core is told the session waits", || lab.waiting() == waits);
+    // Every poll so far read the question in the events: none subscribed.
+    assert!(gateway.world().calls("session.resume").is_empty());
 
     // The other client answers: Hermes says it settled, and the card goes.
     gateway.play("question-answered-elsewhere", Some("clarify.settled"));
     until("the card goes", || lab.cards().is_empty());
     until("the session stops waiting", || lab.waiting().is_empty());
     assert!(lab.log().contains("why=Settled"), "{}", lab.log());
-    // Reading what waits never subscribed to the session.
+    // The poll's own socket never subscribes. A poll that listed the
+    // session as waiting before the settle and read its events after takes
+    // one snapshot on a socket of its own (the next test forces that).
+    let world = gateway.world();
+    let resumes = world.calls("session.resume");
+    assert!(resumes.len() <= 1, "{resumes:?}");
+    assert!(resumes.iter().all(|(socket, _)| *socket != 1));
+    assert_eq!(world.sockets, 1 + resumes.len());
+}
+
+/// A request settles after a poll listed its session as waiting and before
+/// that poll reads the session's events. The list says something waits and
+/// the events say nothing does. One read cannot tell a list a moment old
+/// from a stream that lost the event of a request still waiting, so the
+/// poll takes one snapshot, as the model's design says: a session listed
+/// waiting with nothing in its events to wait on gets one per stretch of
+/// waiting. Only one, on a socket of its own, and the card goes as settled.
+#[test]
+fn a_settle_between_a_polls_list_and_its_read_takes_one_snapshot() {
+    let mut lab = lab();
+    let gateway = Fake::start(&lab.home, "instance-1");
+    lab.follow();
+    lab.hears(&gateway, "question-answered-elsewhere", "clarify.request");
+    lab.card();
     assert!(gateway.world().calls("session.resume").is_empty());
-    assert_eq!(gateway.world().sockets, 1);
+
+    // Hold one poll's lists, one at a time, until the list of the
+    // session's profile is held. Its reply is already written: the session
+    // waits. The poll reads the events only once that reply is let go.
+    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let mut hold = Arc::new(Hold::default());
+    gateway.world().hold_next = Some(("session.active_list", hold.clone()));
+    shared.want_poll();
+    loop {
+        until("a list is held", || hold.entered.load(Ordering::Acquire));
+        let mut world = gateway.world();
+        let (_, held) = world.calls("session.active_list").pop().unwrap();
+        if held["params"]["profile"] == PROFILE {
+            break;
+        }
+        let next = Arc::new(Hold::default());
+        world.hold_next = Some(("session.active_list", next.clone()));
+        drop(world);
+        hold.released.store(true, Ordering::Release);
+        hold = next;
+    }
+    // Settled between the list and the read.
+    gateway.play("question-answered-elsewhere", Some("clarify.settled"));
+    hold.released.store(true, Ordering::Release);
+
+    until("the card goes", || lab.cards().is_empty());
+    until("the session stops waiting", || lab.waiting().is_empty());
+    assert!(lab.log().contains("why=Settled"), "{}", lab.log());
+    let resumes = gateway.world().calls("session.resume");
+    assert_eq!(resumes.len(), 1, "{resumes:?}");
+    assert_ne!(resumes[0].0, 1);
+    // The polls after it list the session as no longer waiting: no more.
+    let lists = gateway.world().calls("session.active_list").len();
+    until("two more polls", || {
+        gateway.world().calls("session.active_list").len() >= lists + 4
+    });
+    assert_eq!(gateway.world().calls("session.resume").len(), 1);
+    assert!(lab.cards().is_empty());
+    assert!(gateway.world().hold_next.is_none());
 }
 
 #[test]
