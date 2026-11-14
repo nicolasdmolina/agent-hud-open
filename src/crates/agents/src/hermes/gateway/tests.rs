@@ -12,6 +12,7 @@ mod completeness;
 mod cost;
 mod decisions;
 mod fake;
+mod far;
 mod handshake;
 mod live;
 mod machines;

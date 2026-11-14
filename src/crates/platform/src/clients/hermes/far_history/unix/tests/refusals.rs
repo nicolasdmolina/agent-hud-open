@@ -2,8 +2,8 @@
 //! error or answers in the wrong shape, and a machine with no history
 //! reader. Each stand-in holds a made-up "row" that must never be logged.
 use super::super::{Failure, Slots};
-use super::world::{sessions, settings, World, PYTHON};
-use crate::ssh_link::unix::tests::lab::{Lab, BIN};
+use super::world::{sessions, settings, World, BIN, PYTHON};
+use crate::ssh_link::unix::tests::lab::Lab;
 use crate::ssh_link::{End, FarCommand};
 use agent_hud_agents::hermes::far_history::{self as far, No, Rejected, Reply, Request};
 use std::time::Duration;
@@ -122,7 +122,10 @@ fn a_python_without_sqlite_is_no_history_on_this_machine() {
 fn a_machine_with_no_python3_is_no_history_on_this_machine() {
     // A far path with nothing on it but the lab's own folder, which holds
     // a shell and no `python3`.
-    let Some(lab) = Lab::start_on("") else { return };
+    let Some(lab) = Lab::start_with(&[("PATH", "{lab}/bin")]) else {
+        return;
+    };
+    std::fs::create_dir_all(lab.at(BIN)).unwrap();
     std::os::unix::fs::symlink("/bin/sh", lab.at(BIN).join("sh")).unwrap();
     let Some(world) = World::on(lab) else { return };
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());

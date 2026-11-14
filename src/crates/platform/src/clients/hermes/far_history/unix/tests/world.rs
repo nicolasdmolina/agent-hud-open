@@ -2,7 +2,7 @@
 //! the readers that run there.
 use super::super::{Reader, Settings};
 use super::schema;
-use crate::ssh_link::unix::tests::lab::{Lab, BIN};
+use crate::ssh_link::unix::tests::lab::Lab;
 use crate::ssh_link::{FarCommand, Folder, Link, Ran};
 use agent_hud_agents::hermes::far_history::{self as far, Cell, SESSION_COLUMNS, USAGE_COLUMNS};
 use agent_hud_agents::hermes::gateway::{machine_key, MachineKey};
@@ -19,6 +19,13 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+/// The folder, in the lab, a far command looks in first for its programs:
+/// empty unless a test puts a stand-in `python3` there.
+pub(super) const BIN: &str = "bin";
+/// A far path with that folder first, and then where the system keeps
+/// its own programs.
+pub(super) const PATH: &str = "{lab}/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
 /// The system's Python, which a stand-in `python3` hands over to.
 pub(super) const PYTHON: &str = "/usr/bin/python3";
@@ -55,11 +62,12 @@ pub(super) fn machine_of(home: &str) -> MachineKey {
 
 impl World {
     pub(super) fn start() -> Option<Self> {
-        Self::on(Lab::start()?)
+        Self::on(Lab::start_with(&[("PATH", PATH)])?)
     }
 
     pub(super) fn on(lab: Lab) -> Option<Self> {
         fs::create_dir_all(lab.at("home")).expect("the far home");
+        fs::create_dir_all(lab.at(BIN)).expect("the stand-ins' folder");
         // The lab is under a folder the system reaches through a link.
         let home = fs::canonicalize(lab.at("home")).expect("its own path");
         let folder = lab.folder();
