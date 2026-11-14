@@ -334,8 +334,10 @@ fn an_answer_that_cannot_be_sent_marks_its_card_until_a_poll_finds_it_waiting() 
     let before = times(&lab, &card);
     gateway.world().grants = false;
     lab.requests.answer(&id, &red(), now()).unwrap();
+    // Waited for on the card itself: the log says a line before the card
+    // has changed.
     until("the card is back and can be answered again", || {
-        lab.log().contains("reached id=") && lab.cards().len() == 1
+        lab.log().contains("reached id=") && lab.cards() == [card.clone()]
     });
     gateway.world().grants = true;
     let said = |what: &str| lab.log().find(what).unwrap();
