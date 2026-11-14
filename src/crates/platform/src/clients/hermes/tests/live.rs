@@ -47,12 +47,24 @@ fn follows_a_real_gateway() {
     let mut seen: std::collections::HashMap<String, std::time::Instant> = Default::default();
     let log = data.join("hermes-gateway.log");
     let mut shown = 0;
-    for _ in 0..seconds * 10 {
+    for tick in 0..seconds * 10 {
         std::thread::sleep(Duration::from_millis(100));
         let text = std::fs::read_to_string(&log).unwrap_or_default();
         print!("{}", &text[shown..]);
         shown = text.len();
         let now = chrono::Utc::now().timestamp_millis();
+        // Every five seconds: what each follower has told core, and how
+        // long ago it read it.
+        if tick % 50 == 49 {
+            let (states, cards) = (requests.native_states(), requests.views(now).len());
+            for follower in observer.followers() {
+                let reading = states.of("hermes", &follower.reader);
+                let told = reading.map_or(0, |reading| reading.sessions.len());
+                let age = reading.map_or(-1, |reading| now - reading.read_ms);
+                let reader = &follower.reader;
+                println!("told reader={reader} sessions={told} read_ms_ago={age} cards={cards}");
+            }
+        }
         for view in requests.views(now).iter().filter(|_| answers) {
             let id = view["id"].as_str().unwrap().to_owned();
             let first = *seen

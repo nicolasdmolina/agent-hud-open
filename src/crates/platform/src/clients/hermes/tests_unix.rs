@@ -26,6 +26,10 @@ mod cancelled;
 mod cards;
 #[path = "tests/fake.rs"]
 mod fake;
+#[path = "tests/followers.rs"]
+mod followers;
+#[path = "tests/gateways.rs"]
+mod gateways;
 #[path = "tests/handshake.rs"]
 mod handshake;
 #[path = "tests/live.rs"]
@@ -72,6 +76,10 @@ fn quick() -> Pace {
         // Longer than in the app, so that a test can stop the observer
         // or close a card while a write still waits on the gateway.
         write: Duration::from_secs(3),
+        // No look at the machine by the clock: these tests follow one
+        // gateway and count what is asked of its route. `followers.rs`
+        // turns it on.
+        discover: None,
         trace: false,
     }
 }
@@ -106,13 +114,17 @@ fn lab() -> Lab {
 impl Lab {
     /// Starts following the gateway of the home, as turning hooks on does.
     fn follow(&mut self) {
+        self.follow_at(quick());
+    }
+    /// The same, at `pace`.
+    fn follow_at(&mut self, pace: Pace) {
         let wake = Arc::new(|| {});
         let observer = Observer::start_on(
             self.route.clone(),
             &self.data,
             self.requests.clone(),
             wake,
-            quick(),
+            pace,
         );
         self.observer = Some(observer.unwrap());
     }

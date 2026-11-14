@@ -190,7 +190,9 @@ engine code that decides by client name. It goes in five slices:
    - `hermes::GATEWAY`, Hermes's local gateway, the live connection its
      desktop app uses. Its pure half (shapes, frames to cards, decisions to
      frames, state) is `agents/src/hermes/gateway/`; the sockets are
-     `platform/src/clients/hermes/`.
+     `platform/src/clients/hermes/`. A machine can run one gateway for all
+     of its profiles or one for each: every gateway found has a follower of
+     its own, which tells core under its own reader name.
 
    Each says what it carries (requests, quota) and on which OS it runs.
    Platform keeps them in `platform/src/clients/<id>/`, starts each only where

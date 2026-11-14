@@ -335,12 +335,17 @@ fn a_gateway_waiting_to_restart_can_still_be_answered() {
     let mut answer = ready("one", &["default"]);
     answer["state"] = json!("draining");
     let home = "/synthetic";
-    assert_eq!(identify(&answer, home), Identified::Wait("draining".into()));
+    assert_eq!(
+        identify(&answer, home, home),
+        Identified::Wait("draining".into())
+    );
     answer["drain_reason"] = json!("restart_wait");
-    assert!(matches!(identify(&answer, home), Identified::Ready(instance) if instance.draining));
+    assert!(
+        matches!(identify(&answer, home, home), Identified::Ready(instance) if instance.draining)
+    );
     answer["state"] = json!("stopped");
     assert_eq!(
-        identify(&answer, home),
+        identify(&answer, home, home),
         Identified::Failed(Failure::Invalid("invalid_runtime_state"))
     );
     // Only this machine's own gateway is ever dialled, and only over plain
@@ -357,7 +362,7 @@ fn a_gateway_waiting_to_restart_can_still_be_answered() {
         let mut answer = ready("one", &["default"]);
         answer["api_origin"] = json!(origin);
         assert_eq!(
-            identify(&answer, home),
+            identify(&answer, home, home),
             Identified::Unsupported(Unsupported::Origin),
             "{origin}"
         );
@@ -365,7 +370,7 @@ fn a_gateway_waiting_to_restart_can_still_be_answered() {
     let mut answer = ready("one", &["default"]);
     answer["api_origin"] = json!("http://[::1]:5000/");
     assert!(
-        matches!(identify(&answer, home), Identified::Ready(instance) if instance.port == 5000)
+        matches!(identify(&answer, home, home), Identified::Ready(instance) if instance.port == 5000)
     );
 }
 

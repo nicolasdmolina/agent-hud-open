@@ -424,14 +424,15 @@ pub fn replay(name: &str) -> Vec<String> {
         }
         // A socket opens only on a gateway that has just said it is ready.
         let (answer, home) = (&described, super::handshake::HOME);
+        let root = home;
         match run.gateway.connection() {
             Connection::Ready(_) => {}
             Connection::Disconnected => {
                 run.gateway
-                    .apply(Input::Identified { answer, home }, run.now_ms);
+                    .apply(Input::Identified { answer, home, root }, run.now_ms);
                 run.instance = run.instance();
             }
-            _ => run.apply(Input::Identified { answer, home }),
+            _ => run.apply(Input::Identified { answer, home, root }),
         }
         let base = run.now_ms;
         let mut calls: BTreeMap<u64, Value> = BTreeMap::new();

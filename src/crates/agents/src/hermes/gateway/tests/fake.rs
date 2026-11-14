@@ -241,6 +241,7 @@ pub fn identified(gateway: &mut Gateway, instance: &str) -> Vec<Effect> {
         Input::Identified {
             answer: &answer,
             home: "/synthetic",
+            root: "/synthetic",
         },
         0,
     )

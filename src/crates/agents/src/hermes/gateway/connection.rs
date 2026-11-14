@@ -104,9 +104,14 @@ pub enum Identified {
 }
 
 /// Reads the control socket's answer to `identify` for the gateway whose
-/// socket is under `home`. `home` is compared as written: the caller resolves
-/// links before asking, as Hermes's client does.
-pub fn identify(answer: &Value, home: &str) -> Identified {
+/// socket is under `home`, on a machine whose Hermes root home is `root`.
+/// Both are compared as written: the caller resolves links before asking,
+/// as Hermes's client does. The root says which profile each served home
+/// is (`Profile::in_root`): the root itself is the default profile, in
+/// whatever folder it lies, and `<root>/profiles/<name>` is a named one. A
+/// served home that is no profile of this root is left out: nothing here
+/// could name its sessions.
+pub fn identify(answer: &Value, home: &str, root: &str) -> Identified {
     if let Some(denied) = refused(answer) {
         return denied.into();
     }
@@ -129,12 +134,12 @@ pub fn identify(answer: &Value, home: &str) -> Identified {
         .into_iter()
         .flatten()
         .filter_map(|entry| {
-            let profile_id = crate::text(&entry["profile_id"])?;
-            Some((crate::text(&entry["home"])?, profile_id))
-        })
-        .map(|(home, profile_id)| Served {
-            profile: Profile::of_home(home),
-            profile_id: profile_id.to_owned(),
+            let profile_id = crate::text(&entry["profile_id"])?.to_owned();
+            let profile = Profile::in_root(root, crate::text(&entry["home"])?)?;
+            Some(Served {
+                profile,
+                profile_id,
+            })
         })
         .collect();
     let same =

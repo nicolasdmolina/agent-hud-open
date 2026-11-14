@@ -206,6 +206,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         Input::Identified {
             answer: &identified,
             home: lab.home.to_str().unwrap(),
+            root: lab.home.to_str().unwrap(),
         },
         crate::hooks::now_ms(),
     );
@@ -233,6 +234,12 @@ fn verifier_hint_on_short_socket_must_request_poll() {
             stopped: false,
         }),
         stopping: (Mutex::new(()), Condvar::new()),
+        reader: "local".into(),
+        asked: Mutex::new(Profile::Default),
+        born: Mutex::default(),
+        found: Mutex::default(),
+        look: Arc::default(),
+        ends: Arc::default(),
     };
     let (visit, _) = Visit::begin(&shared, &instance, &session, Duration::from_secs(2)).unwrap();
     visit.end();
@@ -259,7 +266,11 @@ fn verifier_https_origin_is_unsupported_and_never_dialled() {
     let mut answer = ready.clone();
     answer["result"]["api_origin"] = json!(https);
     assert_eq!(
-        identify(&answer, lab.home.to_str().unwrap()),
+        identify(
+            &answer,
+            lab.home.to_str().unwrap(),
+            lab.home.to_str().unwrap()
+        ),
         Identified::Unsupported(Unsupported::Origin)
     );
     gateway.world().identify = Some(answer);

@@ -193,13 +193,16 @@ impl Going<'_> {
         #[cfg(test)]
         before_reply(self.shared, &id);
         let mut model = self.shared.model();
-        if model.stopped {
-            return;
-        }
         let closed = model
             .answered
             .get(&id)
             .is_some_and(|out| out.closed.is_some());
+        // A follower that ended takes nothing more. One that ended with
+        // its gateway (`follower.rs`) kept the answers whose cards it
+        // closed, and the reply still gives each its receipt.
+        if model.stopped && !closed {
+            return;
+        }
         if !closed {
             let heard = Input::Responded {
                 request: &id,

@@ -187,7 +187,7 @@ fn start(route: Arc<Probe>, lab: &super::Lab) -> Observer {
         quick(),
     )
     .unwrap();
-    route.install(&observer.shared);
+    route.install(&observer.local());
     observer
 }
 
@@ -255,7 +255,7 @@ fn reverify25_stop_cancels_an_inflight_prepare_and_prevents_later_ticketing() {
     let gate = Arc::new(Hold::default());
     let route = Arc::new(Probe::at(&lab.home, Some(gate.clone()), false));
     let observer = start(route.clone(), &lab);
-    let shared = observer.shared.clone();
+    let shared = observer.local();
     until("prepare entered", || gate.entered.load(Ordering::Acquire));
     assert!(shared.model.try_lock().is_ok());
     let began = Instant::now();

@@ -8,6 +8,7 @@
 //!
 //! The hooks stay: they report running and finished as pushes, and they are
 //! all there is for a gateway without this connection (`Unsupported`).
+mod answering;
 mod ask;
 mod card;
 mod command;
@@ -23,6 +24,7 @@ mod machine;
 mod poll;
 mod read;
 mod reconcile;
+mod served;
 mod state;
 mod ticket;
 

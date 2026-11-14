@@ -73,7 +73,7 @@ pub fn picture<Q>(homes: &Homes, answers: Vec<(FarHome, Result<Answered, Q>)>) -
             }
             Ok(answered) => answered,
         };
-        let identified = identify(answered.value(), &home.path);
+        let identified = identify(answered.value(), &home.path, &homes.root);
         if let Identified::Ready(instance) = &identified {
             let gateway = found
                 .entry(instance.id.clone())

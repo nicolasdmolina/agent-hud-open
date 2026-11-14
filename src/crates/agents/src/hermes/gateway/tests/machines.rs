@@ -216,6 +216,7 @@ fn a_restart_keeps_the_anchor_the_gateway_id_and_its_request_ids() {
             Input::Identified {
                 answer: &answer,
                 home,
+                root: "/synthetic",
             },
             0,
         );

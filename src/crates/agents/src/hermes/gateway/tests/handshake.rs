@@ -31,6 +31,7 @@ pub fn before_first_socket(doc: &Value, apply: &mut dyn FnMut(Input<'_>)) {
         apply(Input::Identified {
             answer: &whole(before),
             home: HOME,
+            root: HOME,
         });
     }
 }
@@ -58,6 +59,7 @@ pub fn between_sockets(doc: &Value, apply: &mut dyn FnMut(Input<'_>, Option<Stri
                 Input::Identified {
                     answer: &answer,
                     home: HOME,
+                    root: HOME,
                 },
                 Some(label),
             );
@@ -72,7 +74,8 @@ fn a_gateway_describes_itself_and_grants_a_ticket() {
     assert_eq!(identify_line(), control["identify_request"]);
 
     // Nicky's own gateway, read once: one profile, the default one.
-    let Identified::Ready(live) = identify(&control["identify_live_macbook_gateway_ready"], HOME)
+    let Identified::Ready(live) =
+        identify(&control["identify_live_macbook_gateway_ready"], HOME, HOME)
     else {
         panic!("the live gateway is ready");
     };
@@ -93,24 +96,25 @@ fn a_gateway_describes_itself_and_grants_a_ticket() {
     // One gateway, two profiles: each is listed, and the ticket is asked
     // for the home whose socket answered.
     let two = &control["identify_throwaway_ready_two_profiles"];
-    let Identified::Ready(instance) = identify(two, HOME) else {
+    let Identified::Ready(instance) = identify(two, HOME, HOME) else {
         panic!("the throwaway gateway is ready");
     };
     let profiles: Vec<&Profile> = instance.served.iter().map(|s| &s.profile).collect();
     assert_eq!(profiles, [&Profile::Default, &spike()]);
     assert_eq!(instance.profile_id, HOME);
-    let Identified::Ready(named) = identify(two, "/Users/USER/.hermes/profiles/hud-spike/") else {
+    let asked = "/Users/USER/.hermes/profiles/hud-spike/";
+    let Identified::Ready(named) = identify(two, asked, HOME) else {
         panic!("a profile's own home is served too");
     };
     assert_eq!(named.profile_id, "/Users/USER/.hermes/profiles/hud-spike");
     assert_eq!(
-        identify(two, "/Users/USER/elsewhere"),
+        identify(two, "/Users/USER/elsewhere", HOME),
         Identified::Failed(Failure::ProfileNotServed)
     );
 
     // Still starting: no capabilities yet. Wait; never call it unsupported.
     assert_eq!(
-        identify(&control["identify_throwaway_starting"], HOME),
+        identify(&control["identify_throwaway_starting"], HOME, HOME),
         Identified::Wait("starting".into())
     );
 
@@ -232,7 +236,7 @@ fn an_old_build_is_unsupported_and_a_starting_one_is_waited_for() {
             }
             other => panic!("a verdict the test does not know: {other:?}"),
         };
-        let told = identify(&case["identify_result"], HOME);
+        let told = identify(&case["identify_result"], HOME, HOME);
         assert_eq!(told, expected, "{}", case["why"]);
         if let Identified::Unsupported(why) = told {
             assert_eq!(why.reason_code(), verdict["reason_code"]);
@@ -244,6 +248,7 @@ fn an_old_build_is_unsupported_and_a_starting_one_is_waited_for() {
         Input::Identified {
             answer: &cases[0]["identify_result"],
             home: HOME,
+            root: HOME,
         },
         0,
     );
@@ -323,7 +328,7 @@ fn the_live_gateway_is_one_the_model_supports() {
     told["instance_id"] = json!("an-instance");
     told["authority_epoch"] = json!(5);
     told["api_origin"] = json!("http://127.0.0.1:57825");
-    assert!(matches!(identify(&told, HOME), Identified::Ready(_)));
+    assert!(matches!(identify(&told, HOME, HOME), Identified::Ready(_)));
     // Every status and row field it reported is one the model reads.
     for status in result["session_active_list"]["by_status"]
         .as_object()

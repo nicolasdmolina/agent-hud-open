@@ -93,7 +93,7 @@ fn verifier4_poll_between_reply_check_and_apply_must_keep_question_and_approval_
                 let (recording, request, method, settled, decision) = scenario(kind);
                 lab.hears(&gateway, recording, request);
                 let id = lab.card()["id"].as_str().unwrap().to_owned();
-                let shared = lab.observer.as_ref().unwrap().shared.clone();
+                let shared = lab.observer.as_ref().unwrap().local();
                 // Pause the real follower before submitting the answer so
                 // the card cannot close before the first reply-state check.
                 let poll = Arc::new(Hold::default());
@@ -170,7 +170,7 @@ fn verifier4_cut_before_first_answer_byte_never_confirms_or_retains_any_kind() {
         let (recording, request, method, settled, decision) = scenario(kind);
         lab.hears(&gateway, recording, request);
         let id = lab.card()["id"].as_str().unwrap().to_owned();
-        let shared = lab.observer.as_ref().unwrap().shared.clone();
+        let shared = lab.observer.as_ref().unwrap().local();
         let instance = shared.instance_of(&id).unwrap();
         let (pending, _waiter) = {
             let mut model = shared.model();
@@ -231,7 +231,7 @@ fn verifier4_batch_receipt_waits_for_successful_write_return_after_close() {
     let (recording, request, _, _, decision) = scenario("batch");
     lab.hears(&gateway, recording, request);
     let id = lab.card()["id"].as_str().unwrap().to_owned();
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     let instance = shared.instance_of(&id).unwrap();
     let (pending, _waiter) = {
         let mut model = shared.model();
@@ -292,7 +292,7 @@ fn verifier4_reply_after_poll_close_gives_one_correct_receipt_for_questions_and_
             let (recording, request, method, settled, decision) = scenario(kind);
             lab.hears(&gateway, recording, request);
             let id = lab.card()["id"].as_str().unwrap().to_owned();
-            let shared = lab.observer.as_ref().unwrap().shared.clone();
+            let shared = lab.observer.as_ref().unwrap().local();
             let held = Arc::new(Hold::default());
             gateway.world().hold_next = Some((method, held.clone()));
             lab.requests
@@ -340,7 +340,7 @@ fn verifier4_partial_batch_write_cut_by_poll_close_never_confirms() {
     let (recording, request, _, settled, _) = scenario("batch");
     lab.hears(&gateway, recording, request);
     let id = lab.card()["id"].as_str().unwrap().to_owned();
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     let stalled = Arc::new(Hold::default());
     gateway.world().stall_after_resume = Some(stalled.clone());
     let decision = json!({"kind":"answer","answers":{"q0":{"custom":"x".repeat(8*1024*1024)}}});

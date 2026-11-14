@@ -71,7 +71,7 @@ fn a_settle_between_a_polls_list_and_its_read_takes_one_snapshot() {
     // Hold one poll's lists, one at a time, until the list of the
     // session's profile is held. Its reply is already written: the session
     // waits. The poll reads the events only once that reply is let go.
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     let mut hold = Arc::new(Hold::default());
     gateway.world().hold_next = Some(("session.active_list", hold.clone()));
     shared.want_poll();

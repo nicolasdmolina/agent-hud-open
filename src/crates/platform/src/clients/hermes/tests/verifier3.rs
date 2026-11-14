@@ -30,7 +30,7 @@ fn verifier3_a_frame_fully_queued_before_the_cutoff_may_still_be_read() {
         lab.follow();
         lab.hears(&gateway, "question-answered-elsewhere", "clarify.request");
         let id = lab.card()["id"].as_str().unwrap().to_owned();
-        let shared = lab.observer.as_ref().unwrap().shared.clone();
+        let shared = lab.observer.as_ref().unwrap().local();
         let stalled = Arc::new(Hold::default());
         gateway.world().stall_after_resume = Some(stalled.clone());
         lab.requests
@@ -88,7 +88,7 @@ fn verifier3_idle_visits_cannot_write_or_resume_after_stop_close_or_instance_cha
         lab.follow();
         lab.hears(&gateway, "question-answered-elsewhere", "clarify.request");
         let id = lab.card()["id"].as_str().unwrap().to_owned();
-        let shared = lab.observer.as_ref().unwrap().shared.clone();
+        let shared = lab.observer.as_ref().unwrap().local();
         let instance = shared.instance_of(&id).unwrap();
         let pending = shared.model().gateway.pending(&id).unwrap().clone();
         let (mut visit, _) = Visit::begin_for(
@@ -117,6 +117,7 @@ fn verifier3_idle_visits_cannot_write_or_resume_after_stop_close_or_instance_cha
                 shared.apply(Input::Identified {
                     answer: &identity,
                     home: lab.home.to_str().unwrap(),
+                    root: lab.home.to_str().unwrap(),
                 });
             }
             _ => unreachable!(),
@@ -152,7 +153,7 @@ fn verifier3_stop_between_mark_and_first_byte_cuts_the_registered_socket() {
     lab.follow();
     lab.hears(&gateway, "question-answered-elsewhere", "clarify.request");
     let id = lab.card()["id"].as_str().unwrap().to_owned();
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     let instance = shared.instance_of(&id).unwrap();
     let pending = shared.model().gateway.pending(&id).unwrap().clone();
     let (mut visit, _) = Visit::begin_for(
@@ -191,7 +192,7 @@ fn verifier3_instance_change_cuts_a_backpressured_answer() {
     lab.follow();
     lab.hears(&gateway, "question-answered-elsewhere", "clarify.request");
     let id = lab.card()["id"].as_str().unwrap().to_owned();
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     let instance = shared.instance_of(&id).unwrap();
     let stalled = Arc::new(Hold::default());
     gateway.world().stall_after_resume = Some(stalled.clone());
@@ -212,6 +213,7 @@ fn verifier3_instance_change_cuts_a_backpressured_answer() {
     shared.apply(Input::Identified {
         answer: &identity,
         home: lab.home.to_str().unwrap(),
+        root: lab.home.to_str().unwrap(),
     });
     assert!(began.elapsed() < Duration::from_millis(250));
     assert!(!shared.current(&id, &instance));
@@ -231,7 +233,7 @@ fn verifier3_successful_batch_keeps_receipt_if_poll_closes_before_sent_bookkeepi
         lab.follow();
         lab.hears(&gateway, "question-batch-answered-here", "clarify");
         let id = lab.card()["id"].as_str().unwrap().to_owned();
-        let shared = lab.observer.as_ref().unwrap().shared.clone();
+        let shared = lab.observer.as_ref().unwrap().local();
         let instance = shared.instance_of(&id).unwrap();
         let (pending, _waiter) = {
             let mut model = shared.model();
@@ -308,7 +310,7 @@ fn verifier3_default_write_budget_stops_a_stalled_frame_without_later_flush() {
     );
     lab.hears(&gateway, "question-answered-elsewhere", "clarify.request");
     let id = lab.card()["id"].as_str().unwrap().to_owned();
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     let stalled = Arc::new(Hold::default());
     gateway.world().stall_after_resume = Some(stalled.clone());
     let decision =

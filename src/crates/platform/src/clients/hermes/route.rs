@@ -13,7 +13,7 @@
 //! a gateway is another `Route`, and nothing that follows a gateway
 //! changes for it.
 use super::control::Silent;
-use agent_hud_agents::hermes::gateway::{Failure, Instance};
+use agent_hud_agents::hermes::gateway::{Failure, Instance, Profile};
 use std::{
     borrow::Cow,
     net::TcpStream,
@@ -33,13 +33,25 @@ pub(crate) struct Home {
     /// Where that led when the homes were asked for, links resolved: the
     /// place its control socket is asked in.
     path: PathBuf,
+    /// The profile whose home it is, by its place on the machine: the
+    /// root is the default profile's, `profiles/<name>` a named one's.
+    profile: Profile,
 }
 
 impl Home {
-    /// The home the route knows as `given`, which is at `path` on the
-    /// route's machine, links resolved there.
-    fn at(given: PathBuf, path: PathBuf) -> Self {
-        Self { given, path }
+    /// The home of `profile`, which the route knows as `given` and which
+    /// is at `path` on the route's machine, links resolved there.
+    fn at(given: PathBuf, path: PathBuf, profile: Profile) -> Self {
+        Self {
+            given,
+            path,
+            profile,
+        }
+    }
+
+    /// The profile whose home this is. It names no place.
+    pub(crate) fn profile(&self) -> &Profile {
+        &self.profile
     }
 
     fn given(&self) -> &Path {
@@ -65,9 +77,11 @@ pub(crate) trait Stop: Sync {
 }
 
 pub(crate) trait Route: Send + Sync {
-    /// The Hermes homes on the machine, the root home first, each with
-    /// its links resolved. An error where they cannot be told just now,
-    /// which says nothing of which homes there are.
+    /// The Hermes homes on the machine, each with its links resolved: the
+    /// root home, which is the default profile's, and the home of every
+    /// named profile. An error where they cannot be told just now, which
+    /// says nothing of which homes there are; and a home that is not
+    /// listed is not known to be gone.
     fn homes(&self) -> Result<Vec<Home>, Silent>;
 
     /// One exchange with the control socket of `home`: `line` goes in,

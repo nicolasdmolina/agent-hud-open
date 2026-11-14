@@ -2,13 +2,12 @@
 //! requests. A card opens once under its request id, changes in place, and
 //! is withdrawn when Hermes says the request is over. What the sessions
 //! are doing is told to core in one place, `tell`, after everything the
-//! model takes in.
+//! model takes in, under the follower's own reader name.
 use super::{answer::NO_REPLY, Model, Shared};
 use agent_hud_agents::hermes::{
     gateway::{Ask, Closed, Connection, Effect, Gateway, Pending, Refusal},
     AGENT,
 };
-use agent_hud_agents::SOLE_READER;
 use agent_hud_core::l10n;
 
 /// The machine label on the cards made here: none, since every gateway
@@ -86,7 +85,7 @@ impl Shared {
         self.requests.settle_native(&id);
         self.show(&mut model, pending, now);
         self.note(&id, &pending.session.hud_id(), "failed", Some(reason), now);
-        self.tell(Some(&model.gateway), now);
+        self.tell(&model.gateway, now);
         (self.wake)();
     }
 
@@ -134,21 +133,21 @@ impl Shared {
     /// on a card, and what each is doing as the newest poll that counted
     /// listed it (`live_states`, ticket 16). It is called after everything
     /// the model takes in, changed or not, since core ignores what it
-    /// already knows; and with no gateway when the observer stops, which
-    /// clears both. One connection follows Hermes, so it is the only
-    /// reader.
-    pub(super) fn tell(&self, gateway: Option<&Gateway>, now: i64) {
+    /// already knows. Each follower tells under its own name, its
+    /// gateway's id, the same for its whole life: core keeps the readings
+    /// of two followers apart, each with its own time, and nothing here
+    /// joins them (ticket 24). A follower that ends says so once
+    /// (`follower.rs`, `end`), which clears what it told and nothing else.
+    pub(super) fn tell(&self, gateway: &Gateway, now: i64) {
         let mut waiting: Vec<String> = gateway
-            .into_iter()
-            .flat_map(Gateway::waiting)
+            .waiting()
             .map(|pending| pending.session.hud_id())
             .collect();
         waiting.sort();
         waiting.dedup();
         let requests = &self.requests;
-        requests.set_native_waiting(AGENT.id, SOLE_READER, &waiting, now);
-        let states = gateway.map(Gateway::live_states).unwrap_or_default();
-        requests.set_native_states(AGENT.id, SOLE_READER, &states);
+        requests.set_native_waiting(AGENT.id, &self.reader, &waiting, now);
+        requests.set_native_states(AGENT.id, &self.reader, &gateway.live_states());
     }
 }
 

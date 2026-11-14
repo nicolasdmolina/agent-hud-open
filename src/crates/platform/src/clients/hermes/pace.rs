@@ -31,6 +31,10 @@ pub(crate) struct Pace {
     /// to write, all of it. A frame is small and the gateway is on this
     /// machine: one that does not take it in this long is not going to.
     pub write: Duration,
+    /// How long between two looks at every Hermes home of the machine
+    /// (`discovery.rs`), the first as soon as the observer starts. None
+    /// for no look by the clock: one is taken only when a follower asks.
+    pub discover: Option<Duration>,
     /// Whether the log says every poll and every hint, for looking at what
     /// a real gateway does. Never on in the app.
     pub trace: bool,
@@ -47,6 +51,7 @@ impl Default for Pace {
             warm: Duration::from_secs(5),
             answer: Duration::from_secs(5),
             write: Duration::from_millis(500),
+            discover: Some(Duration::from_secs(10)),
             trace: false,
         }
     }

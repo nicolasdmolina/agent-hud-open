@@ -6,13 +6,13 @@
 use super::{Home, Route, Stop};
 use crate::clients::hermes::control::Silent;
 use agent_hud_agents::hermes::{
-    gateway::{Failure, Instance},
+    gateway::{Failure, Instance, Profile},
     AGENT,
 };
 use std::{
     borrow::Cow,
     net::{TcpStream, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -57,10 +57,12 @@ impl Local {
 }
 
 impl Route for Local {
-    /// The one home this machine's gateway is asked in: the root home.
+    /// The root home, then the home of each named profile, by name.
     fn homes(&self) -> Result<Vec<Home>, Silent> {
         let root = std::fs::canonicalize(&self.root).map_err(|_| Silent::Absent)?;
-        Ok(vec![Home::at(self.root.clone(), root)])
+        let mut homes = vec![Home::at(self.root.clone(), root, Profile::Default)];
+        homes.extend(named(&self.root));
+        Ok(homes)
     }
 
     fn exchange(&self, home: &Home, line: &[u8], timeout: Duration) -> Result<Vec<u8>, Silent> {
@@ -91,6 +93,24 @@ impl Route for Local {
             .ok_or_else(invalid)?;
         TcpStream::connect_timeout(&address, DIAL).map_err(|_| Failure::Unreachable)
     }
+}
+
+/// The homes of the named profiles of the Hermes root `root`: each folder
+/// in its `profiles` that Hermes would name a profile by. A `profiles`
+/// that cannot be read lists none, which says nothing of which there are.
+fn named(root: &Path) -> Vec<Home> {
+    let Ok(folders) = std::fs::read_dir(root.join("profiles")) else {
+        return Vec::new();
+    };
+    let home = |folder: std::fs::DirEntry| {
+        let profile = Profile::folder(folder.file_name().to_str()?)?;
+        let path = std::fs::canonicalize(folder.path()).ok()?;
+        path.is_dir()
+            .then(|| Home::at(folder.path(), path, profile))
+    };
+    let mut homes: Vec<Home> = folders.flatten().filter_map(home).collect();
+    homes.sort_by(|a, b| a.profile().cmp(b.profile()));
+    homes
 }
 
 /// The folder Hermes makes for the socket of `home` where the home cannot

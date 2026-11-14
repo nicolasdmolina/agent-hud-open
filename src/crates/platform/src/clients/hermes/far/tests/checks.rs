@@ -24,7 +24,7 @@ fn identify_then_a_ticket(lab: &FarLab, home: &Path) {
     let told = far.exchange(&lab.link, text(home), Request::Identify);
     println!("identify took {:?}", told.took);
     let told = told.said.expect("an answer to identify");
-    let Identified::Ready(instance) = identify(told.value(), text(home)) else {
+    let Identified::Ready(instance) = identify(told.value(), text(home), text(&lab.root())) else {
         panic!("identify did not make an instance");
     };
     assert_eq!(instance.id, "one");

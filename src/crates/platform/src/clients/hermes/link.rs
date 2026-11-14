@@ -1,11 +1,17 @@
 //! The connection to one gateway over its life: ask the control socket who
 //! is there, open a socket (`opening.rs`), run polls until it is lost,
 //! then begin again. Where the gateway is, the route knows (`route.rs`):
-//! nothing here names a path or an address. A gateway that restarts comes
-//! back as another instance, usually on another port, so nothing is kept
-//! from one dial to the next but the model.
+//! nothing here names a path or an address. Nothing is kept from one dial
+//! to the next but the model.
+//!
+//! A follower is one gateway's. Where its home answers as another
+//! instance than the one it follows, that is not its gateway any more,
+//! and what it is instead takes a look at every home of the machine
+//! (`discovery.rs`): a restart ends this follower and makes the next. So
+//! such an answer is not taken; it is said, and asked again.
 use super::{
     control::{self, Silent},
+    cost::Told,
     opening::{opened, Shut},
     polls,
     route::Home,
@@ -13,11 +19,11 @@ use super::{
     Shared,
 };
 use agent_hud_agents::hermes::gateway::{
-    hints, identify_line, Connection, Failure, Input, Instance,
+    hints, identify, identify_line, Connection, Failure, Identified, Input, Instance, Profile,
 };
 use serde_json::Value;
 use std::{
-    sync::Arc,
+    sync::{Arc, PoisonError},
     time::{Duration, Instant},
 };
 
@@ -38,8 +44,9 @@ enum Next {
 pub(super) fn work(shared: Arc<Shared>) {
     let mut wait = shared.pace.retry;
     // Said once for each run of dials, so a gateway that stays away does
-    // not turn the state back and forth.
-    let mut dialing = false;
+    // not turn the state back and forth. A follower made from a gateway's
+    // answer has that answer in hand and begins with it.
+    let mut dialing = born(&shared).is_some();
     while shared.active() {
         if !dialing {
             shared.apply(Input::Dialing);
@@ -50,6 +57,8 @@ pub(super) fn work(shared: Arc<Shared>) {
                 (wait, dialing) = (shared.pace.retry, false);
                 if let Some(failure) = follow(&shared, &mut socket) {
                     shared.apply(Input::Lost(failure));
+                    // What became of the gateway is looked for.
+                    shared.look.want();
                 }
                 socket.close();
                 Next::Soon
@@ -68,24 +77,58 @@ pub(super) fn work(shared: Arc<Shared>) {
     }
 }
 
-/// The home whose gateway is followed: the first the route tells of, as
-/// it is now.
-pub(super) fn home(shared: &Shared) -> Result<Home, Silent> {
+/// The home whose gateway is followed, as it is now, and the root home
+/// of its machine: the homes of the profile this follower asks and of the
+/// default profile, among the ones the route tells of.
+fn homes(shared: &Shared) -> Result<(Home, Home), Silent> {
     let homes = shared.route.homes()?;
-    homes.into_iter().next().ok_or(Silent::Absent)
+    let of = |profile: &Profile| homes.iter().find(|home| home.profile() == profile);
+    let (asked, root) = (of(&shared.asked()), of(&Profile::Default));
+    asked.cloned().zip(root.cloned()).ok_or(Silent::Absent)
 }
 
-/// Asks the control socket of that home one question, once more where it
+/// The home whose gateway is followed.
+pub(super) fn home(shared: &Shared) -> Result<Home, Silent> {
+    homes(shared).map(|(home, _)| home)
+}
+
+/// The answer this follower was made from, until its first identify
+/// takes it.
+fn born(shared: &Shared) -> std::sync::MutexGuard<'_, Option<Value>> {
+    shared.born.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Asks the control socket of that home who is there, once more where it
 /// only was slow: identify can stall on a busy gateway and answer at once
-/// the next time. The answer comes with the home that was asked.
-fn asked(shared: &Shared, line: &Value) -> Result<(Value, Home), Silent> {
-    let home = home(shared)?;
-    let ask = || control::ask(&*shared.route, &home, line, shared.pace.answer);
+/// the next time. The answer comes with the home that was asked and the
+/// root home. A follower made from an answer takes that one first.
+fn asked(shared: &Shared) -> Result<(Value, Home, Home), Silent> {
+    let (home, root) = homes(shared)?;
+    if let Some(answer) = born(shared).take() {
+        return Ok((answer, home, root));
+    }
+    let line = identify_line();
+    let ask = || control::ask(&*shared.route, &home, &line, shared.pace.answer);
     let answer = match ask() {
         Err(Silent::TimedOut) => ask(),
         answer => answer,
     }?;
-    Ok((answer, home))
+    Ok((answer, home, root))
+}
+
+/// Whether `answer` is another instance than the one this follower
+/// follows. It is kept, and a look at the whole machine is asked for.
+fn elsewhere(shared: &Shared, answer: &Value, home: &str, root: &str) -> bool {
+    let Identified::Ready(now) = identify(answer, home, root) else {
+        return false;
+    };
+    let follows = |bound: &str| bound != now.id;
+    if !shared.model().gateway.instance().is_some_and(follows) {
+        return false;
+    }
+    *shared.found.lock().unwrap_or_else(PoisonError::into_inner) = Some(now.id);
+    shared.look.want();
+    true
 }
 
 pub(super) fn silent(silent: Silent) -> Failure {
@@ -99,7 +142,7 @@ pub(super) fn silent(silent: Silent) -> Failure {
 /// Identifies the gateway and tells the model, which says whether it is
 /// one to connect to.
 fn identified(shared: &Shared) -> Result<Instance, Next> {
-    let (answer, home) = match asked(shared, &identify_line()) {
+    let (answer, home, root) = match asked(shared) {
         Ok(answered) => answered,
         Err(why) => {
             shared.apply(Input::Lost(silent(why)));
@@ -108,12 +151,24 @@ fn identified(shared: &Shared) -> Result<Instance, Next> {
     };
     // The home is compared as the gateway wrote it, links resolved, and
     // resolved after the answer came: a home that leads elsewhere by then
-    // is not the one this gateway serves.
+    // is not the one this gateway serves. The root home says which
+    // profile each served home is.
+    let (home, root) = (shared.route.named(&home), shared.route.named(&root));
+    if elsewhere(shared, &answer, &home, &root) {
+        return Err(Next::Soon);
+    }
+    let held = shared.model().gateway.holds().clone();
     shared.apply(Input::Identified {
         answer: &answer,
-        home: &shared.route.named(&home),
+        home: &home,
+        root: &root,
     });
     let model = shared.model();
+    // The gateway serves other profiles than it did: which gateway has
+    // which is looked at again.
+    if !held.is_empty() && *model.gateway.holds() != held {
+        shared.look.want();
+    }
     match model.gateway.connection() {
         Connection::Ready(instance) => Ok(instance.clone()),
         Connection::Connecting => Err(Next::Soon),
@@ -146,6 +201,14 @@ fn follow(shared: &Shared, socket: &mut Socket) -> Option<Failure> {
     let mut told = Told::default();
     // Until when polls keep the close watch after someone asked for one.
     let mut warm: Option<Instant> = None;
+    // The first poll waits for the first look at the machine, which says
+    // which profiles two gateways claim.
+    while !shared.look.looked() {
+        if !shared.active() {
+            return None;
+        }
+        shared.pause(GLANCE);
+    }
     loop {
         // Wait for the timer or for someone to want a poll, reading the
         // socket meanwhile: Hermes says there when its sessions changed.
@@ -200,51 +263,6 @@ fn follow(shared: &Shared, socket: &mut Socket) -> Option<Failure> {
             // The model is no longer ready to poll: begin again.
             Ok(None) => return Some(Failure::Unreachable),
             Err(failure) => return Some(failure),
-        }
-    }
-}
-
-/// What the polls cost, said in the log now and then: how many ran, how
-/// long they took, how many calls and snapshots they made.
-#[derive(Default)]
-struct Told {
-    polls: u32,
-    calls: usize,
-    snapshots: usize,
-    total: Duration,
-    longest: Duration,
-}
-
-impl Told {
-    /// How many polls one log line sums up: a minute of a busy gateway.
-    const EVERY: u32 = 60;
-    /// A poll this slow is said at once.
-    const SLOW: Duration = Duration::from_millis(500);
-
-    fn add(&mut self, shared: &Shared, ran: &polls::Ran) {
-        self.polls += 1;
-        self.calls += ran.calls;
-        self.snapshots += ran.snapshots;
-        self.total += ran.took;
-        self.longest = self.longest.max(ran.took);
-        if ran.took >= Self::SLOW {
-            shared.log.line(&format!(
-                "slow poll ms={} calls={} snapshots={}",
-                ran.took.as_millis(),
-                ran.calls,
-                ran.snapshots
-            ));
-        }
-        if self.polls >= Self::EVERY {
-            shared.log.line(&format!(
-                "polls n={} mean_ms={} max_ms={} calls={} snapshots={}",
-                self.polls,
-                (self.total / self.polls).as_millis(),
-                self.longest.as_millis(),
-                self.calls,
-                self.snapshots
-            ));
-            *self = Self::default();
         }
     }
 }

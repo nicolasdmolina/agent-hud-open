@@ -37,7 +37,7 @@ fn stopping_cuts_an_answer_that_is_being_written_and_returns_at_once() {
     let mut lab = lab();
     let gateway = Fake::start(&lab.home, "instance-1");
     let (_, stalled) = stalled_answer(&mut lab, &gateway);
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     until("the answer is being written", || shared.writing());
     // The model is free while the write waits: polls go on.
     let polled = gateway.world().calls("session.active_list").len();
@@ -67,7 +67,7 @@ fn a_card_that_closes_cuts_the_answer_being_written_to_it() {
     let mut lab = lab();
     let gateway = Fake::start(&lab.home, "instance-1");
     let (id, stalled) = stalled_answer(&mut lab, &gateway);
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     until("the answer is being written", || shared.writing());
     // Someone answers elsewhere: the poll sees it settled and closes the card.
     gateway.play("question-answered-elsewhere", Some("clarify.settled"));
@@ -125,7 +125,11 @@ fn what_a_failed_write_left_unsent_is_never_sent_with_a_later_frame() {
     let id = gateway.play("question-answered-elsewhere", Some("clarify.request"));
     let wait = Duration::from_secs(5);
     let told = super::ask(&lab.home, &identify_line(), wait).unwrap();
-    let Identified::Ready(instance) = identify(&told, lab.home.to_str().unwrap()) else {
+    let Identified::Ready(instance) = identify(
+        &told,
+        lab.home.to_str().unwrap(),
+        lab.home.to_str().unwrap(),
+    ) else {
         panic!("not ready")
     };
     let grant = super::ask(&lab.home, &ticket_line(&instance, Scope::Host), wait).unwrap();

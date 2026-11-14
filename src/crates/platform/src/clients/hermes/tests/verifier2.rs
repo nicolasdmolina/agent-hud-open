@@ -32,7 +32,7 @@ fn backpressure() -> Backpressure {
     let id = lab.card()["id"].as_str().unwrap().to_owned();
     let stalled = Arc::new(Hold::default());
     gateway.world().stall_after_resume = Some(stalled.clone());
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     let decision = json!({"kind":"answer", "answers": {
         "e1bc9d4fa6": {"custom": "x".repeat(8 * 1024 * 1024)}
     }});
@@ -119,7 +119,11 @@ fn verifier2_non_http_or_non_loopback_origins_never_get_tickets() {
         gateway.world().identify.as_mut().unwrap()["result"]["api_origin"] = json!(origin);
         let answer = gateway.world().identify.clone().unwrap();
         assert_eq!(
-            identify(&answer, lab.home.to_str().unwrap()),
+            identify(
+                &answer,
+                lab.home.to_str().unwrap(),
+                lab.home.to_str().unwrap()
+            ),
             Identified::Unsupported(Unsupported::Origin),
             "{origin}"
         );
@@ -145,7 +149,7 @@ fn verifier2_initial_resume_must_not_write_after_currency_check_went_stale() {
     lab.follow();
     lab.hears(&gateway, "question-answered-elsewhere", "clarify.request");
     let id = lab.card()["id"].as_str().unwrap().to_owned();
-    let shared = lab.observer.as_ref().unwrap().shared.clone();
+    let shared = lab.observer.as_ref().unwrap().local();
     let instance = shared.instance_of(&id).unwrap();
     let pending = shared.model().gateway.pending(&id).unwrap().clone();
     let before = gateway.world().calls("session.resume").len();

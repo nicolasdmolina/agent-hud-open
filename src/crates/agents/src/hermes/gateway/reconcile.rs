@@ -59,6 +59,10 @@ impl Gateway {
             let Read::Done(reading) = look.read else {
                 continue;
             };
+            // No card opens for a profile two instances claim (`served.rs`).
+            if self.withheld.contains(&at.profile) {
+                continue;
+            }
             for (ask, wait_ms) in reading.asks {
                 let key = (at.clone(), ask.key().to_owned());
                 if self.cards.contains_key(&key) {

@@ -115,6 +115,8 @@ pub struct World {
     pub ended: Vec<usize>,
     pub hint_on_resume: bool,
     pub hold_next: Option<(&'static str, Arc<Hold>)>,
+    /// A second reply held at the same time, by its method.
+    pub hold_too: Option<(&'static str, Arc<Hold>)>,
     /// What `identify` answers; None closes the socket without a word.
     pub identify: Option<Value>,
     pub instance: String,
@@ -144,12 +146,24 @@ pub struct World {
     pub answers_with: Option<&'static str>,
     /// Counts the times every open socket was cut with the gateway still up.
     cuts: usize,
+    /// The profiles the gateway serves, by name; None for one that takes
+    /// a call for any profile, as the first pretend gateway did.
+    pub serves: Option<Vec<String>>,
+    /// Every profile a call named that the gateway does not serve, which
+    /// it refused as `profile_mismatch`.
+    pub mismatched: Vec<String>,
+    /// The control sockets that were closed while the gateway runs.
+    closed: Vec<PathBuf>,
 }
 
 impl World {
     pub fn stream(&mut self, session: &str) -> &mut Stream {
+        self.stream_in(PROFILE, session)
+    }
+    /// The stream of a session of `profile`, by the profile's name.
+    pub fn stream_in(&mut self, profile: &str, session: &str) -> &mut Stream {
         self.streams
-            .entry((PROFILE.to_owned(), session.to_owned()))
+            .entry((profile.to_owned(), session.to_owned()))
             .or_default()
     }
     /// Whether the gateway is done with the socket that subscribed last:
@@ -169,6 +183,8 @@ impl World {
 
 pub struct Fake {
     pub home: PathBuf,
+    /// Every control socket it listens on.
+    sockets: Vec<PathBuf>,
     world: Arc<Mutex<World>>,
     running: Arc<AtomicBool>,
     workers: Vec<thread::JoinHandle<()>>,
@@ -178,48 +194,137 @@ impl Fake {
     /// Starts a gateway whose home is `home`, a private folder, as instance
     /// `instance`. It serves the default profile and `hud-spike`.
     pub fn start(home: &Path, instance: &str) -> Self {
+        let root = home.to_string_lossy().into_owned();
+        let named = format!("{root}/profiles/{PROFILE}");
+        Self::listening(home, instance, &[home.to_path_buf()], &[root, named], None)
+    }
+
+    /// Starts a gateway in the Hermes root `root` that serves `profiles`
+    /// and nothing else, by name (`default` is the root home), with a
+    /// control socket in the home of each. A machine with one gateway for
+    /// each profile runs several of these in one root.
+    pub fn serving(root: &Path, instance: &str, profiles: &[&str]) -> Self {
+        let homes: Vec<PathBuf> = profiles.iter().map(|name| home_of(root, name)).collect();
+        for home in &homes {
+            crate::os::private_directory(home).unwrap();
+        }
+        let served: Vec<String> = homes
+            .iter()
+            .map(|home| home.to_string_lossy().into_owned())
+            .collect();
+        let names = profiles.iter().map(|name| (*name).to_owned()).collect();
+        Self::listening(root, instance, &homes, &served, Some(names))
+    }
+
+    fn listening(
+        home: &Path,
+        instance: &str,
+        sockets: &[PathBuf],
+        served: &[String],
+        serves: Option<Vec<String>>,
+    ) -> Self {
         let web = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = web.local_addr().unwrap().port();
         let said = fixture("gateway-self-description");
         // The recorded answer of a ready gateway with two profiles, with
         // this home, this instance and this port in it.
         let mut identify = said["control_socket"]["identify_throwaway_ready_two_profiles"].clone();
-        let root = home.to_string_lossy().into_owned();
-        let named = format!("{root}/profiles/{PROFILE}");
-        identify["result"]["hermes_home"] = json!(root);
+        identify["result"]["hermes_home"] = json!(home.to_string_lossy());
         identify["result"]["instance_id"] = json!(instance);
         identify["result"]["api_origin"] = json!(format!("http://127.0.0.1:{port}"));
-        identify["result"]["served_profiles"] = json!([
-            {"profile_id": root, "home": root},
-            {"profile_id": named, "home": named},
-        ]);
+        let served: Vec<Value> = served
+            .iter()
+            .map(|home| json!({"profile_id": home, "home": home}))
+            .collect();
+        identify["result"]["served_profiles"] = json!(served);
         let world = Arc::new(Mutex::new(World {
             identify: Some(identify),
             instance: instance.to_owned(),
             grants: true,
+            serves,
             ..World::default()
         }));
         let running = Arc::new(AtomicBool::new(true));
-        let path = home.join("gateway.sock");
-        let _ = std::fs::remove_file(&path);
-        let control = UnixListener::bind(&path).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        control.set_nonblocking(true).unwrap();
         web.set_nonblocking(true).unwrap();
-        let (a, b) = (
-            (world.clone(), running.clone()),
-            (world.clone(), running.clone()),
-        );
-        let workers = vec![
-            thread::spawn(move || serve_control(control, a.0, a.1)),
-            thread::spawn(move || serve_web(web, b.0, b.1)),
-        ];
+        let sockets: Vec<PathBuf> = sockets
+            .iter()
+            .map(|home| home.join("gateway.sock"))
+            .collect();
+        let mut workers = Vec::new();
+        for path in &sockets {
+            let _ = std::fs::remove_file(path);
+            let control = UnixListener::bind(path).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            control.set_nonblocking(true).unwrap();
+            let (world, running, path) = (world.clone(), running.clone(), path.clone());
+            workers.push(thread::spawn(move || {
+                serve_control(control, world, running, path)
+            }));
+        }
+        let (served, alive) = (world.clone(), running.clone());
+        workers.push(thread::spawn(move || serve_web(web, served, alive)));
         Self {
             home: home.to_path_buf(),
+            sockets,
             world,
             running,
             workers,
         }
+    }
+
+    /// Serves `profiles` from now on, as its answer to `identify` and to
+    /// every call says. The control socket of a profile it no longer
+    /// serves is closed and gone.
+    pub fn serve(&self, profiles: &[&str]) {
+        let homes: Vec<PathBuf> = profiles
+            .iter()
+            .map(|name| home_of(&self.home, name))
+            .collect();
+        let served: Vec<Value> = (homes.iter().map(|home| home.to_string_lossy()))
+            .map(|home| json!({"profile_id": home, "home": home}))
+            .collect();
+        let mut world = self.world();
+        world.identify.as_mut().unwrap()["result"]["served_profiles"] = json!(served);
+        world.serves = Some(profiles.iter().map(|name| (*name).to_owned()).collect());
+        let kept = |socket: &&PathBuf| {
+            !homes
+                .iter()
+                .any(|home| home.join("gateway.sock") == **socket)
+        };
+        let closed: Vec<PathBuf> = self.sockets.iter().filter(kept).cloned().collect();
+        world.closed.extend(closed);
+    }
+
+    /// A question waits in a session of `profile`, in a turn under way.
+    pub fn asks(&self, profile: &str, session: &str, prompt: &str) {
+        let event = |kind: &str, seq: u64, payload: Value| {
+            json!({"type": kind, "session_id": session, "replay_epoch": "epoch-1", "seq": seq,
+                "execution_generation": 1, "payload": payload})
+        };
+        let asked = json!({"kind": "clarify", "prompt_id": prompt, "execution_generation": 1,
+            "question": "Which one?", "choices": ["one", "two"], "multi_select": false,
+            "timeout_s": 600});
+        let mut world = self.world();
+        let stream = world.stream_in(profile, session);
+        let next = stream.latest + 1;
+        if !stream.running {
+            stream.publish(&event("message.start", next, json!({})));
+        }
+        let next = stream.latest + 1;
+        stream.publish(&event("clarify.request", next, asked));
+        drop(world);
+        self.say("sessions.changed");
+    }
+
+    /// A session of `profile` is in a turn, or not.
+    pub fn runs(&self, profile: &str, session: &str, running: bool) {
+        {
+            let mut world = self.world();
+            let stream = world.stream_in(profile, session);
+            stream.epoch = "epoch-1".into();
+            stream.running = running;
+        }
+        self.say("sessions.changed");
     }
 
     pub fn world(&self) -> MutexGuard<'_, World> {
@@ -295,7 +400,17 @@ impl Fake {
         for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
-        let _ = std::fs::remove_file(self.home.join("gateway.sock"));
+        for socket in &self.sockets {
+            let _ = std::fs::remove_file(socket);
+        }
+    }
+}
+
+/// The home of the profile `name` in the Hermes root `root`.
+pub fn home_of(root: &Path, name: &str) -> PathBuf {
+    match name {
+        "default" => root.to_path_buf(),
+        name => root.join("profiles").join(name),
     }
 }
 
@@ -305,9 +420,18 @@ impl Drop for Fake {
     }
 }
 
-fn serve_control(listener: UnixListener, world: Arc<Mutex<World>>, running: Arc<AtomicBool>) {
+fn serve_control(
+    listener: UnixListener,
+    world: Arc<Mutex<World>>,
+    running: Arc<AtomicBool>,
+    path: PathBuf,
+) {
     let said = fixture("gateway-self-description");
     while running.load(Ordering::Acquire) {
+        if world.lock().unwrap().closed.contains(&path) {
+            let _ = std::fs::remove_file(&path);
+            return;
+        }
         let Ok((stream, _)) = listener.accept() else {
             thread::sleep(Duration::from_millis(5));
             continue;
@@ -487,6 +611,10 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
                         }))
             }) {
                 world.hold_next.take().map(|(_, hold)| hold)
+            } else if (world.hold_too.as_ref())
+                .is_some_and(|(method, _)| frame["method"] == *method)
+            {
+                world.hold_too.take().map(|(_, hold)| hold)
             } else {
                 None
             }
@@ -540,6 +668,12 @@ fn answer(world: &mut World, frame: &Value, subscribed: &mut Vec<String>) -> Opt
     let Some(profile) = params["profile"].as_str() else {
         return Some(refused(id, "profile_mismatch"));
     };
+    // A gateway that serves some profiles refuses a call for any other.
+    let serves = |served: &Vec<String>| served.iter().any(|name| name == profile);
+    if !world.serves.as_ref().is_none_or(serves) {
+        world.mismatched.push(profile.to_owned());
+        return Some(refused(id, "profile_mismatch"));
+    }
     let session = params["session_id"].as_str().unwrap_or("").to_owned();
     let key = (profile.to_owned(), session.clone());
     let result = match method {

@@ -5,7 +5,7 @@
 //! locked to begin the poll and to give it back, never in between.
 use super::{socket::result, socket::Socket, visit::Visit, Shared};
 use agent_hud_agents::hermes::gateway::{
-    frame, hints, Connection, Failure, Frame, Input, Instance, Scope, Step,
+    frame, hints, Connection, Failure, Frame, Input, Instance, Refusal, Scope, Step,
 };
 use serde_json::Value;
 use std::{
@@ -70,7 +70,14 @@ pub(super) fn run(shared: &Shared, socket: &mut Socket) -> Result<Option<Ran>, F
                     if let Some(step) = asked.remove(&id) {
                         match result(&value) {
                             Ok(told) => poll.answer(&step, told),
-                            Err(_) => poll.failed(&step),
+                            Err(refused) => {
+                                // A profile that is not this gateway's:
+                                // which gateway has it is looked for.
+                                if refused == Refusal::ProfileMismatch {
+                                    shared.look.want();
+                                }
+                                poll.failed(&step)
+                            }
                         }
                     }
                 }
