@@ -106,9 +106,12 @@ fn born(shared: &Shared) -> std::sync::MutexGuard<'_, Option<Value>> {
 /// socket of its home. A home that cannot be told of, and a control
 /// socket that is there and does not answer, say no such thing.
 fn asked(shared: &Shared) -> Result<(Value, Home), Silent> {
-    shared.gone.store(false, Ordering::Release);
-    let home = home(shared)?;
+    // Said once the asking is over, and never in between: a follower
+    // whose gateway is gone stays so for as long as nobody listens.
+    let gone = |gone: bool| shared.gone.store(gone, Ordering::Release);
+    let home = home(shared).inspect_err(|_| gone(false))?;
     if let Some(answer) = born(shared).take() {
+        gone(false);
         return Ok((answer, home));
     }
     let line = identify_line();
@@ -117,8 +120,7 @@ fn asked(shared: &Shared) -> Result<(Value, Home), Silent> {
         Err(Silent::TimedOut) => ask(),
         answer => answer,
     };
-    let nobody = matches!(answer, Err(Silent::Absent));
-    shared.gone.store(nobody, Ordering::Release);
+    gone(matches!(answer, Err(Silent::Absent)));
     Ok((answer?, home))
 }
 
