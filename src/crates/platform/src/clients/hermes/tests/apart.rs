@@ -451,8 +451,13 @@ fn a_snapshot_whose_session_left_the_list_while_its_socket_opened_subscribes_to_
     within_the_limit(|| {
         let (lab, gateway) = slowed();
         let shared = lab.observer.as_ref().unwrap().local();
-        // Every socket opened from now on is held as it opens. The polls'
-        // socket and the lane's are open, and nothing else opens one.
+        // The lane has its socket open and has read on it. Every socket
+        // opened from now on is held as it opens, and with the polls'
+        // socket and the lane's both open, the next is the snapshot's.
+        until("the lane reads the slow session", || {
+            reads(&gateway, SLOW).iter().any(|socket| *socket != 1)
+        });
+        let sockets = gateway.world().sockets;
         let second = Arc::new(Hold::default());
         *lab.route.held.lock().unwrap() = Some(("prepare", second.clone()));
         // A request no event shows: the session waits, and only a
@@ -483,13 +488,23 @@ fn a_snapshot_whose_session_left_the_list_while_its_socket_opened_subscribes_to_
         second.released.store(true, Ordering::Release);
         assert!(reached, "the reading never went for its snapshot");
         assert!(left, "the model never saw the session leave the list");
+        // The snapshot's socket opens, and says nothing.
+        until("the snapshot's socket opens", || {
+            gateway.world().sockets > sockets
+        });
         until("the lane ends", || shared.apart.count() == 0);
-        let after = gateway.world().calls("session.resume").len();
+        let world = gateway.world();
+        let after = world.calls("session.resume").len();
         assert_eq!(
             (before, after),
             (0, 0),
             "a snapshot subscribed to a session off the live list"
         );
+        assert_eq!(world.sockets, sockets + 1, "one socket, the snapshot's");
+        let on_it = |(socket, _): &&(usize, Value)| *socket == world.sockets;
+        let said: Vec<_> = world.received.iter().filter(on_it).collect();
+        assert!(said.is_empty(), "{said:?}");
+        drop(world);
         assert!(lab.cards().is_empty());
     });
 }
