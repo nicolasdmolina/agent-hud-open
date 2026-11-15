@@ -5,13 +5,14 @@ use super::{
 };
 use std::{
     net::{Ipv4Addr, SocketAddr, TcpListener},
-    process::{Child, Command, Stdio},
+    process::{Child, Command},
     sync::{Mutex, MutexGuard, PoisonError},
     time::{Duration, Instant},
 };
 
 mod args;
 mod folder;
+mod opening;
 mod process;
 mod sweep;
 #[cfg(test)]
@@ -50,60 +51,6 @@ fn ask(settings: &Settings, control: &str, ask: Ask) -> Option<process::Finished
 }
 
 impl Link {
-    /// Starts a master for `target` and waits until it is up. A host that
-    /// is not trusted, a refused sign-in and a host that cannot be reached
-    /// each come back as the reason, with nothing left running.
-    pub fn open(folder: &Folder, target: &Target, settings: &Settings) -> Result<Self, Failure> {
-        let name = folder.fresh()?;
-        let control = folder.control(&name);
-        let log = folder.log(&name).map_err(|_| Refused::Unavailable)?;
-        let mut master = Command::new(&settings.program);
-        master
-            .args(args::master(settings, target, &control))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(log);
-        let Ok(master) = master.spawn() else {
-            folder.forget(&name);
-            return Err(Refused::Unavailable.into());
-        };
-        let pid = master.id();
-        let link = Self {
-            folder: folder.clone(),
-            settings: settings.clone(),
-            name,
-            control,
-            state: Mutex::new(State {
-                master: Some(master),
-                forwards: Vec::new(),
-                lost: None,
-                closed: None,
-            }),
-        };
-        // Dropping the link closes it: no master outlives a failed start.
-        if link.folder.record(&link.name, pid).is_err() {
-            return Err(Refused::Unavailable.into());
-        }
-        link.wait_up().map_err(Failure::Lost)?;
-        Ok(link)
-    }
-
-    fn wait_up(&self) -> Result<(), Lost> {
-        let until = Instant::now() + self.settings.connect_timeout * 2;
-        loop {
-            if let Some(lost) = self.ended() {
-                return Err(lost);
-            }
-            if self.folder.is_socket(&self.name) && self.asks(Ask::Check) {
-                return Ok(());
-            }
-            if Instant::now() >= until {
-                return Err(Lost::TimedOut);
-            }
-            std::thread::sleep(Duration::from_millis(40));
-        }
-    }
-
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -173,8 +120,21 @@ impl Link {
     pub fn run_watched(&self, command: &FarCommand, watch: Watch<'_>) -> Result<Ran, Failure> {
         self.usable()?;
         let line = words::far_line(command.script, command.args)?;
+        #[cfg(test)]
+        {
+            let began = Instant::now();
+            let came = self.run_line(&line, command, watch);
+            tests::transcript::ran(&line, &came, began.elapsed());
+            came
+        }
+        #[cfg(not(test))]
+        self.run_line(&line, command, watch)
+    }
+
+    /// Runs the far shell's `line` for `command`.
+    fn run_line(&self, line: &str, command: &FarCommand, watch: Watch<'_>) -> Result<Ran, Failure> {
         let mut client = Command::new(&self.settings.program);
-        client.args(args::client(&self.control, Ask::Session(&line)));
+        client.args(args::client(&self.control, Ask::Session(line)));
         let (limit, most) = (command.limit, command.most_output);
         let done = process::run_watched(client, command.stdin, limit, most, watch)
             .map_err(|_| Refused::Unavailable)?;

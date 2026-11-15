@@ -5,9 +5,10 @@
 //! a ticket. The followers of a machine's gateways share the file; a line
 //! of a gateway other than this machine's own begins with its id.
 use std::{
+    collections::HashMap,
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, PoisonError},
+    sync::{Arc, Mutex, PoisonError, Weak},
 };
 
 /// The log starts over past this size, so it never grows without bound.
@@ -32,13 +33,25 @@ struct File {
 }
 
 impl Log {
+    /// The log in `data`. Every machine that is followed writes the one
+    /// file, so each handle on it shares its writer, however it was made.
     pub(super) fn new(data: &Path) -> Self {
+        static OPEN: Mutex<Option<HashMap<PathBuf, Weak<File>>>> = Mutex::new(None);
         let path = data.join("hermes-gateway.log");
-        let writer = Mutex::new(());
-        Self {
-            file: Arc::new(File { path, writer }),
-            who: String::new(),
-        }
+        let mut open = OPEN.lock().unwrap_or_else(PoisonError::into_inner);
+        let open = open.get_or_insert_with(HashMap::new);
+        open.retain(|_, file| file.strong_count() > 0);
+        let file = open.get(&path).and_then(Weak::upgrade).unwrap_or_else(|| {
+            let writer = Mutex::new(());
+            let file = Arc::new(File {
+                path: path.clone(),
+                writer,
+            });
+            open.insert(path, Arc::downgrade(&file));
+            file
+        });
+        let who = String::new();
+        Self { file, who }
     }
 
     /// The same log, each line beginning with `who` where it names one.

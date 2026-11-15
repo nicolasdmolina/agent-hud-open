@@ -1,6 +1,7 @@
 //! Opening one socket on an instance: the route is told of the instance,
 //! a ticket is asked for, a stream is dialled and upgraded with the
-//! ticket. The polls' socket opens this way, and every visit's.
+//! ticket, and the route says whether what answers is its machine. The
+//! polls' socket opens this way, and every visit's.
 //!
 //! Each of those steps waits on something, and the observer may stop
 //! meanwhile (client hooks turned off). So every wait is followed by a
@@ -117,5 +118,17 @@ pub(super) fn opened(shared: &Shared, instance: &Instance) -> Result<Socket, Shu
     if !shared.model().open(key) {
         return Err(Shut::Stopped);
     }
-    socket.map_err(Shut::Failed)
+    let mut socket = socket.map_err(Shut::Failed)?;
+
+    // Who answers: the route says whether this is its machine before
+    // anything is told of the gateway. One that is not is left at once.
+    let wait = shared.pace.answer;
+    let admitted = (shared.route).admit(instance, &mut |command| socket.call(command, wait));
+    if let Err(failure) = admitted {
+        socket.close();
+        running(shared)?;
+        return Err(Shut::Failed(failure));
+    }
+    running(shared)?;
+    Ok(socket)
 }

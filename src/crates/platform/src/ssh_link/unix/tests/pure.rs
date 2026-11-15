@@ -179,4 +179,12 @@ fn the_windows_file_says_not_implemented() {
     type Open =
         fn(&windows_stub::Folder, &Target, &Settings) -> Result<windows_stub::Link, Failure>;
     let _: Open = windows_stub::Link::open;
+    type OpenWhile = fn(
+        &windows_stub::Folder,
+        &Target,
+        &Settings,
+        &dyn Fn() -> bool,
+    ) -> Result<windows_stub::Link, Failure>;
+    let _: OpenWhile = windows_stub::Link::open_while;
+    let _: fn(&windows_stub::Link) -> Result<(), Lost> = windows_stub::Link::running;
 }

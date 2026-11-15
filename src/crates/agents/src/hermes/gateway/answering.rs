@@ -49,6 +49,7 @@ impl Gateway {
             }
         };
         self.polls += 1;
+        self.changed();
         self.close(&key, why, effects);
         effects.push(Effect::Poll);
     }

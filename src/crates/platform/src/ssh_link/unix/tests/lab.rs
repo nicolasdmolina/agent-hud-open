@@ -63,6 +63,14 @@ fn quiet(program: &str, args: &[&str]) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+/// Where a folder that holds a socket can be made: a socket path holds
+/// 104 bytes, so the temporary folder is used only where it is short.
+pub(crate) fn short_base() -> PathBuf {
+    Some(std::env::temp_dir())
+        .filter(|base| base.as_os_str().len() <= 52)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
 pub(crate) fn free_port() -> u16 {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback port");
     listener.local_addr().expect("its address").port()
@@ -160,13 +168,9 @@ impl Lab {
     }
 
     fn try_start(env: &[(&str, &str)]) -> Result<Self, String> {
-        // A socket path holds 104 bytes, so the lab needs a short folder.
-        let base = Some(std::env::temp_dir())
-            .filter(|base| base.as_os_str().len() <= 52)
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
         let dir = tempfile::Builder::new()
             .prefix("ahl")
-            .tempdir_in(base)
+            .tempdir_in(short_base())
             .map_err(|error| error.to_string())?;
         let at = |name: &str| dir.path().join(name);
         let text = |name: &str| at(name).display().to_string();

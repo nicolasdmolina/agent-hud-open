@@ -2,6 +2,7 @@
 //! known by a key made from what its Hermes says of its own install, and
 //! from nothing else: not from a connection entry, an address or a label,
 //! which say where a connection was sent and never what answered it.
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 /// One Hermes install in one home.
@@ -137,6 +138,18 @@ pub fn machine_key(install_id: Option<&str>, root_home: &str) -> Result<MachineK
         .map(|byte| format!("{byte:02x}"))
         .collect();
     Ok(MachineKey(hex[..KEY_LENGTH].to_owned()))
+}
+
+/// The install id a gateway's `profiles.list` result reports, as it wrote
+/// it, for `machine_key`. None where it names none. One that is not text
+/// is given as a word of the wrong length, which makes no key either: the
+/// id is taken as reported or not at all, and never read into shape.
+pub fn reported_install(result: &Value) -> Option<&str> {
+    match result.get("install_id") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(id)) => Some(id),
+        Some(_) => Some("not text"),
+    }
 }
 
 /// Whether the gateways found on one route all report the same install

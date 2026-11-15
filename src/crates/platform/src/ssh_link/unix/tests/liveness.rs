@@ -99,3 +99,69 @@ fn a_long_log_is_emptied_and_the_masters_last_words_are_still_read() {
     assert_eq!(link.alive(), Err(Lost::TimedOut));
     link.close();
 }
+
+/// A master that was killed shows as gone at once, by a look at its
+/// process that starts none (ticket 30).
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_killed_master_shows_as_not_running_without_a_process_being_started() {
+    let Some(lab) = Lab::start() else { return };
+    let folder = lab.folder();
+    let link = Link::open(&folder, &lab.target(), &lab.settings()).unwrap();
+    assert_eq!(link.running(), Ok(()));
+    let before = lab.link_processes(&folder);
+    assert_eq!(link.running(), Ok(()));
+    assert_eq!(
+        lab.link_processes(&folder),
+        before,
+        "the master and no client"
+    );
+    let pid = link.master_pid().unwrap();
+    // SAFETY: a signal to the master this test just started.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    let killed = Instant::now();
+    assert!(until(Duration::from_secs(2), || link.running().is_err()));
+    println!("seen as not running {:?} after the kill", killed.elapsed());
+    assert_eq!(link.running(), Err(Lost::Ended));
+    assert!(link.close().gone);
+    assert_eq!(entries(folder.path()), Vec::<String>::new());
+}
+
+/// An opening can be given up while the master still signs in: the master
+/// is ended, and nothing of it is left (ticket 30).
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn an_opening_that_is_given_up_ends_its_master_and_leaves_nothing() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let Some(lab) = Lab::start() else { return };
+    let folder = lab.folder();
+    // A proxy that never connects: the master waits on it.
+    let stuck = lab.config_text().replace(
+        &format!("Port {}", lab.port),
+        "Port 9\n  ProxyCommand /bin/sleep 600",
+    );
+    let settings = lab.settings_with("stuck", &stuck);
+    let wanted = AtomicBool::new(true);
+    let began = Instant::now();
+    let opened = std::thread::scope(|scope| {
+        let opening = scope.spawn(|| {
+            let still = || wanted.load(Ordering::Acquire);
+            Link::open_while(&folder, &lab.target(), &settings, &still)
+        });
+        assert!(until(Duration::from_secs(10), || {
+            lab.link_processes(&folder).len() == 1
+        }));
+        wanted.store(false, Ordering::Release);
+        opening.join().expect("the opening ends")
+    });
+    println!("given up after {:?}", began.elapsed());
+    assert_eq!(
+        opened.err(),
+        Some(Failure::Refused(crate::ssh_link::Refused::Closed))
+    );
+    assert!(began.elapsed() < settings.connect_timeout);
+    assert_eq!(lab.link_processes(&folder), Vec::<String>::new());
+    assert_eq!(entries(folder.path()), Vec::<String>::new());
+    // An opening that stays wanted opens as ever.
+    assert!(Link::open_while(&folder, &lab.target(), &lab.settings(), &|| true).is_ok());
+}

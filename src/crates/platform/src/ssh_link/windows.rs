@@ -32,6 +32,17 @@ impl Link {
     pub fn open(_folder: &Folder, _target: &Target, _settings: &Settings) -> Result<Self, Failure> {
         Err(NOT_IMPLEMENTED)
     }
+    pub fn open_while(
+        _folder: &Folder,
+        _target: &Target,
+        _settings: &Settings,
+        _wanted: &dyn Fn() -> bool,
+    ) -> Result<Self, Failure> {
+        Err(NOT_IMPLEMENTED)
+    }
+    pub fn running(&self) -> Result<(), Lost> {
+        Err(Lost::Ended)
+    }
     pub fn run_watched(&self, _command: &FarCommand, _watch: Watch<'_>) -> Result<Ran, Failure> {
         Err(NOT_IMPLEMENTED)
     }

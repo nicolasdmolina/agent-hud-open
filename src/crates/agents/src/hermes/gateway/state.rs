@@ -74,6 +74,18 @@ pub struct Gateway {
     pub(super) held: BTreeSet<Profile>,
     /// The profiles no card is opened for just now (`served.rs`).
     pub(super) withheld: BTreeSet<Profile>,
+    /// Counts every change a reading begun before it cannot know of: an
+    /// answer Hermes took, a restart, a dropped socket, a profile that
+    /// left. Not a poll that began, which `polls` counts too: a session
+    /// read apart is read beside the polls (`apart.rs`).
+    pub(super) changes: u64,
+    /// Counts the readings of one session apart, and names the newest of
+    /// each session.
+    pub(super) readings: u64,
+    pub(super) apart: BTreeMap<SessionRef, u64>,
+    /// The poll that last listed each live session anew, or as something
+    /// else than the poll before it and not as waiting (`apart.rs`).
+    pub(super) listing: BTreeMap<SessionRef, u64>,
 }
 
 impl Gateway {
@@ -90,6 +102,10 @@ impl Gateway {
             told: Default::default(),
             held: BTreeSet::new(),
             withheld: BTreeSet::new(),
+            changes: 0,
+            readings: 0,
+            apart: BTreeMap::new(),
+            listing: BTreeMap::new(),
         }
     }
     pub fn id(&self) -> &GatewayId {
@@ -225,6 +241,7 @@ impl Gateway {
     /// arrived, so its card is shown again. A poll under way cannot end.
     fn lost(&mut self, failure: Failure, effects: &mut Vec<Effect>) {
         self.polls += 1;
+        self.changed();
         // What happened while nothing was read is not known.
         self.snapshotted.clear();
         for card in self.cards.values_mut() {
@@ -243,6 +260,7 @@ impl Gateway {
     /// gateway as it was says no longer counts.
     pub(super) fn reset(&mut self, why: Closed, effects: &mut Vec<Effect>) {
         self.polls += 1;
+        self.changed();
         self.listed.clear();
         self.snapshotted.clear();
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {

@@ -13,6 +13,7 @@ mod limits;
 mod link;
 mod liveness;
 mod pure;
+pub(crate) mod transcript;
 mod trust;
 
 #[test]

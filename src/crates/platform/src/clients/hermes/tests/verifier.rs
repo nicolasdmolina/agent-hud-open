@@ -235,6 +235,8 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         }),
         stopping: (Mutex::new(()), Condvar::new()),
         reader: "local".into(),
+        label: None,
+        apart: Default::default(),
         asked: Mutex::new(Profile::Default),
         born: Mutex::default(),
         found: Mutex::default(),
@@ -245,7 +247,10 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         shows: Default::default(),
         deaf: AtomicBool::new(false),
     };
-    let (visit, _) = Visit::begin(&shared, &instance, &session, Duration::from_secs(2)).unwrap();
+    let wait = Duration::from_secs(2);
+    let always = (&|| true, &|_: &_| true);
+    let (visit, _) =
+        Visit::begin_while(&shared, &instance, &session, wait, always.0, always.1).unwrap();
     visit.end();
     assert!(
         shared.is_wanted(),

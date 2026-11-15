@@ -18,6 +18,8 @@ use std::{
 };
 
 // Unix only, as the control socket is; the files sit in `tests/`.
+#[path = "tests/apart.rs"]
+mod apart;
 #[path = "tests/approvals.rs"]
 mod approvals;
 #[path = "tests/cancelled.rs"]
@@ -26,6 +28,14 @@ mod cancelled;
 mod cards;
 #[path = "tests/fake.rs"]
 mod fake;
+#[path = "tests/far.rs"]
+mod far;
+#[path = "tests/far_long.rs"]
+mod far_long;
+#[path = "tests/far_mini.rs"]
+mod far_mini;
+#[path = "tests/far_timing.rs"]
+mod far_timing;
 #[path = "tests/followers.rs"]
 mod followers;
 #[path = "tests/gateways.rs"]
@@ -102,6 +112,10 @@ fn quick() -> Pace {
         // Longer than in the app, so that a test can stop the observer
         // or close a card while a write still waits on the gateway.
         write: Duration::from_secs(3),
+        // No session is read apart from the polls: these tests hold
+        // replies back to see what a poll does meanwhile. `apart.rs`
+        // turns it on.
+        apart: Duration::from_secs(3600),
         // No look at the machine by the clock: these tests follow one
         // gateway and count what is asked of its route. `followers.rs`
         // turns it on.

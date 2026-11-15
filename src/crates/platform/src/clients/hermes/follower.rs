@@ -44,6 +44,9 @@ pub(super) struct Shared {
     /// The name everything is told to core under: the gateway's id, as it
     /// is written. Core keeps each reader's readings apart (ticket 24).
     pub(super) reader: String,
+    /// The label of the machine its gateway runs on, which its cards
+    /// carry: a far machine's, none for this one.
+    pub(super) label: Option<String>,
     /// The profile whose home is asked, for who is there and for tickets.
     /// It is the gateway's anchor until that profile leaves the gateway.
     pub(super) asked: Mutex<Profile>,
@@ -69,6 +72,8 @@ pub(super) struct Shared {
     pub(super) awaits: AtomicU64,
     /// Asks for a look at every gateway of the machine.
     pub(super) look: Arc<Signal>,
+    /// The sessions that are read apart from the polls (`apart.rs`).
+    pub(super) apart: super::apart::Lanes,
     /// Every reader that was ended in core, for the tests that count them.
     #[cfg(test)]
     pub(super) ends: Arc<Mutex<Vec<String>>>,
@@ -246,7 +251,13 @@ impl Shared {
         model.taken.clear();
         model.waiters.clear();
         model.opened.clear();
+        let followed = model.gateway.instance().map(str::to_owned);
         drop(model);
+        // Its gateway is followed no more: the route lets go of what it
+        // kept for that instance, with the model unlocked.
+        if let Some(instance) = followed {
+            self.route.release(&instance);
+        }
         self.requests.end_native_reader(AGENT.id, &self.reader);
         #[cfg(test)]
         (self.ends.lock().unwrap()).push(self.reader.clone());
