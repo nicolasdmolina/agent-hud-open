@@ -24,7 +24,7 @@ const OTHER: &str = "fedcba9876543210fedcba9876543210";
 const ROOT: &str = "/Users/far/.hermes";
 
 /// An instance as the model accepts it, with this origin.
-fn accepted(origin: &str) -> Option<Instance> {
+pub(super) fn accepted(origin: &str) -> Option<Instance> {
     let named = format!("{ROOT}/profiles/reports");
     let answer = json!({"ok": true, "result": {
         "runtime_protocol": 1, "state": "ready", "instance_id": "instance-1",
