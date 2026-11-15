@@ -100,9 +100,10 @@ fn within_the_limit(body: impl FnOnce() + Send + 'static) {
 fn a_session_slow_to_read_is_read_apart_and_the_polls_go_on_without_it() {
     within_the_limit(|| {
         let (lab, gateway) = slowed();
-        assert!(lab
-            .log()
-            .contains(&format!("apart session=hermes:{PROFILE}:{SLOW}")));
+        // The lane is counted a moment before the log says it began.
+        let said = format!("apart session=hermes:{PROFILE}:{SLOW}");
+        let wrote = within(Duration::from_secs(10), || lab.log().contains(&said));
+        assert!(wrote, "{}", lab.log());
         // From now on the polls' socket carries no read of the slow session,
         // and goes on reading the other. Counted by the reads themselves,
         // as the gateway got them: twenty more of the other session on the
@@ -244,7 +245,17 @@ fn a_lane_ends_with_its_follower_and_asks_nothing_more() {
         let shared = lab.observer.as_ref().unwrap().local();
         lab.observer.take();
         assert!(lab.cards().is_empty(), "withdrawn");
-        let asked = gateway.world().received.len();
+        // A call the polls wrote just before the follower ended may still
+        // be on its way to the gateway: it is let in before the count.
+        let mut asked = gateway.world().received.len();
+        let mut quiet = std::time::Instant::now();
+        while quiet.elapsed() < Duration::from_millis(500) {
+            std::thread::sleep(Duration::from_millis(10));
+            let now = gateway.world().received.len();
+            if now != asked {
+                (asked, quiet) = (now, std::time::Instant::now());
+            }
+        }
         held.released.store(true, Ordering::Release);
 
         // The reply comes back to a lane whose follower ended: it sends no
