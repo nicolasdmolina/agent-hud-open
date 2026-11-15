@@ -184,8 +184,10 @@ fn the_polls_take_a_session_back_once_its_reads_are_quick_again() {
         until("the slow session's card", || shows(&lab, "p-slow"));
         gateway.world().slow_replay = None;
         until("its lane ends", || lanes(&lab) == 0);
+        // The lane leaves the count a moment before it writes why.
         let said = format!("together session=hermes:{PROFILE}:{SLOW} why=quick");
-        assert!(lab.log().contains(&said), "{}", lab.log());
+        let wrote = within(Duration::from_secs(10), || lab.log().contains(&said));
+        assert!(wrote, "{}", lab.log());
         // The polls read it again, and its card is the one it had.
         let on_polls = |gateway: &Fake| {
             let sockets = reads(gateway, SLOW);
@@ -208,8 +210,10 @@ fn a_lane_ends_when_the_polls_no_longer_want_the_session_read() {
         // The turn ends with nothing waiting: a poll would not read it.
         gateway.tells_quietly(PROFILE, SLOW, "message.complete", json!({}));
         until("its lane ends", || lanes(&lab) == 0);
+        // The lane leaves the count a moment before it writes why.
         let said = format!("together session=hermes:{PROFILE}:{SLOW} why=unwanted");
-        assert!(lab.log().contains(&said), "{}", lab.log());
+        let wrote = within(Duration::from_secs(10), || lab.log().contains(&said));
+        assert!(wrote, "{}", lab.log());
         let read = reads(&gateway, SLOW).len();
         std::thread::sleep(HELD * 2);
         assert_eq!(reads(&gateway, SLOW).len(), read, "read no more");
