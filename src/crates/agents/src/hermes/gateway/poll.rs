@@ -11,6 +11,7 @@ use super::effect::Status;
 use super::fold::{batches, prompts, Reading};
 use super::frame::Cursor;
 use super::identity::{GatewayId, Profile, SessionRef};
+use super::listing::Listed;
 use super::read::Search;
 use super::ticket::Scope;
 use serde_json::Value;
@@ -55,6 +56,8 @@ pub(super) struct Shown {
 #[derive(Debug)]
 pub(super) struct Look {
     pub(super) status: Status,
+    /// What else the list said of the session (`listing.rs`).
+    pub(super) listed: Listed,
     pub(super) read: Read,
     /// A snapshot of it was taken in this poll.
     pub(super) snapshot: bool,
@@ -213,9 +216,10 @@ impl Poll {
             } else {
                 Read::Skipped
             };
-            let snapshot = false;
+            let (snapshot, listed) = (false, Listed::of(row));
             let look = Look {
                 status,
+                listed,
                 read,
                 snapshot,
             };

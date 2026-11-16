@@ -56,6 +56,8 @@ pub struct Gateway {
     /// What the last poll listed each live session as doing. It is only
     /// reported (`statuses`, `poll_ms`); no poll reads it.
     pub(super) listed: BTreeMap<SessionRef, Status>,
+    /// What else that poll's list said of each (`listing.rs`).
+    pub(super) rows: BTreeMap<SessionRef, super::listing::Listed>,
     /// When a snapshot was last taken of each session that waits. Hermes
     /// drops a stream's old events, and a request asked before the oldest
     /// one kept shows in no read. A snapshot finds it, and subscribes to
@@ -97,6 +99,7 @@ impl Gateway {
             polls: 0,
             cards: BTreeMap::new(),
             listed: BTreeMap::new(),
+            rows: BTreeMap::new(),
             snapshotted: BTreeMap::new(),
             now_ms: 0,
             told: Default::default(),

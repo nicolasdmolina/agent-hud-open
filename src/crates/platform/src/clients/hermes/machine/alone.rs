@@ -44,10 +44,12 @@ impl FarObserver {
             settings,
         } = entry;
         let ways = Ok(Ways { folder, settings });
+        // Nobody reads the mirrors of a machine followed this way.
+        let untold: crate::hooks::Changed = Arc::new(|_| {});
         let book = Book::start(
             (data, pace),
             requests,
-            wake,
+            (wake, untold),
             ways,
             None,
             Bindings::default(),

@@ -33,6 +33,10 @@ impl Followers {
 
     /// The machine's cards say `label` from now on.
     pub(super) fn relabel(&self, label: &str) {
+        // Its stored sessions too: the mirrors' writer writes the label.
+        if let Some(mirror) = &self.mirror {
+            mirror.relabel(label);
+        }
         let followers = self.set();
         {
             let Some(first) = followers.first() else {

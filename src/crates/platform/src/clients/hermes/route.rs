@@ -136,6 +136,13 @@ pub(crate) trait Route: Send + Sync {
     /// that instance is dialled.
     fn dial(&self, instance: &Instance) -> Result<TcpStream, Failure>;
 
+    /// The route number: it goes up every time the way to the machine
+    /// changes (`switch.rs`), and never for a route that is one way for
+    /// its whole life.
+    fn number(&self) -> u64 {
+        0
+    }
+
     /// The instance `instance`, by its id, is followed no more: its
     /// follower ended. What the route kept for it (`prepare`) is let go.
     /// It does not wait: whoever ends a follower holds the set of them.

@@ -38,6 +38,7 @@ mod link;
 mod log;
 mod machine;
 mod machines;
+mod mirror;
 mod model;
 mod opening;
 mod out;
@@ -80,7 +81,9 @@ impl Observer {
         pace: Pace,
     ) -> Result<Self, String> {
         let this = (Machine::This, None);
-        let all = followers::Followers::start(route, this, data, requests, wake, pace)?;
+        // This machine's sessions are read from its own Hermes home: it
+        // has no mirror.
+        let all = followers::Followers::start(route, this, data, requests, wake, pace, None)?;
         Ok(Self { all })
     }
 

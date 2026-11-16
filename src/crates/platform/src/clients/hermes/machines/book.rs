@@ -22,10 +22,11 @@ use crate::{
         followers::Followers,
         log::Log,
         machine::{Inner, Keeper, Role},
+        mirror::Writer,
         route::{switch::Switch, Route},
         Pace,
     },
-    hooks::Wake,
+    hooks::{Changed, Wake},
     ssh_link::{Folder, Settings},
 };
 use agent_hud_agents::hermes::{
@@ -53,6 +54,8 @@ pub(crate) struct Book {
     pub(super) data: PathBuf,
     pub(super) requests: Requests,
     wake: Wake,
+    /// Tells core which files of a machine's mirrors changed.
+    changed: Changed,
     pub(super) pace: Pace,
     pub(super) log: Log,
     /// None where no route can be made, with the word for why.
@@ -118,7 +121,7 @@ impl Book {
     pub(crate) fn start(
         (data, pace): (&Path, Pace),
         requests: Requests,
-        wake: Wake,
+        (wake, changed): (Wake, Changed),
         ways: Result<Ways, &'static str>,
         here: Option<Here>,
         bindings: Bindings,
@@ -135,6 +138,7 @@ impl Book {
             data: data.to_owned(),
             requests,
             wake,
+            changed,
             pace,
             log: Log::new(data).of(Some("machines")),
             ways,
@@ -204,6 +208,16 @@ impl Book {
                 let switch = Arc::new(Switch::new(way));
                 let machine = (Machine::Far(key.clone()), Some(label.clone()));
                 let (requests, wake) = (self.requests.clone(), self.wake.clone());
+                // The machine's one mirror writer, made with it and its
+                // for as long as it is followed. Without one, the
+                // machine has its cards and no rows.
+                let log = Log::new(&self.data).of(Some(key.as_str()));
+                let (told, routes) = (self.changed.clone(), switch.clone());
+                let mirror = Writer::start(&self.data, (key, &label), routes, told, log);
+                if let Err(why) = &mirror {
+                    self.log
+                        .line(&format!("no mirror machine={} {why}", key.as_str()));
+                }
                 let Ok(followers) = Followers::start(
                     switch.clone(),
                     machine,
@@ -211,6 +225,7 @@ impl Book {
                     requests,
                     wake,
                     self.pace,
+                    mirror.ok(),
                 ) else {
                     return Role::Alias;
                 };

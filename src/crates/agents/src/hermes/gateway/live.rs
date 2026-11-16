@@ -33,6 +33,13 @@ impl Told {
             self.fresh.clear();
         }
     }
+    /// The profiles whose sessions are current, and when they were read.
+    pub(super) fn fresh(&self) -> &BTreeSet<Profile> {
+        &self.fresh
+    }
+    pub(super) fn read_ms(&self) -> i64 {
+        self.read_ms
+    }
     /// A poll that counted came back at `now_ms`: the profiles it listed
     /// are current, and no others.
     pub(super) fn read(&mut self, poll: &Poll, now_ms: i64) {

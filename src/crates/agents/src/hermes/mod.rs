@@ -4,15 +4,15 @@ pub mod connections;
 pub mod far_history;
 pub mod gateway;
 mod hooks;
-mod mirror;
+pub mod mirror;
 mod session_counts;
 mod settings;
 pub mod transcript;
 
 use crate::Agent;
 use crate::Discovery;
+use crate::{Base, Location, Source};
 use crate::{Carries, Channel, PerOs, Support};
-use crate::{Location, Source};
 
 /// Hermes's local gateway, which its desktop app talks to: the questions
 /// and approvals a session waits on, and the answers to them. Agent HUD
@@ -47,10 +47,35 @@ pub static FAR_ROUTE: PerOs<()> = PerOs {
     linux: Support::Unverified(()),
 };
 
-static SOURCES: [Source; 1] = [Source {
+/// This machine's Hermes home.
+const HOME: Source = Source {
     reads_as: "hermes",
     location: Location::home(&["HERMES_HOME"], &[".hermes"], ""),
-}];
+};
+/// The mirrors of far machines (`mirror.rs`), in Agent HUD's own data
+/// folder: `FOLDER`, named after the app's identifier, or the one
+/// `AGENTHUD_DATA_DIR` names, as Cursor's turn log is declared
+/// (`cursor/mod.rs`). Each is read as any Hermes `state.db` is, and its
+/// own `hud_mirror` table says whose sessions it holds. Only where a far
+/// Hermes can be reached (`FAR_ROUTE`).
+const fn mirrors(base: Base) -> Source {
+    Source {
+        reads_as: "hermes",
+        location: Location {
+            base,
+            env: &["AGENTHUD_DATA_DIR"],
+            folders: &[FOLDER],
+            profiles: None,
+            path: mirror::ROOT,
+            not_if: None,
+        },
+    }
+}
+/// The fork's data folder on every system (FORK.md).
+const FOLDER: &str = "com.nickymolina.agenthud";
+static MAC_SOURCES: [Source; 2] = [HOME, mirrors(Base::AppData)];
+static WINDOWS_SOURCES: [Source; 1] = [HOME];
+static LINUX_SOURCES: [Source; 2] = [HOME, mirrors(Base::DataHome)];
 static DISCOVERY: Discovery = Discovery {
     storage: &[
         Location::home(&["HERMES_HOME"], &[".hermes"], "state.db"),
@@ -79,6 +104,10 @@ pub static AGENT: Agent = Agent {
     replies: None,
     turns: None,
     items: None,
-    sources: crate::everywhere(&SOURCES),
+    sources: PerOs {
+        macos: Support::Verified(&MAC_SOURCES),
+        windows: Support::Unverified(&WINDOWS_SOURCES),
+        linux: Support::Unverified(&LINUX_SOURCES),
+    },
     discovery: &DISCOVERY,
 };

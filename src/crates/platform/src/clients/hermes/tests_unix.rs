@@ -34,6 +34,8 @@ mod far;
 mod far_long;
 #[path = "tests/far_mini.rs"]
 mod far_mini;
+#[path = "tests/far_rows_timing.rs"]
+mod far_rows_timing;
 #[path = "tests/far_timing.rs"]
 mod far_timing;
 #[path = "tests/followers.rs"]
@@ -76,6 +78,8 @@ mod round3;
 mod round4;
 #[path = "tests/route.rs"]
 mod route;
+#[path = "tests/route_number.rs"]
+mod route_number;
 #[path = "tests/script.rs"]
 mod script;
 #[path = "tests/stalled.rs"]

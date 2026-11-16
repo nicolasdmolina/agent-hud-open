@@ -15,6 +15,7 @@ use super::{
     decisions, discovery,
     follower::{End, Shared},
     link, log,
+    mirror::Writer,
     model::Model,
     route::Route,
     signal::Signal,
@@ -46,6 +47,8 @@ pub(super) struct Followers {
     /// One for every follower of the machine, since the entry that owns
     /// the machine can be renamed, or give way to another (`handover.rs`).
     label: Label,
+    /// The one writer of a far machine's mirrors (`mirror.rs`).
+    pub(super) mirror: Option<Arc<Writer>>,
     requests: Requests,
     wake: Wake,
     pub(super) log: log::Log,
@@ -73,6 +76,7 @@ impl Followers {
         requests: Requests,
         wake: Wake,
         pace: Pace,
+        mirror: Option<Arc<Writer>>,
     ) -> Result<Arc<Self>, String> {
         // The lines of a far machine's followers begin with its key.
         let who = match &machine {
@@ -83,6 +87,7 @@ impl Followers {
             route,
             machine,
             label: Arc::new(Mutex::new(label)),
+            mirror,
             requests,
             wake,
             log: log::Log::new(data).of(who.as_deref()),
@@ -138,9 +143,13 @@ impl Followers {
     }
 
     /// Ends every follower and makes no more. Each withdraws its cards
-    /// and ends its reader; the threads end on their own.
+    /// and ends its reader; the threads end on their own. The machine's
+    /// mirrors are written no more, from before the first follower ends.
     pub(super) fn stop(&self) {
         let ran = self.active.swap(false, Ordering::AcqRel);
+        if let Some(mirror) = &self.mirror {
+            mirror.stop();
+        }
         self.look.wake();
         for follower in self.set().drain(..) {
             follower.end(End::Off);
@@ -188,6 +197,8 @@ impl Followers {
             model: Mutex::new(model),
             stopping: (Mutex::new(()), Condvar::new()),
             reader,
+            mirror: self.mirror.clone(),
+            under: AtomicU64::new(0),
             label: self.label.clone(),
             asked: Mutex::new(asked),
             born: Mutex::new(born),
