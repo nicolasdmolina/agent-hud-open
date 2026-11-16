@@ -8,7 +8,9 @@
 //! (`release_all`), and when another instance answers at the home it
 //! answered at. A cancel that is owed is paid before the next forward is
 //! made, so no forward is in place beside the one it replaced. A forward
-//! lives on one link and is gone with it.
+//! lives on one link and is gone with it. Links are numbered as they
+//! open, and the table is the newest link's: whoever comes with an older
+//! number is refused and changes nothing (ticket 50).
 //!
 //! Making one asks the master, which can take a moment. Whoever asked may
 //! stop meanwhile: the wait ends at once, and the forward, if it still
@@ -23,6 +25,9 @@ use std::{
     thread,
     time::Duration,
 };
+
+#[cfg(all(test, unix))]
+mod tests_unix;
 
 /// How long one look at a forward being made lasts.
 const TICK: Duration = Duration::from_millis(10);
@@ -82,7 +87,8 @@ impl Forwards {
     }
 
     /// Has a forward to `port` on the far loopback in place for
-    /// `instance`, on `link`, which is the link `number`.
+    /// `instance`, on `link`, which is the link `number`. Unreachable
+    /// where a link with a higher number has been prepared on.
     pub(super) fn prepare(
         self: &Arc<Self>,
         link: &Arc<Link>,
@@ -93,8 +99,13 @@ impl Forwards {
     ) -> Result<(), Failure> {
         let id = instance.id.clone();
         let mut held = self.held();
+        if number < held.link {
+            // Taken before the link was replaced, and here after another
+            // socket prepared on the next: the open link's forwards stay.
+            return Err(Failure::Unreachable);
+        }
         if held.link != number {
-            // Whatever was on another link went with it.
+            // Whatever was on the link before went with it.
             held.by_instance.clear();
             held.owed.clear();
             held.link = number;
