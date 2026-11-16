@@ -15,7 +15,7 @@ use std::sync::{atomic::Ordering, Arc};
 
 /// One install behind two entries, `Mini` first and `Mini over VPN`
 /// second, each by a name of its own for the one host.
-fn aliased() -> Option<(Fleet, Fake, String)> {
+pub(super) fn aliased() -> Option<(Fleet, Fake, String)> {
     let mut fleet = fleet(2)?;
     let gateway = fleet.hosts[0].gateway("instance-1", INSTALL[0]);
     fleet.write(&[
@@ -35,7 +35,7 @@ fn aliased() -> Option<(Fleet, Fake, String)> {
 
 /// What a card must keep across a handover: its request, the time it
 /// came, the hold that runs from it.
-fn kept(fleet: &Fleet, card: &Value) -> Value {
+pub(super) fn kept(fleet: &Fleet, card: &Value) -> Value {
     json!([card["id"], card["createdAt"], fleet.times(card)])
 }
 

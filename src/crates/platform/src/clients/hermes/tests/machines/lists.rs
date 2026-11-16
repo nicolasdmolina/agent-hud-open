@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 
 /// A fleet whose first host runs a gateway that asks one question, with
 /// the list holding this machine and the entry `Mini` for that host.
-fn one_machine() -> Option<(Fleet, Fake, String)> {
+pub(super) fn one_machine() -> Option<(Fleet, Fake, String)> {
     let mut fleet = fleet(1)?;
     let gateway = fleet.hosts[0].gateway("instance-1", INSTALL[0]);
     fleet.write(&[here(), ssh("a", "Mini", "m0")]);

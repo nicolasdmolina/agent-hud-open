@@ -88,7 +88,9 @@ pub(super) struct Slot {
     pub(super) lead: Lead,
 }
 
-/// Where an entry's route leads, as it last verified.
+/// Where an entry's route leads, as it last verified. An alias whose
+/// address was edited is still its machine's alias until its new route
+/// verifies, or is reached and refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Lead {
     Nowhere,
