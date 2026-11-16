@@ -7,7 +7,9 @@
 //! verified before are shown from their bindings, and nothing is
 //! dialled. A status goes by its machine's key once its entry verified,
 //! now or before (the key its sessions' ids begin with), and by the
-//! entry's id until then.
+//! entry's id until then. One status goes by a key, the owner's: every
+//! other entry that leads to the machine goes by its own id, in reach or
+//! out of it, so no two statuses share an id.
 use super::{
     book::{Book, Lead, Slot, State},
     list::Unread,
@@ -137,16 +139,28 @@ impl State {
 
     fn far_status(&self, slot: &Slot, address: &SshAddress) -> MachineStatus {
         let entry = &slot.entry;
-        // Verified before at this address: it goes by that machine's key.
-        let before = self.bindings.of(&entry.id, address).map(str::to_owned);
-        let known = before.unwrap_or_else(|| row(&entry.id));
+        // Verified before at this address: it goes by that machine's key,
+        // where it is the one entry that does.
+        let before = self.bindings.of(&entry.id, address);
+        let before = before.filter(|key| self.named(key) == Some(entry.id.as_str()));
+        let known = before.map_or_else(|| row(&entry.id), str::to_owned);
         let Some(route) = &slot.route else {
             let why = slot.without.as_deref().unwrap_or_default();
             let note = Some(words::no_route(why));
             return status(&known, &entry.label, MachineState::NotCovered, note);
         };
         let (id, state, note) = match route.standing() {
-            Standing::Connected(key) => (key.as_str().to_owned(), MachineState::Connected, None),
+            // The owner, but for the moment in which another entry's
+            // route took the machine and this one has yet to hear of it.
+            Standing::Connected(key) => {
+                let named = self.named(key.as_str()).is_none_or(|id| id == entry.id);
+                let id = if named {
+                    key.as_str().to_owned()
+                } else {
+                    known
+                };
+                (id, MachineState::Connected, None)
+            }
             Standing::Alias(key) => {
                 let other = match &slot.lead {
                     Lead::Here => self.here_label(),
@@ -170,6 +184,26 @@ impl State {
             state,
             note.filter(|note| !note.is_empty()),
         )
+    }
+
+    /// The entry whose status goes by the machine `key`: its owner, and
+    /// while it has none (it waits for one, or nothing is followed yet)
+    /// the first entry in the list's order that verified as it at the
+    /// address it has now.
+    fn named(&self, key: &str) -> Option<&str> {
+        let far = self.far.iter().find(|(far, _)| far.as_str() == key);
+        let owner = far.and_then(|(_, far)| far.owner.as_deref());
+        let bound = |slot: &&Slot| match &slot.entry.kind {
+            Kind::Ssh(address) => self.bindings.of(&slot.entry.id, address) == Some(key),
+            _ => false,
+        };
+        let first = || {
+            self.slots
+                .iter()
+                .find(bound)
+                .map(|slot| slot.entry.id.as_str())
+        };
+        owner.or_else(first)
     }
 
     /// What this machine is called: its entry's label, where it has one.

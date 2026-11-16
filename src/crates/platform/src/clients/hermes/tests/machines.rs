@@ -38,6 +38,8 @@ use std::{
 
 #[path = "machines/answers.rs"]
 mod answers;
+#[path = "machines/guards.rs"]
+mod guards;
 #[path = "machines/lists.rs"]
 mod lists;
 #[path = "machines/owners.rs"]

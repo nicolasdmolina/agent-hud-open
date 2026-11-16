@@ -1,16 +1,18 @@
 //! Reading the connection list. The file is looked at on a slow timer:
-//! opened, and its size and time of change compared with the last
-//! reading. Only a file that changed is read and parsed. Its text is
-//! read into the typed reader (`agents::hermes::connections`), which
-//! builds only the allowlisted fields, and is dropped here: it is never
-//! logged, kept or copied, and nothing that says why a reading failed
-//! holds any of it.
+//! opened, read, and its text compared with the last reading that
+//! parsed. Only a text that changed is parsed. It is compared by a mark
+//! (`Watch::mark`), not kept: a file's size and time of change say
+//! nothing of a file put back with both as they were. The text is read
+//! into the typed reader (`agents::hermes::connections`), which builds
+//! only the allowlisted fields, and is dropped here: it is never logged,
+//! kept or copied, and nothing that says why a reading failed holds any
+//! of it.
 use agent_hud_agents::hermes::connections::{self, Entry, ListError};
 use std::{
     fs::File,
+    hash::{BuildHasher, RandomState},
     io::{ErrorKind, Read},
     path::PathBuf,
-    time::SystemTime,
 };
 
 /// More than any list holds. A longer file is not read.
@@ -38,25 +40,34 @@ pub(crate) enum Looked {
     Unread(Unread),
 }
 
-/// The file as it was when it was last read: its size and when it
-/// changed.
-type Stamp = (u64, Option<SystemTime>);
-
 pub(crate) struct Watch {
     path: PathBuf,
-    /// The stamp of the last reading that parsed.
-    parsed: Option<Stamp>,
+    /// The mark of the last text that parsed.
+    parsed: Option<u64>,
+    /// What the marks are made with: this watch's own, made anew at
+    /// every launch, so a mark says nothing of the text to anyone else.
+    marks: RandomState,
 }
 
 impl Watch {
     pub(crate) fn new(path: PathBuf) -> Self {
-        let parsed = None;
-        Self { path, parsed }
+        let (parsed, marks) = (None, RandomState::new());
+        Self {
+            path,
+            parsed,
+            marks,
+        }
+    }
+
+    /// A number that stands for `text` in this watch alone: two texts
+    /// with one mark are the same text. It is held in memory and written
+    /// nowhere.
+    fn mark(&self, text: &str) -> u64 {
+        self.marks.hash_one(text)
     }
 
     /// Looks at the file. A reading that fails is tried again at every
-    /// look, since the file's stamp says nothing of whether it can be
-    /// read now.
+    /// look: only a text that parsed is remembered.
     pub(crate) fn look(&mut self) -> Looked {
         let file = match File::open(&self.path) {
             Ok(file) => file,
@@ -68,23 +79,23 @@ impl Watch {
         let Ok(stat) = file.metadata() else {
             return Looked::Unread(Unread::Unreadable);
         };
-        let stamp = (stat.len(), stat.modified().ok());
-        if self.parsed == Some(stamp) {
-            return Looked::Same;
-        }
         if !stat.is_file() || stat.len() > MOST {
             return Looked::Unread(Unread::Unreadable);
         }
-        // Read, parsed and dropped, all here.
+        // Read, compared, parsed and dropped, all here.
         let mut text = String::new();
         if file.take(MOST + 1).read_to_string(&mut text).is_err() {
             return Looked::Unread(Unread::Unreadable);
+        }
+        let mark = self.mark(&text);
+        if self.parsed == Some(mark) {
+            return Looked::Same;
         }
         let read = connections::parse(&text);
         drop(text);
         match read {
             Ok(list) => {
-                self.parsed = Some(stamp);
+                self.parsed = Some(mark);
                 Looked::List(list)
             }
             Err(ListError::NotUnderstood) => Looked::Unread(Unread::NotUnderstood),
@@ -113,7 +124,8 @@ mod tests {
     /// clock's grain.
     fn rewrite(watch: &Watch, text: &str) {
         std::fs::write(&watch.path, text).unwrap();
-        let later = SystemTime::now() + std::time::Duration::from_secs(text.len() as u64);
+        let now = std::time::SystemTime::now();
+        let later = now + std::time::Duration::from_secs(text.len() as u64);
         let file = File::options().write(true).open(&watch.path).unwrap();
         file.set_modified(later).unwrap();
     }
@@ -134,6 +146,36 @@ mod tests {
         };
         assert_eq!(again, list, "only the allowlisted fields are compared");
         assert!(matches!(watch.look(), Looked::Same));
+    }
+
+    #[test]
+    fn a_rewrite_of_the_same_size_and_time_is_seen() {
+        let (_dir, mut watch) = written(LIST);
+        assert!(matches!(watch.look(), Looked::List(_)));
+        let was = std::fs::metadata(&watch.path).unwrap();
+        let stamp = (was.len(), was.modified().unwrap());
+        // Another file of the same length moved into its place with the
+        // time of change put back, as a restore that keeps times does;
+        // then the file written over where it is, the same way.
+        for (label, in_place) in [("Fir", false), ("Fur", true)] {
+            let text = LIST.replace("\"Far\"", &format!("\"{label}\""));
+            let new = match in_place {
+                true => watch.path.clone(),
+                false => watch.path.with_extension("new"),
+            };
+            std::fs::write(&new, &text).unwrap();
+            let file = File::options().write(true).open(&new).unwrap();
+            file.set_modified(stamp.1).unwrap();
+            drop(file);
+            std::fs::rename(&new, &watch.path).unwrap();
+            let now = std::fs::metadata(&watch.path).unwrap();
+            assert_eq!((now.len(), now.modified().unwrap()), stamp);
+            let Looked::List(list) = watch.look() else {
+                panic!("the list that says {label} was not seen");
+            };
+            assert_eq!(list[1].label, label);
+            assert!(matches!(watch.look(), Looked::Same));
+        }
     }
 
     #[test]
@@ -169,9 +211,12 @@ mod tests {
         assert!(matches!(watch.look(), Looked::Unread(Unread::Missing)));
         std::fs::create_dir(&watch.path).unwrap();
         assert!(matches!(watch.look(), Looked::Unread(Unread::Unreadable)));
-        // And the list as it was parses again.
+        // The list as it was is the text that last parsed: it is read,
+        // found the same and not parsed again. Another list parses.
         std::fs::remove_dir(&watch.path).unwrap();
         rewrite(&watch, LIST);
+        assert!(matches!(watch.look(), Looked::Same));
+        rewrite(&watch, &LIST.replace("Far", "Near"));
         assert!(matches!(watch.look(), Looked::List(_)));
     }
 

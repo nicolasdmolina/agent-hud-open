@@ -47,11 +47,19 @@ impl Book {
                     slot
                 }
                 Some(slot) => {
-                    was.push(Was::Readdressed(entry.id.clone(), slot.lead));
+                    was.push(Was::Readdressed(entry.id.clone(), slot.lead.clone()));
                     stops.extend(slot.route);
                     let number = slot.number + 1;
                     self.log.line(&format!("entry readdressed number={number}"));
-                    self.slot(entry, number)
+                    let mut next = self.slot(entry, number);
+                    // An alias may lead to its machine by its new address
+                    // too. Until its new route says where it leads, it is
+                    // one of the entries the machine waits on where it
+                    // loses its owner, in this list or a later one.
+                    if matches!(slot.lead, Lead::Alias(_)) && next.route.is_some() {
+                        next.lead = slot.lead;
+                    }
+                    next
                 }
                 None => self.slot(entry, 1),
             };
