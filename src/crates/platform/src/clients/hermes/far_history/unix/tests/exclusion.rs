@@ -2,14 +2,14 @@
 //! what the caller's slot adds, through a killed client, a dropped link,
 //! a changed address, a late start, a relaunch and a rebuilt machine.
 //! Every count is the far side's own (`world::Watch`).
-use super::super::{Failure, Hold, Reader, Slots};
+use super::super::{Failure, Hold, Reader, Settings, Slots};
 use super::world::{
     clients, kill, machine_of, most, naming, open, raw, readers, sessions, settings, Watch, World,
     PYTHON,
 };
 use crate::ssh_link::unix::tests::lab::until;
 use crate::ssh_link::{Cut, End, Folder, Link, Refused, Settings as LinkSettings, Target};
-use agent_hud_agents::hermes::far_history::{Reply, Request};
+use agent_hud_agents::hermes::far_history::{self as far, Reply, Request};
 use std::{
     fs,
     path::PathBuf,
@@ -83,26 +83,40 @@ fn never_two_readers() {
     );
     let request = sessions(&["endless"]);
     let read = |link: &Link| reader.read(link, &slot, &world.home, &request);
+    // The read that is cut off has the app's own deadline (20 s), so it
+    // is still there when its client is killed however slowly this
+    // machine lists its processes. Before, it had 2 s, and a busy
+    // machine's listings took longer (ticket 49).
+    let lasting = world.reader(Settings::default());
     let watch = Watch::start(&world);
     thread::scope(|scope| {
-        // A read, and the local `ssh` client killed in the middle of it.
-        let first = scope.spawn(|| read(&link));
+        // A read, and the local `ssh` client killed in the middle of it:
+        // once its `started` is in, and with nothing looked at between.
+        let first = scope.spawn(|| lasting.read(&link, &slot, &world.home, &request));
         let database = world.database().display().to_string();
-        assert!(until(Duration::from_secs(20), || {
-            matches!(slot.hold(), Hold::Until(_))
-                && !open(&readers(&world.mark()), &database).is_empty()
-        }));
+        assert!(until(Duration::from_secs(60), || matches!(
+            slot.hold(),
+            Hold::Until(_)
+        )));
         let Hold::Until(held_until) = slot.hold() else {
             unreachable!()
         };
         let far_reader = readers(&world.mark());
-        for client in clients(&world.mark()) {
+        assert_eq!(far_reader.len(), 1, "the reader that started");
+        let mut carrying = Vec::new();
+        assert!(until(Duration::from_secs(60), || {
+            carrying = clients(&world.mark());
+            !carrying.is_empty()
+        }));
+        for client in carrying {
             kill(client);
         }
         assert_eq!(
             first.join().unwrap(),
             Err(Failure::CutOff(Cut::ChannelClosed))
         );
+        // The far reader runs on, with the database open.
+        assert_eq!(open(&far_reader, &database), far_reader);
         assert_eq!(slot.hold(), Hold::Until(held_until));
         // A new read is asked for at once.
         let second = scope.spawn(|| read(&link));
@@ -170,6 +184,10 @@ fn never_two_readers() {
 /// The late starter waits on a file, not a clock (ticket 48): it is let go
 /// once five seconds have passed and the first read after the cut-off has
 /// its answer, so a busy machine cannot let it start before that read.
+/// Where the far side does not show it, it is then the reader the caller
+/// asked for and goes on to the database if the far side lets it, while
+/// the caller keeps reading: so the test fails where the far side's own
+/// exclusion is gone (ticket 49; before, it ended before the database).
 fn a_late_start(shown: bool) {
     let Some(world) = World::start() else { return };
     world.make_every_read_endless();
@@ -197,12 +215,20 @@ fn a_late_start(shown: bool) {
         ));
     } else {
         // The wait is in a process that does not carry the reader's
-        // arguments, so nothing on the far side shows a reader yet.
+        // arguments, so nothing on the far side shows a reader yet. Let
+        // go, it is the reader the caller asked for, with the caller's
+        // arguments and program, and it goes on to the database where
+        // the far side lets it (ticket 49). Its channel is gone by then,
+        // so the program is the one on file here (the same text the
+        // caller sends), and what it says goes to a file.
+        fs::write(at("late-program"), far::PROGRAM).unwrap();
         fs::write(
             at("late.sh"),
             format!(
-                "{held}\nset --\nwhile IFS= read -r one; do set -- \"$@\" \"$one\"; done < '{}'\nexec {PYTHON} \"$@\"\n",
-                at("late-arguments")
+                "{held}\nset --\nwhile IFS= read -r one; do\n  [ \"$one\" = - ] && one='{}'\n  set -- \"$@\" \"$one\"\ndone < '{}'\nexec {PYTHON} \"$@\" < /dev/null > '{}' 2>&1\n",
+                at("late-program"),
+                at("late-arguments"),
+                at("late-said")
             ),
         )
         .unwrap();
@@ -298,6 +324,19 @@ fn a_late_start(shown: bool) {
     println!(
         "  the late starter {late:?}: alone with the database in {alone} looks, beside another in {beside}; the caller was told busy {busy} times"
     );
+    if !shown {
+        // It ran the reader: it read alone, or found a reader and opened
+        // nothing. Nothing else stood between it and the database.
+        let said = fs::read_to_string(at("late-said")).unwrap_or_default();
+        println!("  the late starter said: {said:?}");
+        // (Or, on a machine too busy to list its processes in time, it
+        // was refused that and opened nothing either.)
+        let refused = ["[\"no\",\"busy\"]\n", "[\"no\",\"processes\"]\n"];
+        assert!(
+            said.starts_with("[\"started\",") || refused.contains(&said.as_str()),
+            "{said:?}"
+        );
+    }
     assert_eq!(beside, 0);
     assert!(!late
         .iter()
@@ -510,11 +549,17 @@ fn a_reader_that_waits_for_a_higher_process_id_answers_busy_before_its_deadline(
     world.add_session(&world.db(), "s1", 1);
     let link = world.link();
     let mark = world.mark();
-    // The reader's process is there at once and looks 0.7 s later, by
-    // when another process that carries its mark has started: a later
-    // one, so one with a higher id.
-    world.stand_in(&format!("sleep 0.7\nexec {PYTHON} \"$@\""));
+    // The reader's process is there at once, and looks only once another
+    // process that carries its mark is listed: a later one, so one with a
+    // higher id. The reader waits on a file for that, not on a clock, so a
+    // busy machine cannot have it look first (ticket 49).
+    let gate = world.lab.at("gate");
+    world.stand_in(&format!(
+        "while [ -e '{}' ]; do sleep 0.02; done\nexec {PYTHON} \"$@\"",
+        gate.display()
+    ));
     for deadline in [2, 1] {
+        fs::write(&gate, "").unwrap();
         let began = Instant::now();
         let (ran, lower, higher) = thread::scope(|scope| {
             let read = scope.spawn(|| {
@@ -535,6 +580,8 @@ fn a_reader_that_waits_for_a_higher_process_id_answers_busy_before_its_deadline(
                 .spawn()
                 .unwrap();
             let higher = other.id();
+            assert!(until(Duration::from_secs(30), || readers(&mark).contains(&higher)));
+            fs::remove_file(&gate).unwrap();
             let ran = read.join().unwrap();
             other.kill().unwrap();
             other.wait().unwrap();

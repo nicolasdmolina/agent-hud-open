@@ -29,7 +29,20 @@ pub(super) struct Line {
     /// test measures the write from here (ticket 48).
     #[cfg(test)]
     first_write: Mutex<Option<Instant>>,
+    /// When the last bound was set: a send's budget counts from here.
+    #[cfg(test)]
+    bounded: Mutex<Option<Instant>>,
+    /// Each frame whose send failed: when its bound was set, when its
+    /// first write began, and when the send gave up. A test reads them
+    /// after the socket's close has written a frame of its own (ticket 49).
+    #[cfg(test)]
+    failed: Mutex<Vec<Failed>>,
 }
+
+/// One failed send, for tests: when its bound was set, when its first
+/// write began, and when it gave up.
+#[cfg(test)]
+pub(super) type Failed = (Option<Instant>, Option<Instant>, Instant);
 
 impl Line {
     pub(super) fn new(tcp: TcpStream) -> Arc<Self> {
@@ -39,6 +52,10 @@ impl Line {
             out_by: Mutex::new(None),
             #[cfg(test)]
             first_write: Mutex::new(None),
+            #[cfg(test)]
+            bounded: Mutex::new(None),
+            #[cfg(test)]
+            failed: Mutex::new(Vec::new()),
         })
     }
 
@@ -65,7 +82,27 @@ impl Line {
                 .first_write
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = None;
+            *self.bounded.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
         }
+    }
+
+    /// A frame's send failed: noted with when its bound was set and when
+    /// its first write began.
+    #[cfg(test)]
+    pub(super) fn send_failed(&self) {
+        let first = self.first_written();
+        let bounded = *self.bounded.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut failed = self.failed.lock().unwrap_or_else(PoisonError::into_inner);
+        failed.push((bounded, first, Instant::now()));
+    }
+
+    /// Every failed send so far, in order.
+    #[cfg(test)]
+    pub(super) fn failed_sends(&self) -> Vec<Failed> {
+        self.failed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// When the first write under the last bound began.

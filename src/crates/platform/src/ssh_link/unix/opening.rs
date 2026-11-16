@@ -39,6 +39,8 @@ impl Link {
             return Err(Refused::Unavailable.into());
         };
         let pid = master.id();
+        #[cfg(test)]
+        super::tests::reaper::spawned(pid);
         let link = Self {
             folder: folder.clone(),
             settings: settings.clone(),

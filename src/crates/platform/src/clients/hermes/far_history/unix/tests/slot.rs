@@ -1,5 +1,5 @@
 //! The caller's slot: what holds it, and what frees it.
-use super::super::{Failure, Hold, Slots};
+use super::super::{Failure, Hold, Settings, Slots};
 use super::world::{
     clients, kill, machine_of, most, readers, sessions, settings, Watch, World, PYTHON,
 };
@@ -25,9 +25,15 @@ fn a_cut_off_reader_holds_the_slot() {
     );
     assert_eq!(slot.hold(), Hold::Free);
     let request = sessions(&["endless"]);
+    // The read that is cut off has the app's own deadline (20 s), so it is
+    // still there when its client is killed however slowly this machine
+    // lists its processes. Before, it had 2 s, and a busy machine's two
+    // listings took longer (ticket 49).
+    let lasting = world.reader(Settings::default());
+    let kept = lasting.settings().deadline + lasting.settings().margin;
     let watch = Watch::start(&world);
     let (held_until, old) = thread::scope(|scope| {
-        let first = scope.spawn(|| reader.read(&link, &slot, &world.home, &request));
+        let first = scope.spawn(|| lasting.read(&link, &slot, &world.home, &request));
         // Cut off after `started`: the local client is killed once the
         // slot has seen the line.
         let seen = Instant::now();
@@ -42,8 +48,7 @@ fn a_cut_off_reader_holds_the_slot() {
         // `started`.
         let held = held_until - seen;
         assert!(
-            held <= Duration::from_secs(4) + Duration::from_secs(20)
-                && held > Duration::from_millis(3_900),
+            held <= kept + Duration::from_secs(20) && held > kept - Duration::from_millis(100),
             "{held:?}"
         );
         let old = readers(&world.mark());

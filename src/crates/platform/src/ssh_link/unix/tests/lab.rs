@@ -100,6 +100,7 @@ pub(crate) fn closed_port() -> u16 {
 /// The instance lock's tests, which let a lock go and take it again at
 /// once, then find it still held (measured: 14 runs in 15).
 pub(crate) fn in_a_process_of_their_own(filter: &str) {
+    // It ends as soon as this program is gone (`reaper.rs`).
     let ran = Command::new(std::env::current_exe().expect("this test program"))
         .args([filter, "--ignored", "--test-threads", "6"])
         .stdin(Stdio::null())
@@ -169,9 +170,12 @@ impl Lab {
 
     fn try_start(env: &[(&str, &str)]) -> Result<Self, String> {
         let dir = tempfile::Builder::new()
-            .prefix("ahl")
+            .prefix(super::reaper::PREFIX)
             .tempdir_in(short_base())
             .map_err(|error| error.to_string())?;
+        // Whatever of the lab this program does not live to end, its
+        // watchdog ends (`reaper.rs`).
+        super::reaper::watch(dir.path());
         let at = |name: &str| dir.path().join(name);
         let text = |name: &str| at(name).display().to_string();
         for key in ["hostkey", "id", "agentkey", "strangerkey", "otherhost"] {
@@ -230,6 +234,7 @@ impl Lab {
                 .stderr(log)
                 .spawn()
                 .map_err(|error| error.to_string())?;
+            super::reaper::spawned(sshd.id());
             let listening = format!("Server listening on 127.0.0.1 port {port}.");
             let mut up = false;
             until(Duration::from_secs(15), || {
@@ -325,6 +330,7 @@ impl Lab {
             .stderr(Stdio::null())
             .spawn()
             .expect("ssh-agent");
+        super::reaper::spawned(agent.id());
         let agent = Agent(agent, socket.clone());
         assert!(until(Duration::from_secs(5), || socket.exists()));
         let added = Command::new("ssh-add")

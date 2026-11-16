@@ -13,8 +13,11 @@ mod limits;
 mod link;
 mod liveness;
 mod pure;
+pub(crate) mod reaper;
+mod reaping;
 pub(crate) mod transcript;
 mod trust;
+mod watchdog;
 
 #[test]
 fn the_lab_tests_pass() {

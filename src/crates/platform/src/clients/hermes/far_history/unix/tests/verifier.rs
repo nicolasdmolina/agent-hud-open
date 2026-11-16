@@ -50,10 +50,14 @@ fn v_readded_machine_must_exclude_an_old_reader_of_another_profile() {
             super::world::ENDLESS
         ))
         .unwrap();
+    // The first reader outlives every slow step after it: on a busy machine
+    // the second home's probe alone took 11 s, past a 10 s deadline, and the
+    // second home's first read then found nobody there (ticket 49).
     let long = Settings {
-        deadline: Duration::from_secs(10),
+        deadline: Duration::from_secs(30),
         ..settings()
     };
+    let lives = long.deadline;
     let (reader, slots, link) = (world.reader(long), Slots::new(), world.link());
     let key = world.machine();
     let slot = slots.of(&key);
@@ -90,7 +94,7 @@ fn v_readded_machine_must_exclude_an_old_reader_of_another_profile() {
         let began = Instant::now();
         // The second profile is asked for at once, and again and again
         // until the first one's reader is past its deadline.
-        while began.elapsed() < Duration::from_secs(14) {
+        while began.elapsed() < lives + Duration::from_secs(4) {
             thread::scope(|inner| {
                 let next = inner.spawn(|| short.read(&again, &slot, &second, &request));
                 while !next.is_finished() {
