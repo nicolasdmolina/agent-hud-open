@@ -140,6 +140,17 @@ pub fn machine_key(install_id: Option<&str>, root_home: &str) -> Result<MachineK
     Ok(MachineKey(hex[..KEY_LENGTH].to_owned()))
 }
 
+/// The file in a Hermes root home that holds the install's id
+/// (`hermes_cli/install_identity.py`).
+pub const INSTALL_ID_FILE: &str = "install_id";
+
+/// The install id in the text of that file, as Hermes itself reads it:
+/// without a byte order mark or the space around it, in lower case.
+/// Whether it is an id is `machine_key`'s to say.
+pub fn stored_install(text: &str) -> String {
+    text.trim_start_matches('\u{feff}').trim().to_lowercase()
+}
+
 /// The install id a gateway's `profiles.list` result reports, as it wrote
 /// it, for `machine_key`. None where it names none. One that is not text
 /// is given as a word of the wrong length, which makes no key either: the

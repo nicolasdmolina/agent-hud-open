@@ -80,6 +80,13 @@ impl Notice {
     }
 }
 
+impl super::Ssh {
+    /// Ends a wait on what the route notices (`noticed`), to look.
+    pub(crate) fn wake(&self) {
+        self.notice.wake();
+    }
+}
+
 /// At most this many commands run over one link at a time: an `sshd`
 /// takes ten sessions for one connection unless it is told otherwise, and
 /// one too many is refused, which would read as a relay that was cut off.

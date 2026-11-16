@@ -159,6 +159,8 @@ impl Requests {
     /// Native adapters provide the standardized display and receive the user's
     /// standardized decision. Their source-specific reply remains in the adapter.
     pub fn register_native(&self, id: String, mut view: Value, now_ms: i64) -> Option<Ticket> {
+        #[cfg(feature = "probes")]
+        self.0.probes.called("register_native", &id);
         let (sender, response) = mpsc::channel();
         let ticket = {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -233,6 +235,8 @@ impl Requests {
     }
     /// Explicit source settlement removes a dismissal as well as its live card.
     pub fn settle_native(&self, id: &str) {
+        #[cfg(feature = "probes")]
+        self.0.probes.called("settle_native", id);
         self.cancel(id);
         self.0
             .state

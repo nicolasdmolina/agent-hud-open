@@ -19,6 +19,10 @@ use std::{
 const FIRST: Duration = Duration::from_millis(250);
 /// The longest wait before opening again.
 const LIMIT: Duration = Duration::from_secs(30);
+/// The wait before opening again where the host's key is not trusted:
+/// only the user can change that, in a file that is not this app's, so
+/// it is tried rarely.
+const UNTRUSTED: Duration = Duration::from_secs(300);
 /// How often the master's process is looked at, which costs nothing.
 const GLANCE: Duration = Duration::from_millis(500);
 /// How often the master is asked whether it still answers.
@@ -112,6 +116,15 @@ impl Drop for Keeper {
     }
 }
 
+/// How long to wait after `failure` before opening again, where `wait`
+/// is what the growing wait has come to.
+fn after(failure: Failure, wait: Duration) -> Duration {
+    match failure {
+        Failure::Lost(Lost::NotTrusted | Lost::KeyChanged) => wait.max(UNTRUSTED),
+        _ => wait,
+    }
+}
+
 impl Kept {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
@@ -145,7 +158,10 @@ impl Kept {
                     self.withdraw(&link, lost);
                     link.close();
                 }
-                Err(failure) => self.failed(failure),
+                Err(failure) => {
+                    self.failed(failure);
+                    wait = after(failure, wait);
+                }
             }
             self.pause(wait);
             wait = (wait * 2).min(LIMIT);
@@ -213,6 +229,33 @@ impl Kept {
         drop(state);
         if news {
             (self.says)(&format!("link not open why={failure}"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ssh_link::Refused;
+
+    #[test]
+    fn a_host_that_is_not_trusted_is_tried_again_rarely() {
+        for untrusted in [Lost::NotTrusted, Lost::KeyChanged] {
+            assert_eq!(after(Failure::Lost(untrusted), FIRST), UNTRUSTED);
+            assert_eq!(after(Failure::Lost(untrusted), LIMIT), UNTRUSTED);
+        }
+        assert!(UNTRUSTED >= LIMIT * 10, "rarely: minutes, not seconds");
+        // Every other failure is tried again as it was.
+        let others = [
+            Failure::Lost(Lost::CannotReach),
+            Failure::Lost(Lost::TimedOut),
+            Failure::Lost(Lost::SignInRefused),
+            Failure::Lost(Lost::Ended),
+            Failure::Refused(Refused::Unavailable),
+        ];
+        for other in others {
+            assert_eq!(after(other, FIRST), FIRST, "{other}");
+            assert_eq!(after(other, LIMIT), LIMIT, "{other}");
         }
     }
 }

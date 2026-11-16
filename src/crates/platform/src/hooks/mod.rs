@@ -62,7 +62,7 @@ pub struct Hooks {
     antigravity: Option<crate::clients::antigravity::permissions::Observer>,
     deepseek: Option<crate::clients::deepseek::questions::Observer>,
     deepseek_plugin: Option<crate::deepseek_plugin::asks::Observer>,
-    hermes: Option<crate::clients::hermes::Observer>,
+    hermes: Option<crate::clients::hermes::Machines>,
     server: Option<transport::Server>,
     desktop: Option<crate::clients::codex::desktop::CodexDesktopObserver>,
 }
@@ -216,7 +216,7 @@ impl Hooks {
             )?);
         }
         if clients::runs(&agents::hermes::GATEWAY) {
-            self.hermes = Some(hermes::Observer::start(
+            self.hermes = Some(hermes::Machines::start(
                 &self.data,
                 self.requests.clone(),
                 self.wake.clone(),

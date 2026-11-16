@@ -24,6 +24,7 @@ use std::{
 
 pub(crate) mod local;
 pub(crate) mod ssh;
+pub(crate) mod switch;
 
 /// One call on a socket that was just opened, for `Route::admit`: the
 /// call goes out and its result comes back, or why there is none.

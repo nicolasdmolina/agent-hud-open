@@ -13,6 +13,7 @@ use agent_hud_agents::hermes::{
 };
 use agent_hud_core::l10n;
 use serde_json::Value;
+use std::sync::PoisonError;
 
 impl Shared {
     /// Carries out `effects` in order. Called with the model locked, so two
@@ -118,7 +119,8 @@ impl Shared {
         let id = pending.id();
         let opened = model.opened.get(&id).copied().unwrap_or(now);
         // The machine's label, where the gateway runs on a far one.
-        let machine = self.label.as_deref();
+        let machine = self.label.lock().unwrap_or_else(PoisonError::into_inner);
+        let machine = machine.as_deref();
         if model.gateway.marked(&id) {
             pending.view_out_of_reach(opened, machine)
         } else {
