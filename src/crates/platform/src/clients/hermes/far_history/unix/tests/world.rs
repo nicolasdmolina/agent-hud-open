@@ -459,16 +459,37 @@ pub(super) fn most(samples: &[Sample]) -> (usize, usize) {
 /// Runs the program once, with no caller and no slot: what the far side
 /// does by itself.
 pub(super) fn raw(link: &Link, home: &str, deadline: Duration, request: &far::Request) -> Ran {
+    raw_watched(link, home, deadline, request).0
+}
+
+/// The same, and when the reader's `started` came in, the moment its
+/// deadline counts from.
+pub(super) fn raw_watched(
+    link: &Link,
+    home: &str,
+    deadline: Duration,
+    request: &far::Request,
+) -> (Ran, Option<Instant>) {
     let args = far::arguments(&machine_of(home), home, deadline, far::MOST_OUTPUT, request);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    link.run(&FarCommand {
-        script: far::SCRIPT,
-        args: &args,
-        stdin: Some(far::PROGRAM.as_bytes()),
-        limit: Duration::from_secs(40),
-        most_output: 4 << 20,
-    })
-    .expect("the link ran it")
+    let mut started = None;
+    let ran = link
+        .run_watched(
+            &FarCommand {
+                script: far::SCRIPT,
+                args: &args,
+                stdin: Some(far::PROGRAM.as_bytes()),
+                limit: Duration::from_secs(40),
+                most_output: 4 << 20,
+            },
+            &mut |stdout| {
+                if started.is_none() && far::first_line(stdout) == far::First::Started {
+                    started = Some(Instant::now());
+                }
+            },
+        )
+        .expect("the link ran it");
+    (ran, started)
 }
 
 pub(super) fn sessions(ids: &[&str]) -> far::Request {

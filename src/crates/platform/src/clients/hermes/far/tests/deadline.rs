@@ -2,21 +2,61 @@
 //! gateway does and whatever became of the `ssh` client that carried it.
 use super::{
     super::{Far, Silent},
-    fixture::{text, FarLab, Manner, SHORT},
+    fixture::{chmod, text, FarLab, Manner, SHORT},
 };
 use crate::ssh_link::unix::tests::lab::until;
 use agent_hud_agents::hermes::gateway::far::{Quiet, Request};
 use std::{
+    fs,
     process::Command,
-    time::{Duration, Instant},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
+
+/// The far `python3` is a stand-in that runs the relay in its own process
+/// and notes, by the wall clock, the moment the relay's code begins: after
+/// Python has started, read the program, compiled it and imported what it
+/// imports, which a busy machine makes slow and which comes before any
+/// deadline can be armed (ticket 48).
+const STAMPING: &str = r#"#!/bin/sh
+exec /usr/bin/python3 -I -S -B -c 'import sys, time
+import errno, fcntl, hashlib, json, os, signal, socket, stat, struct, threading
+stamps, rest = sys.argv[1], sys.argv[2:]
+sys.argv = ["-"] + rest[rest.index("-") + 1:]
+code = compile(sys.stdin.read(), "<stdin>", "exec")
+open(stamps, "a").write("%r\n" % time.time())
+exec(code, {"__name__": "__main__"})' '{stamps}' "$@"
+"#;
 
 #[test]
 #[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_silent_gateway_ends_at_the_deadline() {
-    let Some(lab) = FarLab::start() else { return };
-    let far = Far::new(SHORT);
+    let path = ("PATH", "{lab}/bin:/usr/bin:/bin:/usr/sbin:/sbin");
+    let Some(lab) = FarLab::start_with(&[path]) else {
+        return;
+    };
+    let stamps = lab.dir.join("relay-starts");
+    fs::create_dir_all(lab.dir.join("bin")).expect("the stand-in's folder");
+    let stand_in = lab.dir.join("bin").join("python3");
+    let script = STAMPING.replace("{stamps}", &stamps.display().to_string());
+    fs::write(&stand_in, script).expect("the stand-in");
+    chmod(&stand_in, 0o755);
+    // When the latest relay's own code began.
+    let began = || {
+        let noted = fs::read_to_string(&stamps).expect("a relay began");
+        let last: f64 = noted.lines().last().unwrap().parse().unwrap();
+        UNIX_EPOCH + Duration::from_secs_f64(last)
+    };
+    // This side waits long enough that only the relay's own deadline can
+    // end the exchange, however long a busy machine takes to start
+    // `python3` over `ssh` (ticket 48: past the 2 s margin under load,
+    // which gave `CutOff`).
+    let far = Far::new(SHORT).waiting_longer(Duration::from_secs(60));
     let deadline = Duration::from_secs(SHORT.into());
+    // The relay's deadline counts from its start: it lives no longer than
+    // that, and a little, from its own code beginning to its end of the
+    // socket going. Both are taken on the far side, so neither `ssh` nor
+    // Python's own start is in it.
+    let within = deadline + Duration::from_millis(1900);
     for (name, manner) in [
         ("never answers", Manner::Silent),
         ("never ends", Manner::Drips),
@@ -26,20 +66,28 @@ fn a_silent_gateway_ends_at_the_deadline() {
         let started = Instant::now();
         let told = far.exchange(&lab.link, text(&home), Request::Identify);
         let waited = started.elapsed();
-        println!("a gateway that {name}: the relay ended after {waited:?}");
+        // The gateway's own thread notes it, however late it runs.
+        assert!(until(Duration::from_secs(10), || gate.held().len() == 1));
+        let lived = gate.gone_at()[0]
+            .duration_since(began())
+            .unwrap_or_default();
+        let held = gate.held();
+        println!("a gateway that {name}: the relay ended after {waited:?}, lived {lived:?}, held the line {held:?}");
+        // Status 3: the relay ended itself at its deadline.
         assert_eq!(told.said.unwrap_err(), Silent::Relay(Quiet::TimedOut));
-        // It ended at its own deadline, before this side's longer wait.
         assert!(waited >= deadline, "{waited:?}");
-        assert!(
-            waited < deadline + Duration::from_millis(1900),
-            "{waited:?}"
-        );
+        assert!(lived < within, "lived {lived:?}");
         assert_eq!(lab.relays(&home), 0, "the far relay is gone");
         assert_eq!(gate.seen().len(), 1);
         // The relay ended, so the home is not counted as busy.
         let again = far.exchange(&lab.link, text(&home), Request::Identify);
         assert_eq!(again.said.unwrap_err(), Silent::Relay(Quiet::TimedOut));
         assert_eq!(gate.seen().len(), 2);
+        assert!(until(Duration::from_secs(10), || gate.held().len() == 2));
+        let lived = gate.gone_at()[1]
+            .duration_since(began())
+            .unwrap_or_default();
+        assert!(lived < within, "lived {lived:?}");
     }
 }
 

@@ -267,11 +267,18 @@ fn a_pass_that_brings_nothing_new_renders_the_same_snapshot() {
 
 /// A collection pass with nothing new before the next deadline renders
 /// nothing; a reading, a reply or the deadline renders again.
+///
+/// The clock is pinned (fork, ticket 48): seeding the demo takes seconds,
+/// and a demo session changes state about 25 s after it was seeded, so on
+/// a busy machine the wall clock reached that deadline between two passes
+/// and the second one rendered. The deadline is tested on its own below.
 #[test]
 fn a_pass_with_nothing_new_renders_nothing_until_something_changes() {
     let temp = tempfile::tempdir().unwrap();
     let mut core = AgentHudCore::new(Vec::new(), temp.path().to_owned());
     let now = Utc::now().timestamp_millis();
+    let pin = |at: i64| crate::snapshot::PINNED_CLOCK.set(Some(at));
+    pin(now);
     let mut sessions = DemoSessions::default();
     core.seed_demo(now, None, &mut sessions).unwrap();
     core.set_account_projection(demo_projection(now, &BTreeMap::new()));
@@ -283,16 +290,27 @@ fn a_pass_with_nothing_new_renders_nothing_until_something_changes() {
     assert_eq!(pass(&mut core), json!({"unchanged": true}));
     // The demo's running sessions go quiet within the safety refresh.
     let due = core.next_due().unwrap();
-    assert!(due > now && due <= Utc::now().timestamp_millis() + crate::snapshot::SAFETY_REFRESH_MS);
+    assert!(due > now && due <= now + crate::snapshot::SAFETY_REFRESH_MS);
 
     // A new reading is something to show.
-    let later = Utc::now().timestamp_millis();
+    let later = now + 1_000;
+    pin(later);
     core.set_account_projection(demo_projection(later, &BTreeMap::new()));
     assert!(pass(&mut core)["schemaVersion"].is_number());
     assert_eq!(pass(&mut core), json!({"unchanged": true}));
     // So is a reply written into a session's log.
-    core.demo_reply("s1", Some("Shipped."), later + 1, &mut sessions)
+    let replied = later + 1;
+    pin(replied);
+    core.demo_reply("s1", Some("Shipped."), replied, &mut sessions)
         .unwrap();
+    assert!(pass(&mut core)["schemaVersion"].is_number());
+    assert_eq!(pass(&mut core), json!({"unchanged": true}));
+    // Nothing new until the deadline; at the deadline, a render.
+    let due = core.next_due().unwrap();
+    assert!(due > replied, "{} ms", due - replied);
+    pin(due - 1);
+    assert_eq!(pass(&mut core), json!({"unchanged": true}));
+    pin(due);
     assert!(pass(&mut core)["schemaVersion"].is_number());
     assert_eq!(pass(&mut core), json!({"unchanged": true}));
     // And a request without changesOnly always gets the snapshot.

@@ -21,7 +21,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant, SystemTime},
 };
 
 /// A relay deadline short enough to wait out in a test.
@@ -203,6 +203,10 @@ impl Manner {
 /// A pretend gateway's control socket. It keeps every line it was sent.
 pub(super) struct Gate {
     seen: Arc<Mutex<Vec<String>>>,
+    /// For a gateway that holds the line open, how long each relay stayed
+    /// on it, from its line coming in to its end of the socket going, and
+    /// the wall-clock moment it went.
+    held: Arc<Mutex<Vec<(Duration, SystemTime)>>>,
     connections: Arc<AtomicUsize>,
     running: Arc<AtomicBool>,
 }
@@ -211,11 +215,13 @@ impl Gate {
     pub(super) fn serve(listener: UnixListener, manner: Manner) -> Self {
         let gate = Self {
             seen: Arc::default(),
+            held: Arc::default(),
             connections: Arc::default(),
             running: Arc::new(AtomicBool::new(true)),
         };
-        let (seen, connections, running) = (
+        let (seen, held, connections, running) = (
             gate.seen.clone(),
+            gate.held.clone(),
             gate.connections.clone(),
             gate.running.clone(),
         );
@@ -227,8 +233,9 @@ impl Gate {
                     continue;
                 };
                 let number = connections.fetch_add(1, Ordering::AcqRel);
-                let (seen, manner, running) = (seen.clone(), manner.clone(), running.clone());
-                thread::spawn(move || answer(stream, number, &manner, &seen, &running));
+                let (seen, held, manner, running) =
+                    (seen.clone(), held.clone(), manner.clone(), running.clone());
+                thread::spawn(move || answer(stream, number, &manner, (&seen, &held), &running));
             }
         });
         gate
@@ -237,6 +244,30 @@ impl Gate {
     /// Every line this gateway was sent.
     pub(super) fn seen(&self) -> Vec<String> {
         self.seen.lock().unwrap().clone()
+    }
+
+    /// How long each relay stayed on a line held open (`Silent`, `Drips`)
+    /// before its end of the socket went: what the far side shows of the
+    /// relay's own life, with no `ssh` in it. The relay started before it
+    /// sent the line, so it outlived none of these.
+    pub(super) fn held(&self) -> Vec<Duration> {
+        self.held
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(held, _)| *held)
+            .collect()
+    }
+
+    /// When, by the wall clock, each relay's end of a line held open went:
+    /// the far process ended, or closed it, then.
+    pub(super) fn gone_at(&self) -> Vec<SystemTime> {
+        self.held
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, at)| *at)
+            .collect()
     }
 
     /// How many times it was connected to.
@@ -260,7 +291,7 @@ fn answer(
     stream: UnixStream,
     number: usize,
     manner: &Manner,
-    seen: &Mutex<Vec<String>>,
+    (seen, held): (&Mutex<Vec<String>>, &Mutex<Vec<(Duration, SystemTime)>>),
     running: &AtomicBool,
 ) {
     // Neither can be set once the other end has gone, which a relay that
@@ -272,7 +303,16 @@ fn answer(
         // Connected to and told nothing.
         return;
     }
+    let heard = Instant::now();
     seen.lock().unwrap().push(line.trim().to_owned());
+    // The other end went, not the test.
+    let gone = || {
+        if running.load(Ordering::Acquire) {
+            held.lock()
+                .unwrap()
+                .push((heard.elapsed(), SystemTime::now()));
+        }
+    };
     let asked: Value = serde_json::from_str(&line).unwrap_or_default();
     let mut out = &stream;
     let says = |value: &Value| format!("{value}\n").into_bytes();
@@ -295,11 +335,13 @@ fn answer(
             // Held open until the other end goes or the test is over.
             let mut rest = [0u8; 64];
             while running.load(Ordering::Acquire) && !matches!((&stream).read(&mut rest), Ok(0)) {}
+            gone();
         }
         Manner::Drips => {
             while running.load(Ordering::Acquire) && out.write_all(b"x").is_ok() {
                 thread::sleep(Duration::from_millis(100));
             }
+            gone();
         }
         Manner::Floods => {
             let chunk = [b'x'; 64 * 1024];

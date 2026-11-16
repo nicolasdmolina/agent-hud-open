@@ -161,11 +161,15 @@ fn never_two_readers() {
     });
 }
 
-/// The far side starts a reader five seconds late: later than its
-/// deadline (1 s) and the margin (2 s) together, long after the caller
+/// The far side starts a reader at least five seconds late: later than
+/// its deadline (1 s) and the margin (2 s) together, long after the caller
 /// gave up on it. `shown` says whether the far process list already shows
 /// the late starter while it waits, as it does once its shell runs, or
 /// not yet, as when the far machine has not begun it at all.
+///
+/// The late starter waits on a file, not a clock (ticket 48): it is let go
+/// once five seconds have passed and the first read after the cut-off has
+/// its answer, so a busy machine cannot let it start before that read.
 fn a_late_start(shown: bool) {
     let Some(world) = World::start() else { return };
     world.make_every_read_endless();
@@ -184,9 +188,11 @@ fn a_late_start(shown: bool) {
     // While the flag is there, a reader's start is held back.
     let at = |name: &str| world.lab.at(name).display().to_string();
     fs::write(at("late"), "").unwrap();
+    fs::write(at("hold"), "").unwrap();
+    let held = format!("while [ -e '{}' ]; do sleep 0.05; done", at("hold"));
     if shown {
         world.stand_in(&format!(
-            "if [ -e '{}' ]; then sleep 5; fi\nexec {PYTHON} \"$@\"",
+            "if [ -e '{}' ]; then {held}; fi\nexec {PYTHON} \"$@\"",
             at("late")
         ));
     } else {
@@ -195,7 +201,7 @@ fn a_late_start(shown: bool) {
         fs::write(
             at("late.sh"),
             format!(
-                "sleep 5\nset --\nwhile IFS= read -r one; do set -- \"$@\" \"$one\"; done < '{}'\nexec {PYTHON} \"$@\"\n",
+                "{held}\nset --\nwhile IFS= read -r one; do set -- \"$@\" \"$one\"; done < '{}'\nexec {PYTHON} \"$@\"\n",
                 at("late-arguments")
             ),
         )
@@ -215,19 +221,39 @@ fn a_late_start(shown: bool) {
         Err(Failure::CutOff(Cut::TimeLimit))
     );
     assert_eq!(slot.hold(), Hold::StartUnknown);
-    let late = if shown {
-        readers(&world.mark())
-    } else {
-        naming(&at("late.sh"))
+    let waiting = || {
+        if shown {
+            readers(&world.mark())
+        } else {
+            naming(&at("late.sh"))
+        }
     };
+    // However slowly the far side lists its processes.
+    assert!(until(Duration::from_secs(20), || waiting().len() == 1));
+    let late = waiting();
     assert_eq!(late.len(), 1, "the late starter waits on the far side");
     assert_eq!(readers(&world.mark()).len(), usize::from(shown));
     fs::remove_file(at("late")).unwrap();
-    // And asks for a new read at once, and keeps asking.
+    // And asks for a new read at once, and keeps asking: until the late
+    // starter has been and gone, and once more after.
     let mut answers = Vec::new();
-    while began.elapsed() < Duration::from_secs(11) {
+    let mut released = false;
+    loop {
         let answer = reader.read(&link, &slot, &world.home, &request);
         answers.push((began.elapsed().as_millis(), answer));
+        if released && !crate::ssh_link::unix::tests::lab::runs(late[0]) {
+            let answer = reader.read(&link, &slot, &world.home, &request);
+            answers.push((began.elapsed().as_millis(), answer));
+            break;
+        }
+        if !released && began.elapsed() >= Duration::from_secs(5) {
+            fs::remove_file(at("hold")).unwrap();
+            released = true;
+        }
+        assert!(
+            began.elapsed() < Duration::from_secs(90),
+            "the late starter never ended: {answers:?}"
+        );
         thread::sleep(Duration::from_millis(100));
     }
     assert!(until(Duration::from_secs(8), || readers(&world.mark()).is_empty()));

@@ -102,6 +102,8 @@ pub enum NotCovered {
 /// relay that was cut off and may still run.
 pub struct Far {
     seconds: u32,
+    /// How much longer this side waits than the far deadline: [`MARGIN`].
+    margin: Duration,
     program: String,
     /// Each home, and the homes command under an empty name, with when a
     /// cut-off program there is surely gone.
@@ -123,9 +125,19 @@ impl Far {
     fn with_program(seconds: u32, program: String) -> Self {
         Self {
             seconds,
+            margin: MARGIN,
             program,
             busy: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The same with a longer wait on this side, for a test that has to
+    /// see the far deadline end the relay on a machine too busy to start
+    /// one within [`MARGIN`].
+    #[cfg(test)]
+    fn waiting_longer(mut self, margin: Duration) -> Self {
+        self.margin = margin;
+        self
     }
 
     /// Whether a program cut off under `name` may still run, and if not,
@@ -142,7 +154,7 @@ impl Far {
     /// A program under `name` was cut off just now. Whatever of it runs
     /// started before this moment, so it is gone `seconds` from now.
     fn cut_off(&self, name: &str, seconds: u32) {
-        let until = Instant::now() + Duration::from_secs(seconds.into()) + MARGIN;
+        let until = Instant::now() + Duration::from_secs(seconds.into()) + self.margin;
         let mut busy = self.busy.lock().unwrap_or_else(PoisonError::into_inner);
         busy.insert(name.to_owned(), until);
     }
@@ -176,7 +188,7 @@ impl Far {
             script: RUN_RELAY,
             args: &[&seconds, home, line],
             stdin: Some(self.program.as_bytes()),
-            limit: Duration::from_secs(self.seconds.into()) + MARGIN,
+            limit: Duration::from_secs(self.seconds.into()) + self.margin,
             most_output: MOST_ANSWER + 64,
         });
         match ran {
@@ -206,7 +218,7 @@ impl Far {
             script: HOMES_SCRIPT,
             args: &[],
             stdin: None,
-            limit: Duration::from_secs(HOMES_SECONDS.into()) + MARGIN,
+            limit: Duration::from_secs(HOMES_SECONDS.into()) + self.margin,
             most_output: MOST_HOMES,
         });
         let unreached = |silent| Err(NoPicture::Unreached(silent));

@@ -25,6 +25,10 @@ pub(super) struct Line {
     /// When the frame being written has to be out: a gateway that reads a
     /// little now and then cannot keep one write going past it.
     out_by: Mutex<Option<Instant>>,
+    /// When the bounded frame's first write began, after it was made: a
+    /// test measures the write from here (ticket 48).
+    #[cfg(test)]
+    first_write: Mutex<Option<Instant>>,
 }
 
 impl Line {
@@ -33,6 +37,8 @@ impl Line {
             tcp,
             cut: AtomicBool::new(false),
             out_by: Mutex::new(None),
+            #[cfg(test)]
+            first_write: Mutex::new(None),
         })
     }
 
@@ -53,6 +59,22 @@ impl Line {
     pub(super) fn out_within(&self, time: Option<Duration>) {
         let by = time.map(|time| Instant::now() + time);
         *self.out_by.lock().unwrap_or_else(PoisonError::into_inner) = by;
+        #[cfg(test)]
+        if by.is_some() {
+            *self
+                .first_write
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = None;
+        }
+    }
+
+    /// When the first write under the last bound began.
+    #[cfg(test)]
+    pub(super) fn first_written(&self) -> Option<Instant> {
+        *self
+            .first_write
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub(super) fn wait_to_read(&self, time: Duration) {
@@ -83,6 +105,12 @@ impl Read for Wire {
 
 impl Write for Wire {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        #[cfg(test)]
+        self.0
+            .first_write
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(Instant::now);
         if let Some(left) = self.0.may_write()? {
             let _ = self.0.tcp.set_write_timeout(Some(left));
         }

@@ -153,10 +153,23 @@ fn what_a_failed_write_left_unsent_is_never_sent_with_a_later_frame() {
     }});
     let began = Instant::now();
     assert!(socket.write(&answer).is_err());
+    // Measured from the first byte, not from before the 8 MiB frame was
+    // made and masked: on a busy machine that alone took seconds (ticket
+    // 48). The budget began before the frame was made, so from the first
+    // byte the write has at most its 300 ms left. A write that ignored its
+    // budget would run the socket's own 5 s and fail about 4.8 s after its
+    // first byte (5 s less the frame's making), so the bound is 2 s.
+    let ended = Instant::now();
+    let first = socket.line().first_written().expect("a write began");
+    println!(
+        "the frame took {:?} to make, then {:?} to fail",
+        first - began,
+        ended - first
+    );
     assert!(
-        began.elapsed() < Duration::from_secs(5),
+        ended - first < Duration::from_secs(2),
         "{:?}",
-        began.elapsed()
+        ended - first
     );
     // The gateway reads again. Whatever is written now would carry the
     // rest of the answer with it: nothing is.

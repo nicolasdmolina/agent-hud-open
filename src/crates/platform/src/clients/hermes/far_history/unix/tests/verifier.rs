@@ -4,7 +4,7 @@
 //! the answer's own tests in the agents crate.
 use super::super::{Hold, Settings, Slots};
 use super::schema;
-use super::world::{kill, open, raw, readers, sessions, settings, World, PYTHON};
+use super::world::{kill, open, raw, raw_watched, readers, sessions, settings, World, PYTHON};
 use crate::ssh_link::unix::tests::lab::until;
 use crate::ssh_link::{End, Link, Ran};
 use agent_hud_agents::hermes::far_history::{self as far, Reply, Request};
@@ -134,13 +134,28 @@ fn v_readded_machine_must_exclude_an_old_reader_of_another_profile() {
 /// Runs the program once and takes the far reader's highest memory over
 /// its whole life, as the system counted it (`World::measure_memory`).
 fn peak_read(world: &World, link: &Link, ask: &Request, deadline: u64) -> (Ran, u64, Duration) {
+    let (ran, rss, took, _) = peak_read_watched(world, link, ask, deadline);
+    (ran, rss, took)
+}
+
+/// The same, and when the reader's `started` came in.
+fn peak_read_watched(
+    world: &World,
+    link: &Link,
+    ask: &Request,
+    deadline: u64,
+) -> (Ran, u64, Duration, Option<Instant>) {
     let began = Instant::now();
     let before = world.peaks().len();
-    let ran = thread::scope(|scope| {
-        let job = scope.spawn(|| raw(link, &world.home, Duration::from_secs(deadline), ask));
+    let (ran, started) = thread::scope(|scope| {
+        let job =
+            scope.spawn(|| raw_watched(link, &world.home, Duration::from_secs(deadline), ask));
         while !job.is_finished() {
-            // A watchdog of the test's own, apart from the reader's.
-            if began.elapsed() > Duration::from_secs(deadline + 8) {
+            // A watchdog of the test's own, apart from the reader's. A
+            // reader has at least 20 s to start (ticket 36), and a busy
+            // machine takes seconds to start the two `python3` of a
+            // measured one (ticket 48): this is a hang guard, not a bound.
+            if began.elapsed() > Duration::from_secs(deadline.max(20) + 8) {
                 for pid in readers(&world.mark()) {
                     kill(pid);
                 }
@@ -150,13 +165,14 @@ fn peak_read(world: &World, link: &Link, ask: &Request, deadline: u64) -> (Ran, 
         }
         job.join().unwrap()
     });
+    let took = began.elapsed();
     let peaks = world.peaks();
     assert_eq!(
         peaks.len(),
         before + 1,
         "one reader ran, and its memory was written down"
     );
-    (ran, peaks[before], began.elapsed())
+    (ran, peaks[before], took, started)
 }
 
 /// A database of 400 MB, and in it one session whose title is 8 MiB and
@@ -315,8 +331,11 @@ fn v_large_database_has_bounded_memory_and_deadline() {
         watched.push(rss);
     }
     // The caller takes that status as it takes "too large": the session
-    // is skipped whole, and the one beside it is read.
-    let (reader, slots) = (world.reader(settings()), Slots::new());
+    // is skipped whole, and the one beside it is read. With the app's own
+    // deadline: what is checked here is the skip, and measuring 8 MiB
+    // titles in 400 MB took the 2 s deadline of `settings()` on a busy
+    // machine, which stopped the read (ticket 48).
+    let (reader, slots) = (world.reader(Settings::default()), Slots::new());
     let slot = slots.of(&world.machine());
     let read = reader.sessions(
         &link,
@@ -350,14 +369,23 @@ fn v_large_database_has_bounded_memory_and_deadline() {
     );
 
     world.make_every_read_endless();
-    let (ran, rss, took) = peak_read(&world, &link, &sessions(&["endless"]), 2);
+    let (ran, rss, took, started) = peak_read_watched(&world, &link, &sessions(&["endless"]), 2);
+    let ended = Instant::now();
+    let started = started.expect("the reader said started");
     println!(
-        "  large-db endless query: exit={:?}; peak_rss={rss} KiB; elapsed={took:?}; remaining readers={:?}",
+        "  large-db endless query: exit={:?}; peak_rss={rss} KiB; elapsed={took:?}, {:?} of it from started; remaining readers={:?}",
         ran.end,
+        ended - started,
         readers(&world.mark())
     );
     assert_eq!(ran.end, End::Ended(3));
-    assert!(took < Duration::from_secs(5));
+    // Its deadline counts from `started`: measured from there, so a busy
+    // machine's start of `ssh` and two `python3` is not in it (ticket 48).
+    assert!(
+        ended - started < Duration::from_secs(5),
+        "{:?}",
+        ended - started
+    );
     assert!(readers(&world.mark()).is_empty());
     link.close();
     drop(db);
