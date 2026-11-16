@@ -98,10 +98,14 @@ fn cutoff_before_started_is_never_freed_by_time() {
     let mut short = settings();
     short.deadline = Duration::from_millis(500);
     short.local_wait = Duration::from_millis(1_500);
+    // The short reader is cut off; the reads around it are a patient
+    // reader's of the same slot, so a busy machine's slow start of
+    // `python3` cuts off none of them (ticket 48).
     let (link, reader, slots) = (world.link(), world.reader(short), Slots::new());
+    let patient = world.reader(settings());
     let slot = slots.of(&world.machine());
     assert_eq!(
-        reader.read(&link, &slot, &world.home, &Request::Probe),
+        patient.read(&link, &slot, &world.home, &Request::Probe),
         Ok(Reply::Probed)
     );
     assert_eq!(slot.hold(), Hold::Free);
@@ -126,7 +130,7 @@ fn cutoff_before_started_is_never_freed_by_time() {
     assert_eq!(slot.hold(), Hold::StartUnknown);
     // Only a probe frees it: the next read makes one, which starts.
     let before = world.logged().len();
-    let read = reader.read(&link, &slot, &world.home, &request);
+    let read = patient.read(&link, &slot, &world.home, &request);
     assert!(
         matches!(&read, Ok(Reply::Sessions(batch)) if batch.sessions.len() == 1),
         "{read:?}"
