@@ -9,7 +9,10 @@
 //! (`settle`). Each gateway that turns up later, and each one again after
 //! the link was lost and reopened, is asked on its first socket and held
 //! against that (`admit`). One that says anything else means the route
-//! leads to no one machine, and nothing more of it is told.
+//! leads to no one machine, and nothing more of it is told. Links are
+//! numbered as they open, and who is admitted is kept for the newest: a
+//! socket that comes with an older number is held against the machine
+//! all the same, and changes nothing of that (ticket 51).
 //!
 //! The install id itself is kept here, in memory, to hold later answers
 //! against. It is in no log, no id and no `Debug` output.
@@ -119,8 +122,13 @@ impl Identity {
         if reported != Some(verified.install.as_str()) {
             return Err(NoMachine::Another);
         }
+        if link < state.link {
+            // A socket of a link since replaced. It said who it is, so it
+            // is not refused, and who was admitted on the open link stays.
+            return Ok(());
+        }
         if state.link != link {
-            // Who was admitted on another link is asked again.
+            // Who was admitted on the link before is asked again.
             state.admitted.clear();
             state.link = link;
         }
