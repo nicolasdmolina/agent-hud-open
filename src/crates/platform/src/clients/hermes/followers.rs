@@ -34,13 +34,18 @@ use std::{
     thread,
 };
 
+/// What the cards of one machine say they run on, shared by its followers.
+pub(super) type Label = Arc<Mutex<Option<String>>>;
+
 pub(super) struct Followers {
     /// The way to the machine.
     pub(super) route: Arc<dyn Route>,
     /// The machine the route leads to.
     pub(super) machine: Machine,
     /// The label its cards carry: a far machine's, none for this one.
-    label: Option<String>,
+    /// One for every follower of the machine, since the entry that owns
+    /// the machine can be renamed, or give way to another (`handover.rs`).
+    label: Label,
     requests: Requests,
     wake: Wake,
     pub(super) log: log::Log,
@@ -77,7 +82,7 @@ impl Followers {
         let all = Arc::new(Self {
             route,
             machine,
-            label,
+            label: Arc::new(Mutex::new(label)),
             requests,
             wake,
             log: log::Log::new(data).of(who.as_deref()),

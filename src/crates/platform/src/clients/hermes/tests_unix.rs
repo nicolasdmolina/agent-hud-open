@@ -44,6 +44,8 @@ mod gateways;
 mod handshake;
 #[path = "tests/live.rs"]
 mod live;
+#[path = "tests/machines.rs"]
+mod machines;
 #[path = "tests/receipts.rs"]
 mod receipts;
 #[path = "tests/reconnect.rs"]

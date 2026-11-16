@@ -1,54 +1,41 @@
-//! One far machine: the route to it, and the followers of its gateways
-//! once it is known which machine it is.
+//! One entry's route to a far machine: the link to its address, and the
+//! thread that finds out which machine that address leads to.
 //!
 //! **Identity before anything is told.** A far machine is named by a key
 //! made from what its own Hermes reports and from its root home, so
 //! nothing of it can be followed, shown or answered before that is read.
-//! So the machine is verified first: its gateways are found (`far.rs`),
+//! So the route is verified first: its gateways are found (`far.rs`),
 //! each is asked for the install's id on a first socket of its own
-//! (`route/ssh/first.rs`), and all of them must agree and make a key.
-//! Only then are followers made, under that key. A machine whose Hermes
-//! reports no usable id, or whose gateways disagree, is not covered and
-//! says why; nothing of it reaches core, and it is asked again later.
+//! (`route/ssh/first.rs`), and all of them must agree and make a key. A
+//! route whose Hermes reports no usable id, or whose gateways disagree,
+//! is not covered and says why, and is asked again later. A gateway
+//! without the live connection is named in the report; a route where no
+//! gateway has it verifies as nothing.
 //!
-//! A gateway without the live connection is not followed, and is named
-//! in the report. A machine where no gateway has it was never verified,
-//! and has nothing to show.
-//!
-//! Once followed, a machine goes on as this one does: a lost link marks
-//! its cards and ends nothing, and the followers find their gateways
-//! again when the link is back. It stops being followed only when client
-//! hooks turn off, or when the route finds it leads elsewhere: a gateway
-//! that reports another install, another root home, or a check on a far
-//! home that fails. Its cards are withdrawn then, and it is verified anew.
-use super::{
-    followers::Followers,
-    log::Log,
-    route::{ssh::Ssh, Stop},
-    Pace,
-};
-use crate::{
-    hooks::Wake,
-    ssh_link::{Failure as LinkFailure, Folder, Lost, Settings, Target},
-};
+//! **A route is an entry's, a machine is not.** What a route verified as
+//! is told to whoever keeps the machines (`Keeper`, `machines/book.rs`),
+//! who says what the route is to that machine. Its owner: the machine's
+//! followers run over it, and it watches for word that it leads there no
+//! more (a gateway that reports another install, another root home, a
+//! check on a far home that fails), which it tells. Or another entry's
+//! route owns the machine already: then this one is an alias, follows
+//! nothing, and waits to be asked to verify again. A lost link ends
+//! neither: it is opened again, for as long as it takes.
+use super::{log::Log, route::ssh::Ssh, Pace};
+use crate::ssh_link::{Failure as LinkFailure, Folder, Lost, Settings, Target};
 use agent_hud_agents::hermes::{gateway::MachineKey, FAR_ROUTE};
-use agent_hud_core::requests::Requests;
 use std::{
-    path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
+    path::Path,
+    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak},
     thread,
     time::Duration,
 };
 
+mod alone;
 mod follow;
 mod verify;
 
-/// The first wait before verifying again, in the waits between two dials
-/// of a gateway (`Pace::retry`): half a second. Doubled each time.
-const SOON: u32 = 2;
-/// The longest wait before verifying again, in the longest waits between
-/// two dials (`Pace::retry_limit`): half a minute.
-const LATER: u32 = 6;
+pub use alone::FarObserver;
 
 /// Where a far machine is, and what it is called.
 pub struct FarEntry {
@@ -61,13 +48,16 @@ pub struct FarEntry {
     pub settings: Settings,
 }
 
-/// How a far machine stands, for whoever lists the machines.
+/// How a route stands, for whoever lists the machines.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Standing {
     /// The link is being opened, or the machine is being verified.
     Connecting,
-    /// Verified, and its gateways are followed under this key.
+    /// Verified, and the gateways of this machine are followed over it.
     Connected(MachineKey),
+    /// Verified as this machine, which is followed over another entry's
+    /// route, or is the machine Agent HUD runs on. Nothing is followed.
+    Alias(MachineKey),
     /// The host's key is unknown here, or is not the one that is known.
     NotTrusted,
     /// No link to it just now, and why. It is tried again.
@@ -77,16 +67,35 @@ pub enum Standing {
     NotCovered(String),
 }
 
-pub struct FarObserver {
-    inner: Arc<Inner>,
+/// What a route is to the machine it verified as.
+pub(super) enum Role {
+    /// The machine's followers run over it from now on.
+    Owner,
+    /// Another route owns the machine, or it is this one: nothing runs.
+    Alias,
+    /// The route is its entry's no more. It ends.
+    Over,
+}
+
+/// Who keeps the machines the routes lead to. Each is told by the
+/// route's own thread, with nothing of the route locked.
+pub(super) trait Keeper: Send + Sync {
+    /// `route` verified, just now, as the machine `key` names.
+    fn verified(&self, route: &Inner, key: &MachineKey) -> Role;
+    /// `route` was looked at and verified as no machine: how it stands.
+    fn unverified(&self, route: &Inner, standing: &Standing);
+    /// `route`, which owned the machine `key`, leads to it no more.
+    fn left(&self, route: &Inner, key: &MachineKey);
+    /// How a route stands has changed.
+    fn changed(&self);
+    /// The followers of the machine `route` owns.
+    #[cfg(test)]
+    fn followers(&self, route: &Inner) -> Option<Arc<super::followers::Followers>>;
 }
 
 pub(super) struct Inner {
     pub(super) route: Arc<Ssh>,
-    label: String,
-    data: PathBuf,
-    requests: Requests,
-    wake: Wake,
+    keeper: Weak<dyn Keeper>,
     pub(super) pace: Pace,
     pub(super) log: Log,
     state: Mutex<State>,
@@ -96,40 +105,26 @@ pub(super) struct Inner {
 struct State {
     active: bool,
     standing: Standing,
-    followers: Option<Arc<Followers>>,
+    /// Asked to look again at once: an alias to verify, an owner that owns
+    /// no more.
+    stirred: bool,
     /// The gateways found without the live connection: each by its
     /// profile, with Hermes's reason. None of them is followed.
     not_followed: Vec<(String, &'static str)>,
 }
 
-impl FarObserver {
-    /// Follows the gateways of the far machine at `entry`, logging into
-    /// `data`. The link is opened in the background: this returns at once.
-    pub fn start(
-        entry: FarEntry,
-        data: &Path,
-        requests: Requests,
-        wake: Wake,
-    ) -> Result<Self, String> {
-        Self::start_at(entry, data, requests, wake, Pace::default())
-    }
-
-    pub(crate) fn start_at(
-        entry: FarEntry,
-        data: &Path,
-        requests: Requests,
-        wake: Wake,
-        pace: Pace,
-    ) -> Result<Self, String> {
+impl Inner {
+    /// An entry's route to `target`, logging into `data`.
+    /// The link is opened in the background: this returns at once.
+    pub(super) fn start(
+        target: Target,
+        (folder, settings): (Folder, Settings),
+        keeper: Weak<dyn Keeper>,
+        (data, pace): (&Path, Pace),
+    ) -> Result<Arc<Self>, String> {
         if FAR_ROUTE.on(crate::os::OS).value().is_none() {
             return Err("a far Hermes cannot be reached from this system".to_owned());
         }
-        let FarEntry {
-            target,
-            label,
-            folder,
-            settings,
-        } = entry;
         let who = format!("far {}", target.destination());
         let log = Log::new(data).of(Some(&who));
         let said = log.of(Some(&who));
@@ -138,15 +133,12 @@ impl FarObserver {
         let state = State {
             active: true,
             standing: Standing::Connecting,
-            followers: None,
+            stirred: false,
             not_followed: Vec::new(),
         };
         let inner = Arc::new(Inner {
             route,
-            label,
-            data: data.to_owned(),
-            requests,
-            wake,
+            keeper,
             pace,
             log,
             state: Mutex::new(state),
@@ -161,41 +153,9 @@ impl FarObserver {
             return Err("a far Hermes could not be followed".to_owned());
         }
         inner.log.line("started");
-        Ok(Self { inner })
+        Ok(inner)
     }
 
-    /// How the machine stands now.
-    pub fn standing(&self) -> Standing {
-        self.inner.standing()
-    }
-
-    /// The gateways found without the live connection, each by its
-    /// profile with Hermes's reason. None of them is followed.
-    pub fn not_followed(&self) -> Vec<(String, &'static str)> {
-        self.inner.state().not_followed.clone()
-    }
-
-    #[cfg(test)]
-    pub(super) fn inner(&self) -> &Arc<Inner> {
-        &self.inner
-    }
-}
-
-impl Drop for FarObserver {
-    fn drop(&mut self) {
-        self.inner.stop();
-    }
-}
-
-/// What verifying waits on beside its own work: the observer stopping.
-impl Stop for Inner {
-    fn wait(&self, time: Duration) -> bool {
-        self.pause(time);
-        !self.active()
-    }
-}
-
-impl Inner {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -204,21 +164,44 @@ impl Inner {
         self.state().active
     }
 
-    #[cfg(test)]
-    pub(super) fn followers(&self) -> Option<Arc<Followers>> {
-        self.state().followers.clone()
+    /// Whoever keeps the machines, while there is one.
+    pub(super) fn keeper(&self) -> Option<Arc<dyn Keeper>> {
+        self.keeper.upgrade()
     }
 
+    #[cfg(test)]
+    pub(super) fn followers(&self) -> Option<Arc<super::followers::Followers>> {
+        self.keeper()?.followers(self)
+    }
+
+    /// The gateways found without the live connection, each by its
+    /// profile with Hermes's reason. None of them is followed.
+    pub(super) fn not_followed(&self) -> Vec<(String, &'static str)> {
+        self.state().not_followed.clone()
+    }
+
+    /// Waits `time`, or less where the route stops or is asked to look.
     pub(super) fn pause(&self, time: Duration) {
         let state = self.state();
-        let _ = self
-            .stopping
-            .wait_timeout_while(state, time, |state| state.active);
+        let waits = |state: &mut State| state.active && !state.stirred;
+        let _ = self.stopping.wait_timeout_while(state, time, waits);
+    }
+
+    /// Asks the route to look again at once: an alias verifies anew, and
+    /// an owner finds out what it is now.
+    pub(super) fn stir(&self) {
+        self.state().stirred = true;
+        self.stopping.notify_all();
+        self.route.wake();
+    }
+
+    pub(super) fn stirred(&self) -> bool {
+        self.state().stirred
     }
 
     /// A lost link is said first: whatever the machine was, it cannot be
     /// reached just now.
-    fn standing(&self) -> Standing {
+    pub(super) fn standing(&self) -> Standing {
         match self.route.down() {
             Some(LinkFailure::Lost(Lost::NotTrusted | Lost::KeyChanged)) => Standing::NotTrusted,
             Some(LinkFailure::Lost(lost)) => Standing::CannotReach(lost.reason()),
@@ -227,7 +210,7 @@ impl Inner {
         }
     }
 
-    /// How the machine stands from now on, said once when it changes.
+    /// How the route stands from now on, said once when it changes.
     pub(super) fn stand(&self, standing: Standing) {
         let mut state = self.state();
         if state.standing == standing {
@@ -240,9 +223,12 @@ impl Inner {
             Standing::Connected(key) => {
                 self.log.line(&format!("followed machine={}", key.as_str()));
             }
+            Standing::Alias(key) => self.log.line(&format!("alias machine={}", key.as_str())),
             _ => {}
         }
-        (self.wake)();
+        if let Some(keeper) = self.keeper() {
+            keeper.changed();
+        }
     }
 
     /// The gateways found without the live connection, said when they
@@ -260,41 +246,14 @@ impl Inner {
         }
     }
 
-    /// Ends the followers, which withdraw their cards and end their
-    /// readers, then the link. No master is left when this returns.
-    fn stop(&self) {
-        let followers = {
-            let mut state = self.state();
-            let ran = std::mem::replace(&mut state.active, false);
-            if ran {
-                self.log.line("stopped");
-            }
-            state.followers.take()
-        };
+    /// Ends the route: its link is closed, and no master is left when
+    /// this returns. Whatever ran over it is its machine's to end.
+    pub(super) fn stop(&self) {
+        let ran = std::mem::replace(&mut self.state().active, false);
+        if ran {
+            self.log.line("stopped");
+        }
         self.stopping.notify_all();
-        if let Some(followers) = followers {
-            followers.stop();
-        }
         self.route.stop();
-    }
-
-    fn work(self: Arc<Self>) {
-        let (soon, later) = (self.pace.retry * SOON, self.pace.retry_limit * LATER);
-        let mut wait = soon;
-        while self.active() {
-            match self.verified() {
-                Ok(key) => {
-                    wait = soon;
-                    self.follow(key);
-                }
-                // Not followed: nothing made to ask it is kept.
-                Err(standing) => {
-                    self.route.forget();
-                    self.stand(standing);
-                }
-            }
-            self.pause(wait);
-            wait = (wait * 2).min(later);
-        }
     }
 }

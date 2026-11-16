@@ -45,8 +45,9 @@ pub(super) struct Shared {
     /// is written. Core keeps each reader's readings apart (ticket 24).
     pub(super) reader: String,
     /// The label of the machine its gateway runs on, which its cards
-    /// carry: a far machine's, none for this one.
-    pub(super) label: Option<String>,
+    /// carry: a far machine's, none for this one. The machine's own, so
+    /// it changes for every follower at once.
+    pub(super) label: super::followers::Label,
     /// The profile whose home is asked, for who is there and for tickets.
     /// It is the gateway's anchor until that profile leaves the gateway.
     pub(super) asked: Mutex<Profile>,

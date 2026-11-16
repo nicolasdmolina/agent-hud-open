@@ -44,7 +44,8 @@ pub use identity::{
     anchor, hud_session_id, stored_session_id, GatewayId, Profile, ProfileName, SessionRef,
 };
 pub use machine::{
-    identities_agree, machine_key, reported_install, Machine, MachineKey, NoKey, StoredKey,
+    identities_agree, machine_key, reported_install, stored_install, Machine, MachineKey, NoKey,
+    StoredKey, INSTALL_ID_FILE,
 };
 pub use poll::{Poll, Step};
 pub use state::{Gateway, BUSY_POLL_MS, IDLE_POLL_MS, SNAPSHOT_EVERY_MS};

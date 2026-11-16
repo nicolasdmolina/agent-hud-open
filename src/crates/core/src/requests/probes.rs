@@ -23,6 +23,7 @@ pub type Gate = Arc<(AtomicBool, AtomicBool)>;
 pub(super) struct Probes {
     accept: Mutex<Option<(String, Gate)>>,
     notes: Mutex<Vec<(String, String)>>,
+    calls: Mutex<Vec<(&'static str, String)>>,
 }
 
 impl Probes {
@@ -48,7 +49,23 @@ impl Probes {
     }
 }
 
+impl Probes {
+    /// A native request was registered or settled, by its id.
+    pub(super) fn called(&self, call: &'static str, id: &str) {
+        self.calls.lock().unwrap().push((call, id.to_owned()));
+    }
+}
+
 impl Requests {
+    /// How often `call` (`register_native` or `settle_native`) was made
+    /// for the native request `id`, whatever came of it: a handover of a
+    /// request from one owner to another makes neither.
+    pub fn probe_calls(&self, call: &str, id: &str) -> usize {
+        let calls = self.0.probes.calls.lock().unwrap();
+        let of = |(made, request): &&(&'static str, String)| *made == call && request == id;
+        calls.iter().filter(of).count()
+    }
+
     /// Holds `answer` for the request named here between taking its
     /// decision and handing it over: the gate's first flag says it is
     /// there, the second lets it go on. None holds nothing.

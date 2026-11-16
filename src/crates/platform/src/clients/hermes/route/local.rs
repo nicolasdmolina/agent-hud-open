@@ -6,7 +6,9 @@
 use super::{Home, Inventory, Route, Stop};
 use crate::clients::hermes::control::Silent;
 use agent_hud_agents::hermes::{
-    gateway::{Failure, Instance, Profile},
+    gateway::{
+        machine_key, stored_install, Failure, Instance, MachineKey, Profile, INSTALL_ID_FILE,
+    },
     AGENT,
 };
 use std::{
@@ -53,6 +55,20 @@ impl Local {
     #[cfg(test)]
     pub(crate) fn at(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
+    }
+}
+
+impl Local {
+    /// Which machine this is, as a far machine is known: by its Hermes's
+    /// own install id and its root home, links resolved. An entry of the
+    /// connection list whose route verifies as this key leads here. None
+    /// where Hermes has written no id yet, or one that makes no key.
+    pub(crate) fn key(&self) -> Option<MachineKey> {
+        let root = std::fs::canonicalize(&self.root).ok()?;
+        let file = root.join(INSTALL_ID_FILE);
+        let short = std::fs::metadata(&file).is_ok_and(|file| file.len() <= 256);
+        let text = short.then(|| std::fs::read_to_string(&file).ok())??;
+        machine_key(Some(&stored_install(&text)), root.to_str()?).ok()
     }
 }
 
