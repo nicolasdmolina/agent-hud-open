@@ -197,6 +197,15 @@ engine code that decides by client name. It goes in five slices:
    Each says what it carries (requests, quota) and on which OS it runs.
    Platform keeps them in `platform/src/clients/<id>/`, starts each only where
    it runs, and takes the client's id and name from the descriptor.
+
+   A channel is given two callbacks that name no client: its wake, which
+   asks the collector for a turn, and `hooks::Changed`, which says that
+   files the channel wrote itself changed. A channel that keeps what it
+   learns in a file core reads as a log (the mirrors of Hermes's far
+   machines, `agents/src/hermes/mirror.rs`) calls it after each write; the
+   turn its wake asks for hands those paths to `AgentHudCore::file_changes`
+   and reads them, with no file event needed. A channel never reads a
+   source itself: collection reads stay in the collector's passes.
 4. **Telling a client's process**.
    - `Agent::program` names the command-line program.
    - `agents::process` holds the caller types: `Ancestor` and `Caller` (the kernel-reported parents and the callback's own environment) and `Origin`.

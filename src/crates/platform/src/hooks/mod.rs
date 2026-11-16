@@ -8,6 +8,8 @@ use std::{
 };
 
 mod callback;
+mod changed;
+pub use changed::Changed;
 mod clients;
 mod completion;
 mod endpoint;
@@ -55,6 +57,7 @@ pub struct Hooks {
     clients: clients::Clients,
     requests: Requests,
     reminders: reminders::Reminders,
+    written: changed::Written,
     inbox: inbox::Inbox,
     wake: Wake,
     waker: Arc<Mutex<Wake>>,
@@ -86,6 +89,7 @@ impl Hooks {
             data,
             requests,
             reminders: reminders::Reminders::default(),
+            written: changed::Written::default(),
             inbox,
             wake,
             waker,
@@ -216,10 +220,10 @@ impl Hooks {
             )?);
         }
         if clients::runs(&agents::hermes::GATEWAY) {
+            let (requests, wake) = (self.requests.clone(), self.wake.clone());
+            let changed = self.written.teller(wake.clone());
             self.hermes = Some(hermes::Machines::start(
-                &self.data,
-                self.requests.clone(),
-                self.wake.clone(),
+                &self.data, requests, wake, changed,
             )?);
         }
         self.server = Some(server);
@@ -272,9 +276,6 @@ impl Hooks {
     }
     pub fn requests(&self) -> Requests {
         self.requests.clone()
-    }
-    pub fn set_waker(&self, wake: Wake) {
-        *self.waker.lock().unwrap_or_else(PoisonError::into_inner) = wake;
     }
     pub fn data_dir(&self) -> &Path {
         &self.data

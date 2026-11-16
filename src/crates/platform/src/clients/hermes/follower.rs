@@ -44,6 +44,11 @@ pub(super) struct Shared {
     /// The name everything is told to core under: the gateway's id, as it
     /// is written. Core keeps each reader's readings apart (ticket 24).
     pub(super) reader: String,
+    /// The writer of its machine's mirrors, which is told what each poll
+    /// listed; none for a gateway of this machine (`mirror.rs`).
+    pub(super) mirror: Option<Arc<super::mirror::Writer>>,
+    /// The route number the polls' socket was opened under (`link.rs`).
+    pub(super) under: AtomicU64,
     /// The label of the machine its gateway runs on, which its cards
     /// carry: a far machine's, none for this one. The machine's own, so
     /// it changes for every follower at once.

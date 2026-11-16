@@ -20,6 +20,7 @@ pub mod far;
 mod fold;
 mod frame;
 mod identity;
+mod listing;
 mod live;
 mod machine;
 mod poll;
@@ -43,6 +44,7 @@ pub use frame::{answered, event, frame, hints, refusal, Answered, Cursor, Event,
 pub use identity::{
     anchor, hud_session_id, stored_session_id, GatewayId, Profile, ProfileName, SessionRef,
 };
+pub use listing::{Listed, Listing};
 pub use machine::{
     identities_agree, machine_key, reported_install, stored_install, Machine, MachineKey, NoKey,
     StoredKey, INSTALL_ID_FILE,

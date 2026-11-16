@@ -46,6 +46,9 @@ pub struct Stream {
     pub prompts: Vec<Value>,
     pub open: Vec<Value>,
     pub running: bool,
+    /// What else the live list says of the session (`title`, `model`,
+    /// `source`, `started_at`); nothing where it is no object.
+    pub row: Value,
 }
 
 impl Stream {
@@ -771,7 +774,13 @@ fn answer(world: &mut World, frame: &Value, subscribed: &mut Vec<String>) -> Opt
                 .iter()
                 .filter(|((of, _), _)| of == profile)
                 .filter(|((_, id), _)| !world.unlisted.contains(id))
-                .map(|((_, id), stream)| json!({"id": id, "session_key": id, "status": stream.status()}))
+                .map(|((_, id), stream)| {
+                    let mut row = json!({"id": id, "session_key": id, "status": stream.status()});
+                    for (key, value) in stream.row.as_object().into_iter().flatten() {
+                        row[key.as_str()] = value.clone();
+                    }
+                    row
+                })
                 .collect();
             json!({ "sessions": rows })
         }

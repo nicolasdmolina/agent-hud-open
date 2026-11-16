@@ -200,6 +200,50 @@ fn row(schema: i64, machine: &str, label: &str, profile: &str) -> [rusqlite::typ
     ]
 }
 
+/// How a test's mirror came to be: by hand, the `hud_mirror` table added
+/// to a database in Hermes's own schema (ticket 23's fixture), or by the
+/// mirror writer's own code (`mirror::claim`), with the rows the far
+/// database would give put in after.
+#[derive(Clone, Copy, Debug)]
+enum Made {
+    ByHand,
+    Written,
+}
+
+const MADE: [Made; 2] = [Made::ByHand, Made::Written];
+
+/// A mirror at `path` of the far profile `profile` of the machine `KEY`,
+/// shown as `label`, holding session `s1` as `state_db` holds it.
+fn far_db(path: &Path, made: Made, label: &str, profile: &str) -> Connection {
+    match made {
+        Made::ByHand => {
+            let db = state_db(path, None);
+            mirror(&db, row(1, KEY, label, profile));
+            db
+        }
+        Made::Written => {
+            let key = super::super::gateway::machine_key(
+                Some("0123456789abcdef0123456789abcdef"),
+                "/Users/USER/.hermes",
+            )
+            .unwrap();
+            assert_eq!(key.as_str(), KEY);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap(); // plain directory
+            let db = Connection::open(path).unwrap();
+            let of = Profile::named(profile).unwrap();
+            assert!(super::super::mirror::claim(&db, &key, &of, label).unwrap());
+            db.execute_batch(
+                "INSERT INTO session_model_usage VALUES ('s1', 'claude-test', 'anthropic', '', 'api', '', 100, 20, 50, 10, 1760000010, 1760000600);
+                 INSERT INTO sessions (id, source, model, started_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cwd, billing_provider, billing_base_url, billing_mode, title, last_activity_at)
+                    VALUES ('s1', 'cli', 'claude-test', 1760000000, 999, 999, 999, 999, '/work/app', 'anthropic', '', 'api', 'Fix the build', 1760000600);
+                 INSERT INTO hud_rows VALUES ('s1', 1, 1760000700000, 'print', 0);",
+            )
+            .unwrap();
+            db
+        }
+    }
+}
+
 /// What a record counts and is shown as, with its id taken out of its key.
 fn counted(record: &Record) -> String {
     format!(
@@ -222,11 +266,6 @@ fn a_mirror_names_far_sessions_and_counts_what_the_same_rows_count() {
     let home = tempfile::tempdir().unwrap();
     let plain_path = home.path().join("plain/state.db");
     let plain = read(&state_db(&plain_path, None), &plain_path, &Value::Null).unwrap();
-    let path = home.path().join(format!("profiles/{KEY}-default/state.db"));
-    let db = state_db(&path, None);
-    mirror(&db, row(1, KEY, "Mac mini", "default"));
-    let far = read(&db, &path, &Value::Null).unwrap();
-
     // The same database without the table reads as it always has.
     let ids = |page: &Page| {
         page.records
@@ -236,22 +275,37 @@ fn a_mirror_names_far_sessions_and_counts_what_the_same_rows_count() {
     };
     assert_eq!(ids(&plain), ["hermes:s1"]);
     assert!(plain.records.iter().all(|r| r.machine.is_none()));
-    // The mirror's sessions are far ones, named by the table's machine.
-    assert_eq!(ids(&far), [format!("hermes:{KEY}/default:s1")]);
-    for record in &far.records {
-        assert_eq!(record.machine.as_deref(), Some("Mac mini"));
-        assert_eq!(record.client, None);
+    // By hand, and as the mirror writer's own code makes one.
+    for made in MADE {
+        let path = home
+            .path()
+            .join(format!("{made:?}/profiles/{KEY}-default/state.db"));
+        let db = far_db(&path, made, "Mac mini", "default");
+        let far = read(&db, &path, &Value::Null).unwrap();
+        // The mirror's sessions are far ones, named by the table's machine.
+        assert_eq!(ids(&far), [format!("hermes:{KEY}/default:s1")], "{made:?}");
+        for record in &far.records {
+            assert_eq!(record.machine.as_deref(), Some("Mac mini"));
+            assert_eq!(record.client, None);
+        }
+        // And they count exactly what the same rows count on this machine.
+        assert_eq!(
+            far.records.iter().map(counted).collect::<Vec<_>>(),
+            plain.records.iter().map(counted).collect::<Vec<_>>(),
+            "{made:?}"
+        );
     }
-    // And they count exactly what the same rows count on this machine.
-    assert_eq!(
-        far.records.iter().map(counted).collect::<Vec<_>>(),
-        plain.records.iter().map(counted).collect::<Vec<_>>()
-    );
 }
 
 #[test]
 fn a_mirror_takes_its_profile_from_its_table_and_never_its_folder() {
     let home = tempfile::tempdir().unwrap();
+    for made in MADE {
+        a_mirror_made(made, &home.path().join(format!("{made:?}")));
+    }
+}
+
+fn a_mirror_made(made: Made, home: &Path) {
     // `profiles/work` is where this machine keeps its profile `work`.
     for (n, (profile, id, client)) in [
         ("default", format!("hermes:{KEY}/default:s1"), None),
@@ -264,30 +318,34 @@ fn a_mirror_takes_its_profile_from_its_table_and_never_its_folder() {
     .into_iter()
     .enumerate()
     {
-        let path = home.path().join(format!("{n}/profiles/work/state.db"));
-        let db = state_db(&path, None);
-        mirror(&db, row(1, KEY, "Mac mini", profile));
+        let path = home.join(format!("{n}/profiles/work/state.db"));
+        let db = far_db(&path, made, "Mac mini", profile);
         let page = read(&db, &path, &Value::Null).unwrap();
         let records = page
             .records
             .iter()
             .map(|r| (r.id.clone(), r.client.as_deref()))
             .collect::<Vec<_>>();
-        assert_eq!(records, [(id, client)], "{profile}");
+        assert_eq!(records, [(id, client)], "{profile} {made:?}");
     }
 }
 
 #[test]
 fn a_new_label_reads_every_session_again_and_nothing_else_does() {
     let home = tempfile::tempdir().unwrap();
-    let path = home.path().join(format!("profiles/{KEY}-default/state.db"));
-    let db = state_db(&path, None);
+    for made in MADE {
+        a_new_label_on_a_mirror_made(made, &home.path().join(format!("{made:?}")));
+    }
+}
+
+fn a_new_label_on_a_mirror_made(made: Made, home: &Path) {
+    let path = home.join(format!("profiles/{KEY}-default/state.db"));
+    let db = far_db(&path, made, "Mac mini", "default");
     db.execute(
         "INSERT INTO sessions (id, source, started_at, input_tokens) VALUES ('s2', 'telegram', 1760000100, 5)",
         [],
     )
     .unwrap();
-    mirror(&db, row(1, KEY, "Mac mini", "default"));
     let first = read(&db, &path, &Value::Null).unwrap();
     let watermark = first.watermark.unwrap();
     assert_eq!(first.records.len(), 2);
@@ -295,8 +353,18 @@ fn a_new_label_reads_every_session_again_and_nothing_else_does() {
     let again = read(&db, &path, &watermark).unwrap();
     assert!(again.records.is_empty());
 
-    db.execute("UPDATE hud_mirror SET label='Studio'", [])
-        .unwrap();
+    // As a test writes it, and as the writer does.
+    match made {
+        Made::ByHand => drop(db.execute("UPDATE hud_mirror SET label='Studio'", [])),
+        Made::Written => {
+            let key = super::super::gateway::machine_key(
+                Some("0123456789abcdef0123456789abcdef"),
+                "/Users/USER/.hermes",
+            )
+            .unwrap();
+            assert!(super::super::mirror::relabel(&db, &key, "Studio").unwrap());
+        }
+    }
     let renamed = read(&db, &path, &watermark).unwrap();
     assert_eq!(
         renamed.records.iter().map(|r| &r.key).collect::<Vec<_>>(),

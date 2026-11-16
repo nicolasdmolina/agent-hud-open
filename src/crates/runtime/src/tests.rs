@@ -8,6 +8,9 @@ mod antigravity_cli;
 #[path = "antigravity_cli_tests_windows.rs"]
 mod antigravity_cli;
 
+#[path = "written_tests.rs"]
+mod written;
+
 fn isolated(root: &Path) -> Runtime {
     fs::create_dir_all(root.join("home")).unwrap();
     Runtime::with_sources(Vec::new(), root.join("app-data")).unwrap()

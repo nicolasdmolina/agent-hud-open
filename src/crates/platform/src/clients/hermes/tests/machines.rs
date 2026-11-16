@@ -23,6 +23,7 @@ use super::{
     fake::Fake,
     marked, quick,
 };
+use crate::hooks::Changed;
 use crate::ssh_link::{
     unix::tests::lab::{self, short_base, Lab},
     Folder, Settings,
@@ -31,8 +32,9 @@ use agent_hud_agents::hermes::AGENT;
 use agent_hud_core::{requests::Requests, AgentHudCore};
 use serde_json::{json, Value};
 use std::{
+    collections::HashSet,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -42,6 +44,8 @@ mod answers;
 mod guards;
 #[path = "machines/lists.rs"]
 mod lists;
+#[path = "machines/mirrors.rs"]
+pub(super) mod mirrors;
 #[path = "machines/owners.rs"]
 mod owners;
 #[path = "machines/reasons.rs"]
@@ -84,6 +88,12 @@ pub(super) struct Fleet {
     pub unknown_hosts: PathBuf,
     pub core: AgentHudCore,
     pub requests: Requests,
+    /// The files the mirrors' writers said they wrote, which a turn
+    /// hands to core (`machines/mirrors.rs`).
+    pub told: Arc<Mutex<HashSet<PathBuf>>>,
+    /// Core reads the mirrors, and its file watcher has nothing to say:
+    /// it hears that no file changed before every pass.
+    pub silent: bool,
     pub machines: Option<Machines>,
     settings: Settings,
     _dir: tempfile::TempDir,
@@ -191,6 +201,8 @@ pub(super) fn fleet(hosts: usize) -> Option<Fleet> {
         unknown_hosts,
         requests: core.requests(),
         core,
+        told: Arc::default(),
+        silent: false,
         data,
         local,
         machines: None,
@@ -223,6 +235,11 @@ impl Fleet {
 
     /// Starts following, as turning client hooks on does.
     pub(super) fn start(&mut self) {
+        self.start_at(pace());
+    }
+
+    /// The same, at `pace`.
+    pub(super) fn start_at(&mut self, pace: Pace) {
         let (this, local) = (Local::at(&self.local), Local::at(&self.local));
         let ways = Ways {
             folder: Folder::open(&self.masters).expect("the control folder"),
@@ -234,11 +251,21 @@ impl Fleet {
             list: Some(self.list.clone()),
             ways: Ok(ways),
             look: Duration::from_millis(40),
-            pace: pace(),
+            pace,
+            changed: self.changed(),
         };
         let (requests, wake) = (self.requests.clone(), Arc::new(|| {}));
         let machines = Machines::start_with(sources, &self.data, requests, wake);
         self.machines = Some(machines.expect("the machines"));
+    }
+
+    /// What a mirror writer is given to say which file it wrote: the
+    /// paths are kept, as the hooks keep them.
+    pub(super) fn changed(&self) -> Changed {
+        let kept = self.told.clone();
+        Arc::new(move |paths: &[PathBuf]| {
+            kept.lock().unwrap().extend(paths.iter().cloned());
+        })
     }
 
     /// Stops following, as turning client hooks off does.
@@ -265,6 +292,9 @@ impl Fleet {
     }
 
     pub(super) fn snapshot(&mut self) -> Value {
+        if self.silent {
+            self.core.file_changes(Some(HashSet::new()));
+        }
         self.core.request("snapshot", json!({})).unwrap()
     }
 

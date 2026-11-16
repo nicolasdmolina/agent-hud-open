@@ -267,3 +267,110 @@ fn a_far_card_carries_its_machine_like_its_row() {
         .unwrap();
     assert_eq!(row.1, card["machine"]);
 }
+
+/// What the mirror writer writes for a session a poll listed
+/// (`hermes::mirror::claim` and `list`, the functions it calls) is a row
+/// and nothing else: no tokens on it, no event in the ledger, and
+/// statistics as they were.
+#[test]
+fn a_row_made_from_the_live_list_adds_nothing_to_the_ledger() {
+    use agent_hud_agents::hermes::{gateway::Listed, mirror as written};
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join(".hermes");
+    state_db(&home.join("state.db"), &[("local-s1", 7, 1)]);
+    let far_root = temp.path().join("hud").join(written::ROOT);
+    let key = machine_key(
+        Some("0123456789abcdef0123456789abcdef"),
+        "/Users/USER/.hermes",
+    )
+    .unwrap();
+    assert_eq!(key.as_str(), KEY);
+    // The mirror as the writer makes one, with a durable row put in by
+    // hand as the far database gives one: 120 tokens, by model.
+    let path = written::file(&far_root, &key, &Profile::Default);
+    fs::create_dir_all(path.parent().unwrap()).unwrap(); // plain directory
+    let db = rusqlite::Connection::open(&path).unwrap();
+    assert!(written::claim(&db, &key, &Profile::Default, "Mac mini").unwrap());
+    let now = Utc::now().timestamp();
+    db.execute_batch(&format!(
+        "INSERT INTO sessions (id, source, model, started_at, input_tokens, output_tokens, title)
+            VALUES ('s1', 'telegram', 'claude-test', {0}, 100, 20, 'Durable');
+         INSERT INTO session_model_usage (session_id, model, input_tokens, output_tokens, first_seen, last_seen)
+            VALUES ('s1', 'claude-test', 100, 20, {0}, {0});
+         INSERT INTO hud_rows VALUES ('s1', 1, 1, 'print', 0);",
+        now - 60
+    ))
+    .unwrap();
+    let mut core = AgentHudCore::new(vec![], temp.path().join("app"));
+    core.provider_roots = vec![(home, "hermes"), (far_root, "hermes")];
+    assert_eq!(refresh(&mut core), json!(128));
+    let events = ledger(&core);
+    assert_eq!(events.1, 128);
+    let iso = |at: i64| {
+        chrono::DateTime::<Utc>::from_timestamp(at, 0)
+            .unwrap()
+            .to_rfc3339()
+    };
+    let (from, to) = (iso(now - 30 * 86_400), iso(now + 86_400));
+    let query = json!({"from": from, "to": to, "bucketMinutes": 1440, "costKinds": "all",
+        "tokenKinds": ["input", "output", "cacheWrite"], "timeZone": "UTC"});
+    // Everything statistics say, less the clock: when the answer was
+    // worked out, which reading of the ledger it is, and up to when the
+    // ledger has looked (`observedTo`), none of which is usage.
+    fn timeless(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                for clock in ["generatedAt", "dataRevision", "observedTo"] {
+                    map.remove(clock);
+                }
+                map.values_mut().for_each(timeless);
+            }
+            Value::Array(items) => items.iter_mut().for_each(timeless),
+            _ => {}
+        }
+    }
+    let statistics = |core: &mut AgentHudCore| {
+        let mut all = core.request("statistics", query.clone()).unwrap();
+        timeless(&mut all);
+        all
+    };
+    let before = statistics(&mut core);
+    assert!(before.to_string().contains("128"), "{before}");
+
+    // A poll lists a session the mirror lacks, and the durable one,
+    // said otherwise.
+    let said = |title: &str| Listed {
+        title: Some(title.into()),
+        model: Some("claude-test".into()),
+        source: Some("telegram".into()),
+        started_at: Some((now - 30) as f64),
+    };
+    let listed = [
+        ("live1".to_owned(), said("Listed live")),
+        ("s1".to_owned(), said("Said otherwise")),
+    ];
+    assert_eq!(written::list(&db, &listed, now * 1000).unwrap(), 1);
+
+    assert_eq!(refresh(&mut core), json!(128));
+    assert_eq!(
+        rows(&mut core, ""),
+        [
+            (far("live1"), json!("Mac mini"), json!(0)),
+            (far("s1"), json!("Mac mini"), json!(120)),
+            ("hermes:local-s1".to_owned(), Value::Null, json!(8)),
+        ]
+    );
+    // The ledger itself: not one event more, and the same tokens.
+    assert_eq!(ledger(&core), events);
+    assert_eq!(statistics(&mut core), before);
+    // Nor after a relaunch, which reads the mirror from what was saved.
+    drop(core);
+    let mut core = AgentHudCore::new(vec![], temp.path().join("app"));
+    core.provider_roots = vec![
+        (temp.path().join(".hermes"), "hermes"),
+        (temp.path().join("hud").join(written::ROOT), "hermes"),
+    ];
+    assert_eq!(refresh(&mut core), json!(128));
+    assert_eq!(ledger(&core), events);
+    assert_eq!(statistics(&mut core), before);
+}

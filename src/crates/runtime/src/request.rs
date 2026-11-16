@@ -146,7 +146,7 @@ impl Runtime {
             let result = self.core.request(method, params)?;
             return Ok(self.decorate_snapshot(result, true));
         }
-        if method == "request_snapshot" {
+        if method == "request_snapshot" && !self.note_written() {
             self.ingest_pending_hook_events();
             let method = if self.apply_log_reminders() || self.core.has_reminded_reads() {
                 "reminder_snapshot"
@@ -162,11 +162,18 @@ impl Runtime {
         if LOCAL_QUERIES.contains(&method) {
             return self.core.request(method, params);
         }
+        // A request that found files a native channel wrote is a pass:
+        // it reads them now, not at the file watcher's next event.
+        let method = match method {
+            "request_snapshot" => "snapshot",
+            method => method,
+        };
         // This boundary runs on the collector/blocking worker, not desktop setup.
         if let Some(path) = self.legacy_database.take() {
             self.core.set_legacy_quota_database(Some(path));
         }
         self.core.file_changes(self.changes.consume());
+        self.note_written();
         self.ingest_pending_hook_events();
         self.apply_log_reminders();
         if let Some(accounts) = &self.accounts {
@@ -183,6 +190,20 @@ impl Runtime {
         }
         let result = self.core.request(method, params)?;
         Ok(self.decorate_snapshot(result, true))
+    }
+    /// Hands core the files native channels said they wrote
+    /// (`hooks::Changed`), through the entry the file watcher uses; true
+    /// where there were any. The watcher may never report them: a mirror
+    /// in a folder made after launch, or one core has not read before.
+    fn note_written(&mut self) -> bool {
+        let hooks = self.hooks.lock().unwrap_or_else(PoisonError::into_inner);
+        let written = hooks.drain_file_changes();
+        drop(hooks);
+        let any = !written.is_empty();
+        if any {
+            self.core.file_changes(Some(written));
+        }
+        any
     }
     fn ingest_pending_hook_events(&mut self) {
         let events = self

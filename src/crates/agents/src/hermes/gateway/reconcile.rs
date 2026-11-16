@@ -50,7 +50,9 @@ impl Gateway {
         self.told.read(&poll, now_ms);
         for (at, look) in &poll.sessions {
             self.listed.insert(at.clone(), look.status);
+            self.rows.insert(at.clone(), look.listed.clone());
         }
+        self.rows.retain(|at, _| self.listed.contains_key(at));
         self.keep_apart();
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {
             if let Some(why) = self.over(&poll, &key, now_ms, effects) {

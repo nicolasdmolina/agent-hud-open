@@ -122,8 +122,11 @@ fn identified(shared: &Shared) -> Result<Instance, Next> {
 }
 
 fn dial(shared: &Shared) -> Result<Socket, Next> {
+    // What the polls on this socket read is written under the route
+    // number the socket was opened under (`mirror.rs`).
+    let number = shared.route.number();
     let instance = identified(shared)?;
-    opened(shared, &instance).map_err(|shut| {
+    let mut socket = opened(shared, &instance).map_err(|shut| {
         match shut {
             Shut::Denied(denied) => shared.apply(Input::Denied(denied)),
             Shut::Failed(failure) => shared.apply(Input::Lost(failure)),
@@ -133,7 +136,15 @@ fn dial(shared: &Shared) -> Result<Socket, Next> {
             Connection::Unsupported(_) => Next::Rarely,
             _ => Next::Later,
         }
-    })
+    })?;
+    // A route that changed while the socket was being opened leaves it
+    // of no one route: it is closed, and opened again under the new one.
+    if shared.route.number() != number {
+        socket.close();
+        return Err(Next::Soon);
+    }
+    shared.under.store(number, Ordering::Release);
+    Ok(socket)
 }
 
 /// Runs polls on the socket until it is lost (the failure) or the observer

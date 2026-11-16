@@ -23,6 +23,9 @@ pub struct Stream {
     pub running: bool,
     /// What the list says in place of what Hermes would work out.
     pub status: Option<String>,
+    /// What else the list says of the session (`title`, `model`, `source`,
+    /// `started_at`); nothing where it is not an object.
+    pub row: Value,
 }
 
 impl Stream {
@@ -145,7 +148,13 @@ impl Hermes {
                     .streams
                     .iter()
                     .filter(|((of, _), _)| of == profile)
-                    .map(|((_, id), stream)| json!({"id": id, "status": stream.status()}))
+                    .map(|((_, id), stream)| {
+                        let mut row = json!({"id": id, "status": stream.status()});
+                        for (key, value) in stream.row.as_object().into_iter().flatten() {
+                            row[key.as_str()] = value.clone();
+                        }
+                        row
+                    })
                     .collect();
                 Some(json!({ "sessions": rows }))
             }

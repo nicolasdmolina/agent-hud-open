@@ -17,7 +17,7 @@ use agent_hud_agents::hermes::gateway::{
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
 };
 
@@ -63,7 +63,14 @@ pub(super) fn run(shared: &Arc<Shared>, socket: &mut Socket) -> Result<Option<Ra
     shared.take(&mut model, Input::Polled(poll));
     let wait = Duration::from_millis(model.gateway.poll_ms().max(0) as u64);
     let live = !model.gateway.statuses().is_empty();
+    // What the list says of a far machine's live sessions, for their
+    // rows: copied here, and queued for the mirrors' writer once the
+    // model is unlocked. The writer drops a list it has taken already.
+    let listing = (shared.mirror.as_ref()).and_then(|_| model.gateway.listing());
     drop(model);
+    if let (Some(mirror), Some(listing)) = (&shared.mirror, listing) {
+        mirror.listed(listing, shared.under.load(Ordering::Acquire));
+    }
     // A session whose read held this poll up is read apart from the next.
     for session in asked.slow {
         shared.apart.begin(shared, session);

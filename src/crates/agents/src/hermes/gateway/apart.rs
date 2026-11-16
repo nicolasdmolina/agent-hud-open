@@ -86,6 +86,7 @@ impl Gateway {
         };
         let look = Look {
             status,
+            listed: Default::default(),
             read: Read::Wanted {
                 step,
                 search: Search::default(),

@@ -79,7 +79,25 @@ impl Switch {
     }
 }
 
+/// A write of what was read under one route number is committed only
+/// while that is still the number: raising it waits for a commit that is
+/// under way, which is a write to a local file, and for nothing else.
+impl crate::clients::hermes::mirror::Routes for Switch {
+    fn under(&self, number: u64, commit: &mut dyn FnMut()) -> bool {
+        let state = self.state();
+        let current = state.number == number;
+        if current {
+            commit();
+        }
+        current
+    }
+}
+
 impl Route for Switch {
+    fn number(&self) -> u64 {
+        Switch::number(self)
+    }
+
     fn homes(&self) -> Result<Vec<Home>, Silent> {
         self.inventory().map(|told| told.homes)
     }

@@ -191,10 +191,16 @@ mod tests {
         let in_editor = |root: &agent_hud_core::SourceRoot| {
             matches!(root.provider, "cline" | "roo-code") && root.path.starts_with(&app_data)
         };
+        // Hermes's second place: the mirrors of far machines, in Agent
+        // HUD's data folder (checked after).
+        let mirrors = Path::new(target::DATA_FOLDER).join(agent_hud_agents::hermes::mirror::ROOT);
+        let mirrored = |root: &agent_hud_core::SourceRoot| {
+            root.provider == "hermes" && root.path.ends_with(&mirrors)
+        };
         let roots = all
             .iter()
             .filter(|root| !matches!(root.provider, "grok-bot" | "cursor" | "goose"))
-            .filter(|root| !in_editor(root))
+            .filter(|root| !in_editor(root) && !mirrored(root))
             .map(|root| {
                 let path = root.path.strip_prefix(home).unwrap().to_owned();
                 (root.provider, path)
@@ -212,6 +218,11 @@ mod tests {
         assert!(cursor[1..]
             .iter()
             .all(|path| path.ends_with(Path::new(target::DATA_FOLDER).join("clients/cursor"))));
+        // Hermes: one folder of mirrors, in the same data folder, where a
+        // far Hermes can be reached at all.
+        let far = agent_hud_agents::hermes::FAR_ROUTE.on(OS).value();
+        let found = all.iter().filter(|root| mirrored(root)).count();
+        assert_eq!(found, usize::from(far.is_some()));
         let expected = [
             ("claude", ".claude/projects"),
             ("claude", ".config/claude/projects"),
