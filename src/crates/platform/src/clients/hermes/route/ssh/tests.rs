@@ -154,6 +154,49 @@ fn a_later_gateway_is_held_against_the_machine_on_every_link() {
     );
 }
 
+/// The verifier's probe of ticket 50 (`evidence/50/verifier-files/probes/
+/// identity-probe.rs`), its statements as written. A socket of link 1
+/// whose `profiles.list` was answered reaches `admit` after the gateways
+/// were admitted on link 2. It failed on ticket 50's merge: the older
+/// number was taken for a newer link, so who was admitted on the open
+/// link was forgotten and the table went back to link 1 (ticket 51).
+#[test]
+fn an_admit_that_holds_an_older_link_number_forgets_nobody() {
+    let identity = Identity::default();
+    let both = reported(&[("a", Some(INSTALL)), ("b", Some(INSTALL))]);
+    identity.settle(ROOT, &both, 1).unwrap();
+    assert_eq!(identity.admit(2, "a", Some(INSTALL)), Ok(()));
+    assert_eq!(identity.admit(2, "b", Some(INSTALL)), Ok(()));
+    assert!(identity.admitted(2, "a") && identity.admitted(2, "b"));
+    let late = identity.admit(1, "a", Some(INSTALL));
+    let (a2, b2, a1) = (
+        identity.admitted(2, "a"),
+        identity.admitted(2, "b"),
+        identity.admitted(1, "a"),
+    );
+    println!(
+        "TRACE late admit late={late:?} admitted(2,a)={a2} admitted(2,b)={b2} admitted(1,a)={a1}"
+    );
+    assert!(a2 && b2, "who was admitted on the open link was forgotten");
+    // It said who it is, so it is not refused: a refusal uncovers the machine.
+    assert_eq!(late, Ok(()));
+    assert!(!a1, "the table went back to the older link");
+    // Nobody is admitted on the open link by a socket of the older one.
+    assert_eq!(identity.admit(1, "c", Some(INSTALL)), Ok(()));
+    assert!(!identity.admitted(2, "c") && !identity.admitted(1, "c"));
+    // What it reports is held against the machine as on any link.
+    assert_eq!(identity.admit(1, "a", Some(OTHER)), Err(NoMachine::Another));
+    let missing = Err(NoMachine::NoKey(NoKey::Missing));
+    assert_eq!(identity.admit(1, "a", None), missing);
+    assert!(identity.admitted(2, "a") && identity.admitted(2, "b"));
+    // A newer link is still taken, also where numbers were skipped, and
+    // the one before it is then the older.
+    assert_eq!(identity.admit(5, "a", Some(INSTALL)), Ok(()));
+    assert!(identity.admitted(5, "a") && !identity.admitted(5, "b"));
+    assert_eq!(identity.admit(2, "b", Some(INSTALL)), Ok(()));
+    assert!(identity.admitted(5, "a") && !identity.admitted(2, "b"));
+}
+
 #[test]
 fn the_first_reason_a_machine_is_uncovered_for_is_the_one_kept() {
     let notice = Notice::default();

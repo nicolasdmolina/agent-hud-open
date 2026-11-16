@@ -9,8 +9,9 @@
 //! answered at. A cancel that is owed is paid before the next forward is
 //! made, so no forward is in place beside the one it replaced. A forward
 //! lives on one link and is gone with it. Links are numbered as they
-//! open, and the table is the newest link's: whoever comes with an older
-//! number is refused and changes nothing (ticket 50).
+//! open, and the table is the newest link's: whoever comes for a forward
+//! with an older number is refused and changes nothing (ticket 50), and
+//! whoever lets one go is heard whatever link it holds (ticket 51).
 //!
 //! Making one asks the master, which can take a moment. Whoever asked may
 //! stop meanwhile: the wait ends at once, and the forward, if it still
@@ -42,6 +43,8 @@ pub(super) struct Forwards {
 struct Held {
     /// The number of the link these are on.
     link: u64,
+    /// That link, to cancel on for whoever comes holding another.
+    on: Option<Arc<Link>>,
     by_instance: HashMap<String, Entry>,
     /// Numbers each making, so that one given up is known as that.
     makings: u64,
@@ -109,6 +112,7 @@ impl Forwards {
             held.by_instance.clear();
             held.owed.clear();
             held.link = number;
+            held.on = Some(link.clone());
         }
         let mut ours = None;
         loop {
@@ -196,10 +200,16 @@ impl Forwards {
         self.pay(link);
     }
 
-    /// Cancels what is owed on the link that is open, on a thread of its
-    /// own: whoever let an instance go is not kept waiting on the master.
+    /// Cancels what is owed, on a thread of its own: whoever let an
+    /// instance go is not kept waiting on the master. Whoever holds an
+    /// older link than the table's, or none, took it before that one
+    /// opened: what is owed is then cancelled on the table's own link.
     fn pay(self: &Arc<Self>, link: Option<(Arc<Link>, u64)>) {
-        let Some((link, number)) = link else {
+        let held = self.held();
+        let own = held.on.clone().map(|own| (own, held.link));
+        drop(held);
+        let older = |own: &(Arc<Link>, u64)| link.as_ref().is_none_or(|seen| seen.1 < own.1);
+        let Some((link, number)) = own.filter(older).or(link) else {
             return;
         };
         let all = self.clone();
