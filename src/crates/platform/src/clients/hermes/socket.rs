@@ -172,6 +172,10 @@ impl Socket {
         super::tap::written(frame);
         self.line.out_within(Some(self.budget));
         let sent = self.ws.send(Message::Text(frame.to_string().into()));
+        #[cfg(test)]
+        if sent.is_err() {
+            self.line.send_failed();
+        }
         self.line.out_within(None);
         sent.map_err(|_| {
             self.line.cut();

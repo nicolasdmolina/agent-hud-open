@@ -70,6 +70,8 @@ pub(super) fn run_watched(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = Reaped(command.spawn()?);
+    #[cfg(test)]
+    super::tests::reaper::spawned(child.0.id());
     let until = Instant::now() + limit;
     let mut stdin = child.0.stdin.take();
     let mut stdout = child.0.stdout.take();

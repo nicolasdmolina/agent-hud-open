@@ -319,14 +319,36 @@ fn verifier3_default_write_budget_stops_a_stalled_frame_without_later_flush() {
     until("default-budget peer stops reading", || {
         stalled.entered.load(Ordering::Acquire)
     });
-    until("default-budget answer starts writing", || shared.writing());
+    let mut line = None;
+    until("default-budget answer starts writing", || {
+        line = shared.writing_line();
+        line.is_some()
+    });
+    let line = line.unwrap();
     let socket = gateway.world().calls("session.resume").last().unwrap().0;
-    let began = Instant::now();
     assert_eq!(lab.delivery(&id)["state"], "failed");
-    let took = began.elapsed();
+    // The answer's is the first send that failed: when its budget began
+    // (its bound was set, before the 8 MiB frame was made), when its first
+    // write began (the frame made), and when it gave up.
+    let failed = line.failed_sends();
+    let (bounded, first, ended) = *failed.first().expect("the answer's send failed");
+    let (bounded, first) = (bounded.expect("a bound"), first.expect("a write began"));
+    let budget = Pace::default().write;
+    let making = first.saturating_duration_since(bounded);
+    let whole = ended.saturating_duration_since(bounded);
+    println!(
+        "the frame took {making:?} to make; the send gave up {whole:?} after its budget began"
+    );
+    // It gave up when its budget ran out, counted from where the budget
+    // began, or, where making the frame used the budget up, at its first
+    // write: never later, but for 750 ms of this machine's scheduling.
+    // Making the frame took over 5 s on a busy machine (ticket 49), so a
+    // fixed bound from the start could not tell the budget from the
+    // socket's own 5 s; one from the first byte alone missed a wrong budget
+    // that counted the making too (the PR verifier's 6 s and 4.5 s).
     assert!(
-        took < Duration::from_secs(5),
-        "default-budget failure took {took:?}"
+        whole <= budget.max(making) + Duration::from_millis(750),
+        "default-budget failure took {whole:?} from its bound, {making:?} of it making the frame"
     );
     stalled.released.store(true, Ordering::Release);
     until("default-budget answer socket ended", || {
@@ -334,7 +356,7 @@ fn verifier3_default_write_budget_stops_a_stalled_frame_without_later_flush() {
     });
     assert!(gateway.world().calls("clarify.respond").is_empty());
     eprintln!(
-        "DEFAULT BUDGET: failed in {} ms, no complete answer, peer ended",
-        took.as_millis()
+        "DEFAULT BUDGET: failed {} ms after its bound, no complete answer, peer ended",
+        whole.as_millis()
     );
 }

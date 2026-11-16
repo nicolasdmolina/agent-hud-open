@@ -3,7 +3,7 @@
 //! `reviewer27_round4.rs`; these are two more ends they did not reach.
 //! Receipts are counted as core was told of them, in order, before a
 //! later one for the same request replaces the row.
-use super::unreachable::{asks, follower, red, started, ASKED};
+use super::unreachable::{asks, follower, red, started, started_at, ASKED};
 use super::{fake::Hold, lab, until};
 use serde_json::{json, Value};
 use std::sync::{atomic::Ordering, Arc};
@@ -20,7 +20,12 @@ fn now() -> i64 {
 #[test]
 fn a_decision_that_waits_to_be_picked_up_when_its_card_closes_has_one_receipt() {
     let mut lab = lab();
-    let gateway = started(&mut lab);
+    // Every poll says in the log how many snapshots it took.
+    let traced = super::super::Pace {
+        trace: true,
+        ..super::quick()
+    };
+    let gateway = started_at(&mut lab, traced);
     let id = asks(&lab, &gateway);
     let shared = follower(&lab);
     shared.deaf.store(true, Ordering::Release);
@@ -45,9 +50,76 @@ fn a_decision_that_waits_to_be_picked_up_when_its_card_closes_has_one_receipt() 
     assert_eq!(lab.requests.reviewer27_notes(&id), ["failed"]);
     assert!(lab.cards().is_empty());
     assert!(gateway.world().calls("clarify.respond").is_empty());
-    assert!(gateway.world().calls("session.resume").is_empty());
+    // Nothing went out for the decision: no resume was the answer's. A
+    // poll can take one of its own, a snapshot: where the gateway's list
+    // was read before the settle was played and the session's events
+    // after, the list says waiting and the events show nothing waiting
+    // (ticket 49: one run in thirty under heavy load). So there are no
+    // more resumes than the polls' own traces counted snapshots, and each
+    // is a snapshot's: of the card's session, on a socket of its own that
+    // carried that resume and then its detach, and nothing else.
+    let close = format!("close id={id} why=Settled");
+    until("a poll after the close is traced", || {
+        let log = lab.log();
+        log.split(&close)
+            .nth(1)
+            .is_some_and(|after| after.contains(" trace poll "))
+    });
+    let snapshots = poll_snapshots(&lab.log());
+    let world = gateway.world();
+    let resumes = world.calls("session.resume");
+    assert!(
+        resumes.len() <= snapshots,
+        "{} resumes, {snapshots} snapshots",
+        resumes.len()
+    );
+    for (socket, resume) in &resumes {
+        let session = resume["params"]["session_id"].as_str().unwrap_or("");
+        assert!(id.contains(&format!(":{session}:")), "{resume}");
+        let calls: Vec<&str> = world
+            .received
+            .iter()
+            .filter(|(on, _)| on == socket)
+            .map(|(_, frame)| frame["method"].as_str().unwrap_or(""))
+            .collect();
+        assert!(
+            calls == ["session.resume", "session.detach"] || calls == ["session.resume"],
+            "{calls:?}"
+        );
+    }
+    drop(world);
     let model = shared.model();
     assert!(!model.taken.contains_key(&id) && !model.answered.contains_key(&id));
+}
+
+/// How many snapshots the polls took, as each poll's own trace line says.
+/// A slow poll's line and the summary every 60 polls count the same
+/// snapshots again, so only `trace poll` lines are counted (the PR
+/// verifier of ticket 49).
+fn poll_snapshots(log: &str) -> usize {
+    log.lines()
+        .filter(|line| line.contains(" trace poll "))
+        .filter_map(|line| {
+            line.split(" snapshots=")
+                .nth(1)?
+                .split(' ')
+                .next()?
+                .parse::<usize>()
+                .ok()
+        })
+        .sum()
+}
+
+/// One slow poll that took one snapshot is one snapshot, whatever else
+/// the log says of it.
+#[test]
+fn a_snapshot_is_counted_once() {
+    let log = "\
+2026-11-16T07:13:01.710Z m/default trace poll ms=600 calls=3 snapshots=1 next_ms=1000
+2026-11-16T07:13:01.710Z m/default slow poll ms=600 calls=3 snapshots=1
+2026-11-16T07:13:02.000Z m/default polls n=60 mean_ms=9 max_ms=600 calls=180 snapshots=1
+2026-11-16T07:13:02.710Z m/default trace poll ms=2 calls=3 snapshots=0 next_ms=1000";
+    assert_eq!(poll_snapshots(log), 1);
 }
 
 /// The answer to a set of questions is written, and nothing replies to

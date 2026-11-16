@@ -291,3 +291,19 @@ impl Drop for Visit<'_> {
         self.socket.close();
     }
 }
+
+#[cfg(test)]
+mod writing_line {
+    use super::{Line, Shared};
+    use std::sync::Arc;
+
+    impl Shared {
+        /// The line of a visit that is writing: a test reads from it when
+        /// the frame's first byte went, after the frame was made (ticket 49).
+        pub(in crate::clients::hermes) fn writing_line(&self) -> Option<Arc<Line>> {
+            let model = self.model();
+            let held = model.visits.values().find(|held| held.writing)?;
+            Some(Arc::clone(&held.line))
+        }
+    }
+}

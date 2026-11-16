@@ -1,6 +1,6 @@
 //! The reader closes the database before it answers, and its own deadline
 //! ends it whatever it is doing.
-use super::super::{Failure, Slots};
+use super::super::{Failure, Settings, Slots};
 use super::world::{most, open, raw, readers, sessions, settings, Watch, World, PYTHON};
 use crate::ssh_link::unix::tests::lab::until;
 use crate::ssh_link::End;
@@ -161,9 +161,50 @@ fn the_deadline_ends_a_busy_query() {
         reader.read(&link, &slot, &world.home, &Request::Probe),
         Ok(Reply::Probed)
     );
+    // The far `python3` becomes a parent that starts the reader, passes on
+    // what it says, and notes by the wall clock when its `started` went by
+    // and when its process ended: how long it held the database, taken on
+    // the far side. It takes the reader's arguments from a file, so it is
+    // no reader to anyone (ticket 49).
+    let at = |name: &str| world.lab.at(name).display().to_string();
+    fs::write(
+        at("held.py"),
+        format!(
+            "import os, subprocess, sys, time\n\
+             args = open({args:?}).read().split('\\n')[:-1]\n\
+             child = subprocess.Popen([{PYTHON:?}] + args, stdin=sys.stdin, stdout=subprocess.PIPE)\n\
+             os.close(0)\n\
+             started = 0.0\n\
+             for line in child.stdout:\n\
+             \x20   if not started and line.startswith(b'[\"started\",'):\n\
+             \x20       started = time.time()\n\
+             \x20   os.write(1, line)\n\
+             status = child.wait()\n\
+             open({times:?}, 'a').write('%r %r\\n' % (started, time.time()))\n\
+             sys.exit(status % 256)\n",
+            args = at("held-arguments"),
+            times = at("held-times"),
+        ),
+    )
+    .unwrap();
+    world.stand_in(&format!(
+        "printf '%s\\n' \"$@\" > '{}'\nexec {PYTHON} -I '{}'",
+        at("held-arguments"),
+        at("held.py")
+    ));
     let watch = Watch::start(&world);
+    // The busy read has a 6 s deadline, so the looks at the far side's
+    // open files, a second or more apart on a busy machine, see it with
+    // the database open. With 2 s they could all miss it (ticket 49).
+    let deadline = Duration::from_secs(6);
+    let busy = world.reader(Settings {
+        deadline,
+        local_wait: Duration::from_secs(30),
+        ..settings()
+    });
+    let margin = busy.settings().margin;
     let began = Instant::now();
-    let read = reader.read(&link, &slot, &world.home, &sessions(&["endless"]));
+    let read = busy.read(&link, &slot, &world.home, &sessions(&["endless"]));
     let took = began.elapsed();
     // The watchdog's own status: not an answer, and not the system timer.
     assert_eq!(read, Err(Failure::Exit(3)));
@@ -171,25 +212,29 @@ fn the_deadline_ends_a_busy_query() {
     // The far process is gone.
     assert_eq!(readers(&world.mark()), Vec::<u32>::new());
     let samples = watch.finish();
+    // It had the database open, and nothing beside it did.
     assert_eq!(most(&samples), (1, 1));
-    let with: Vec<Instant> = samples
-        .iter()
-        .filter(|look| !look.open.is_empty())
-        .map(|look| look.at)
+    let times = fs::read_to_string(at("held-times")).unwrap();
+    let times: Vec<f64> = times
+        .split_whitespace()
+        .map(|time| time.parse().unwrap())
         .collect();
-    let open = *with.last().unwrap() - with[0];
+    let open = Duration::from_secs_f64(times[1] - times[0]);
     println!(
-        "  the read took {took:?}; the reader had the database open for {open:?} of a 2 s deadline"
+        "  the read took {took:?}; the reader ran {open:?} from its `started`, of a {deadline:?} deadline"
     );
-    // Seen open for much of its deadline, and never past it and the
-    // margin. How long the reader took to start is this machine's
-    // business: it has twenty seconds for that.
+    // From its `started` to its end it ran its deadline, less a second
+    // (the parent may see `started` a little late), and never past it and
+    // the margin. Before, this side's looks at the open files timed it
+    // (over 600 ms of a 2 s deadline seen open), and on a busy machine
+    // they came a second or more apart (ticket 49). How long the reader
+    // took to start is this machine's business: it has twenty seconds.
     assert!(
-        open > Duration::from_millis(600) && open < Duration::from_secs(4),
+        times[0] > 0.0 && open > deadline - Duration::from_secs(1) && open < deadline + margin,
         "{open:?}"
     );
     assert!(
-        took >= Duration::from_secs(2) && took < Duration::from_secs(24),
+        took >= deadline && took < deadline + margin + Duration::from_secs(20),
         "{took:?}"
     );
     link.close();
