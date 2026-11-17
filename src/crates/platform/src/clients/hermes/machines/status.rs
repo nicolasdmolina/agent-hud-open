@@ -9,7 +9,9 @@
 //! now or before (the key its sessions' ids begin with), and by the
 //! entry's id until then. One status goes by a key, the owner's: every
 //! other entry that leads to the machine goes by its own id, in reach or
-//! out of it, so no two statuses share an id.
+//! out of it, so no two statuses share an id. An entry's id that could
+//! be taken for another's (a machine's key, this machine's `local`, or
+//! one already written so) goes by `entry:` and that id.
 use super::{
     book::{Book, Lead, Slot, State},
     list::Unread,
@@ -83,13 +85,19 @@ fn status(id: &str, label: &str, state: MachineState, note: Option<String>) -> M
 }
 
 /// The id an entry's status goes by while its machine is not known: the
-/// entry's own, written so that it is never taken for a machine's key.
+/// entry's own, written so that it is never taken for a machine's key or
+/// this machine's `local`, nor for another entry's id written so.
 fn row(entry: &str) -> String {
-    match StoredKey::parse(entry) {
-        Some(_) => format!("entry:{entry}"),
-        None => entry.to_owned(),
+    let taken = StoredKey::parse(entry).is_some() || entry == HERE;
+    match taken || entry.starts_with(ENTRY) {
+        true => format!("{ENTRY}{entry}"),
+        false => entry.to_owned(),
     }
 }
+
+/// What an entry's id is written after where it could be taken for
+/// another's.
+const ENTRY: &str = "entry:";
 
 impl State {
     fn told(&self) -> Told {
@@ -215,5 +223,34 @@ impl State {
             .find(listed)
             .map(|slot| slot.entry.label.clone());
         label.unwrap_or_else(words::this_machine)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{row, HERE};
+
+    /// No entry's id is ever this Mac's, a machine's key, or another
+    /// entry's: here an entry named `local`, one named as a key is, and
+    /// one named as that key's entry goes by.
+    #[test]
+    fn an_entry_never_goes_by_an_id_that_is_not_its_own() {
+        let key = "0123456789abcdef";
+        assert_eq!(row("b"), "b");
+        assert_eq!(row(key), format!("entry:{key}"));
+        let entries = [
+            HERE.to_owned(),
+            key.to_owned(),
+            format!("entry:{key}"),
+            "b".into(),
+        ];
+        let ids = entries.clone().map(|entry| row(&entry));
+        for taken in [HERE, key] {
+            assert!(!ids.iter().any(|id| id == taken), "{ids:?}");
+        }
+        let mut seen = ids.to_vec();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), ids.len(), "{ids:?}");
     }
 }

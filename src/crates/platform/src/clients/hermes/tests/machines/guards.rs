@@ -341,3 +341,20 @@ fn an_alias_readdressed_out_of_reach_is_waited_on_when_the_owner_goes() {
     assert_eq!(fleet.calls(&id), (1, 0));
     assert_eq!(fleet.sounds(), sounds);
 }
+
+/// Ticket 53: a list with no entry for this Mac, and an `ssh` entry
+/// whose id is the word this Mac's own status goes by.
+#[test]
+#[ignore = "starts processes: run by the_lab_tests_pass"]
+fn an_entry_named_local_is_not_this_mac() {
+    let Some(mut fleet) = fleet(1) else {
+        return;
+    };
+    fleet.write(&[ssh("local", "Mini", "gone")]);
+    fleet.start();
+    fleet.stands("Mini", "cannot-reach");
+    assert_eq!(ids(&mut fleet), ["local", "entry:local"]);
+    let rows = fleet.rows();
+    assert_eq!(rows[0]["here"], true, "this Mac keeps its own id");
+    assert!(rows[1].get("here").is_none(), "{}", rows[1]);
+}

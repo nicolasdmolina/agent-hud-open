@@ -13,8 +13,23 @@ const SCHEMA: &str = include_str!("../../../agents/tests/fixtures/hermes/macos/s
 const ID: &str = "hermes:s1";
 const MINUTE: i64 = 60_000;
 
+/// The clock snapshots are rendered at: the wall clock, or the moment a
+/// test pinned it at.
 fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    crate::snapshot::wall_clock_ms()
+}
+
+/// Stops the clock at the present moment, which it returns: what a
+/// reading or a hook says is timed against it, never against how long a
+/// loaded machine takes from one line of the test to the next.
+fn pinned() -> i64 {
+    let at = chrono::Utc::now().timestamp_millis();
+    pin(at);
+    at
+}
+
+fn pin(at: i64) {
+    crate::snapshot::PINNED_CLOCK.set(Some(at));
 }
 
 /// A core reading a Hermes `state.db` with one session, `s1`, that
@@ -273,20 +288,37 @@ fn a_reading_is_believed_for_thirty_seconds_and_no_longer() {
     crate::snapshot::PINNED_CLOCK.set(None);
 }
 
+/// A turn longer than any one reading is believed stays running while
+/// readings keep coming: each renews the last, here 20 s apart, so the
+/// first is a minute old by the last.
 #[test]
 fn a_long_turn_stays_running_while_every_reading_renews_it() {
+    let at = pinned();
     let root = tempfile::tempdir().unwrap();
     let mut core = hermes(root.path(), 3 * 24 * 60 * MINUTE);
     hook(&mut core, "pre_tool_call", 20 * MINUTE);
-    for _ in 0..3 {
+    let apart = 20_000;
+    for n in 0..4 {
+        pin(at + n * apart);
         live(&core, &[(ID, LiveState::Running)]);
         core.requests().expire(now());
-        assert_eq!(state(&mut core), "running");
+        assert_eq!(state(&mut core), "running", "reading {n}");
     }
+    // The readings stop: the last one lapses on its own time.
+    let last = at + 3 * apart;
+    pin(last + crate::requests::LIVE_STATES_MS - 1);
+    core.requests().expire(now());
+    assert_eq!(state(&mut core), "running", "the last reading still holds");
+    pin(last + crate::requests::LIVE_STATES_MS);
+    core.requests().expire(now());
+    let lapsed = row(&mut core).map(|row| row["state"].clone());
+    assert_ne!(lapsed, Some(json!("running")), "the readings stopped");
+    crate::snapshot::PINNED_CLOCK.set(None);
 }
 
 #[test]
 fn a_turn_end_the_hooks_push_after_the_reading_wins_until_the_next_one() {
+    let at = pinned();
     let root = tempfile::tempdir().unwrap();
     let mut core = hermes(root.path(), 10 * MINUTE);
     hook(&mut core, "pre_tool_call", 3 * MINUTE);
@@ -297,10 +329,13 @@ fn a_turn_end_the_hooks_push_after_the_reading_wins_until_the_next_one() {
     assert_eq!(state(&mut core), "idle");
     // A reading taken after the hook stands again, whatever it says: here
     // Hermes's list is a moment behind and still says running.
+    pin(at + 1_000);
     live(&core, &[(ID, LiveState::Running)]);
     assert_eq!(state(&mut core), "running");
+    pin(at + 2_000);
     live(&core, &[(ID, LiveState::Idle)]);
     assert_eq!(state(&mut core), "idle");
+    crate::snapshot::PINNED_CLOCK.set(None);
 }
 
 /// Verifier, round 2: a newer reading of the very same sessions can take a

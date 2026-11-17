@@ -6,10 +6,15 @@ use super::{
 };
 use crate::ssh_link::unix::tests::lab::SHELL;
 use agent_hud_agents::hermes::gateway::{
-    far::{Asked, FarHome, Picture, Quiet, Unchecked},
+    far::{Asked, FarHome, Picture, Quiet, Unchecked, HOMES_SECONDS},
     Failure, Identified, Profile,
 };
-use std::{fs, os::unix::fs::symlink, path::Path};
+use std::{
+    fs,
+    os::unix::fs::symlink,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 fn home(profile: Option<&str>, path: &Path) -> FarHome {
     FarHome {
@@ -150,6 +155,30 @@ fn a_hermes_home_named_by_the_login_shell_is_found() {
     );
 }
 
+/// What `ask` gets from the far side once its listing of the homes ends
+/// in time. Listing 202 homes takes a moment on a quiet machine and more
+/// than the deadline the command carries (`HOMES_SECONDS`) on a loaded
+/// one: it then ends itself, or this side stops waiting, and the machine
+/// is unreached for now, which the app asks again later. So is it asked
+/// again here, at most four times, by a new `Far` (one that was cut off
+/// is busy for a while). An unreached answer that came sooner than that
+/// deadline is no load, and is the answer.
+fn listed<T>(mut ask: impl FnMut(&Far) -> Result<T, NoPicture>) -> Result<T, NoPicture> {
+    let deadline = Duration::from_secs(HOMES_SECONDS.into());
+    for tries in 1..=4 {
+        let began = Instant::now();
+        let said = ask(&Far::default());
+        let took = began.elapsed();
+        match said {
+            Err(NoPicture::Unreached(why)) if took >= deadline => {
+                println!("listing {tries} ran out of its deadline after {took:?}: {why:?}");
+            }
+            said => return said,
+        }
+    }
+    panic!("the far side never listed its homes in time");
+}
+
 /// The verifier's probe: 201 profiles, and a gateway only in the last.
 /// Discovery returns every home or refuses the machine, and never asks
 /// some of the homes as if they were all of them.
@@ -161,10 +190,9 @@ fn v_discovery_never_silently_drops_a_valid_home() {
     let paths: Vec<_> = (0..201).map(|n| lab.profile(&format!("p{n:03}"))).collect();
     let late = paths.last().unwrap();
     let gate = lab.gate(late, Manner::gateway("last", &[late]));
-    let far = Far::default();
-    match far.homes(&lab.link) {
+    match listed(|far| far.homes(&lab.link)) {
         Ok(found) => {
-            let picture = far.discover(&lab.link).expect("a discovery result");
+            let picture = listed(|far| far.discover(&lab.link)).expect("a discovery result");
             println!(
                 "Actual folders: root + 201 profiles. Returned homes: {}. Final valid profile \
                  included: {}. Discovery asked {} homes and found {} gateways. Final profile \
@@ -185,7 +213,7 @@ fn v_discovery_never_silently_drops_a_valid_home() {
         Err(reason) => {
             println!("Oversized discovery explicitly refused: {reason:?}");
             assert_eq!(format!("{reason:?}"), "NotCovered(TooManyProfiles)");
-            let whole = far.discover(&lab.link).unwrap_err();
+            let whole = listed(|far| far.discover(&lab.link)).unwrap_err();
             assert_eq!(format!("{whole:?}"), "NotCovered(TooManyProfiles)");
             assert_eq!(gate.connections(), 0, "no home of it was asked");
         }
@@ -193,7 +221,7 @@ fn v_discovery_never_silently_drops_a_valid_home() {
     assert!(root.exists());
     // With one profile fewer every home is named, the last one too.
     fs::remove_dir(&paths[0]).unwrap();
-    let found = far.homes(&lab.link).expect("the homes of 200 profiles");
+    let found = listed(|far| far.homes(&lab.link)).expect("the homes of 200 profiles");
     assert_eq!(found.homes.len(), 201);
     assert_eq!(
         found.homes.last().map(|home| home.path.as_str()),
