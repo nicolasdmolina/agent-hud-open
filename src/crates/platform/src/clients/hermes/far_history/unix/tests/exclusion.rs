@@ -370,8 +370,9 @@ fn a_hud_that_reads_until_it_is_killed() {
     let link_settings = LinkSettings {
         config: Some(PathBuf::from(config)),
         connect_timeout: Duration::from_secs(10),
-        alive_interval: Duration::from_secs(1),
-        alive_count: 2,
+        // The lab's own keepalive, which a loaded `sshd` meets.
+        alive_interval: crate::ssh_link::unix::tests::lab::ALIVE.0,
+        alive_count: crate::ssh_link::unix::tests::lab::ALIVE.1,
         ..LinkSettings::system()
     };
     let folder = Folder::open(&PathBuf::from(folder)).unwrap();

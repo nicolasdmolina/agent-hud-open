@@ -158,10 +158,13 @@ fn two_requests_at_once() {
         reader.read(&link, &slot, &world.home, &Request::Probe),
         Ok(Reply::Probed)
     );
-    // A slow far side: each reader takes a second to start.
-    world.stand_in(&format!("sleep 1\nexec {PYTHON} \"$@\""));
-    let request = sessions(&["s1"]);
+    // A slow far side: each reader takes a second to start, and goes on
+    // only once the watch has seen it (ticket 56: on a loaded machine a
+    // look could miss the second one whole).
     let watch = Watch::start(&world);
+    let seen_first = world.seen_first();
+    world.stand_in(&format!("sleep 1\n{seen_first}\nexec {PYTHON} \"$@\""));
+    let request = sessions(&["s1"]);
     let together = Barrier::new(2);
     let run = || {
         together.wait();

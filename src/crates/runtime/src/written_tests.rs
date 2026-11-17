@@ -5,6 +5,10 @@ use super::*;
 use agent_hud_core::SourceRoot;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// What the file watcher's (`notify`) threads are named by: it calls its
+/// handlers on one, `notify-rs fsevents loop` on macOS.
+const FILE_WATCHER: &str = "notify-rs";
+
 /// One reply of a Claude Code session, which counts 30 tokens.
 fn reply(session: &str) -> String {
     let timestamp = (chrono::Utc::now() - chrono::Duration::seconds(60)).to_rfc3339();
@@ -35,7 +39,17 @@ fn a_file_a_native_channel_says_it_wrote_is_read_at_the_turn_its_wake_asks_for()
     let woken = Arc::new(AtomicUsize::new(0));
     let counted = woken.clone();
     runtime.set_request_waker(Arc::new(move || {
-        counted.fetch_add(1, Ordering::AcqRel);
+        // The hook inbox's watcher wakes this collector too, from the file
+        // watcher's own thread, when the events of the inbox folder it
+        // just made reach it late (a loaded machine, ticket 56). That is
+        // not a request's wake, nor a written file's: not counted.
+        let thread = std::thread::current();
+        if !thread
+            .name()
+            .is_some_and(|name| name.starts_with(FILE_WATCHER))
+        {
+            counted.fetch_add(1, Ordering::AcqRel);
+        }
     }));
     let total = |snapshot: Value| snapshot["totals"]["total"].clone();
     let turn =

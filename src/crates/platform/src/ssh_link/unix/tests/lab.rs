@@ -32,13 +32,26 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// A lab link's keepalive: how often, and how many may go unanswered.
+/// 15 s in all, which a loaded `sshd` meets (ticket 56).
+pub(crate) const ALIVE: (Duration, u32) = (Duration::from_secs(5), 3);
 /// The folder, in the lab, the login shell reads its startup file from.
 pub(crate) const SHELL: &str = "shell";
 /// What the lab's startup file sets, naming the shell that read it.
 pub(crate) const MARKER: &str = "AGENT_HUD_LAB_STARTUP";
 
+/// A lab folder, which the watchdog made and holds (`reaper.rs`), removed
+/// with the lab.
+struct Made(PathBuf);
+
+impl Drop for Made {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 pub(crate) struct Lab {
-    dir: tempfile::TempDir,
+    dir: Made,
     pub(crate) port: u16,
     sshd: Child,
 }
@@ -169,14 +182,11 @@ impl Lab {
     }
 
     fn try_start(env: &[(&str, &str)]) -> Result<Self, String> {
-        let dir = tempfile::Builder::new()
-            .prefix(super::reaper::PREFIX)
-            .tempdir_in(short_base())
-            .map_err(|error| error.to_string())?;
-        // Whatever of the lab this program does not live to end, its
+        // Made and held by this program's watchdog before it is used:
+        // whatever of the lab this program does not live to end, its
         // watchdog ends (`reaper.rs`).
-        super::reaper::watch(dir.path());
-        let at = |name: &str| dir.path().join(name);
+        let dir = Made(super::reaper::made(&short_base()));
+        let at = |name: &str| dir.0.join(name);
         let text = |name: &str| at(name).display().to_string();
         for key in ["hostkey", "id", "agentkey", "strangerkey", "otherhost"] {
             if !quiet(
@@ -190,7 +200,7 @@ impl Lab {
             |name: &str| fs::read_to_string(at(&format!("{name}.pub"))).unwrap_or_default();
         fs::write(at("authorized_keys"), public("id") + &public("agentkey"))
             .map_err(|error| error.to_string())?;
-        let here = dir.path().display().to_string();
+        let here = dir.0.display().to_string();
         let more: String = env
             .iter()
             .map(|(name, value)| format!(" {name}={}", value.replace("{lab}", &here)))
@@ -259,7 +269,7 @@ impl Lab {
     }
 
     pub(crate) fn at(&self, name: &str) -> PathBuf {
-        self.dir.path().join(name)
+        self.dir.0.join(name)
     }
 
     /// A `known_hosts` line for the lab's `sshd` with the named key.
@@ -289,13 +299,27 @@ impl Lab {
         )
     }
 
+    /// The lab's settings. Its keepalive is loose (`ALIVE`): a lab `sshd`
+    /// on a loaded machine can miss a keepalive or two (ticket 56, a
+    /// round where 11 links were lost at 1 s x 2), and only the tests of
+    /// the keepalive itself want it tight (`keepalive_settings`).
     pub(crate) fn settings(&self) -> Settings {
         Settings {
             config: Some(self.at("config")),
             connect_timeout: Duration::from_secs(10),
+            alive_interval: ALIVE.0,
+            alive_count: ALIVE.1,
+            ..Settings::system()
+        }
+    }
+
+    /// Settings with a keepalive a second apart, two missed ending the
+    /// link: for the tests that time the keepalive itself.
+    pub(crate) fn keepalive_settings(&self) -> Settings {
+        Settings {
             alive_interval: Duration::from_secs(1),
             alive_count: 2,
-            ..Settings::system()
+            ..self.settings()
         }
     }
 

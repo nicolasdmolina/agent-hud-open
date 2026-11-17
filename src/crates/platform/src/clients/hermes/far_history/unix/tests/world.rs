@@ -137,6 +137,24 @@ impl World {
         far::mark(&self.machine(), &self.home)
     }
 
+    /// Where a watch notes each reader it saw, by its process id: a file
+    /// of that name. A stand-in waits there for its own (`seen_first`).
+    pub(super) fn seen(&self) -> std::path::PathBuf {
+        let seen = self.lab.at("seen");
+        fs::create_dir_all(&seen).expect("the folder of readers seen");
+        seen
+    }
+
+    /// Shell lines that hold a far reader until a watch has seen it, at
+    /// most 8 s: a look at a loaded far side can take longer than a short
+    /// reader lives, and a reader no look saw cannot be counted.
+    pub(super) fn seen_first(&self) -> String {
+        format!(
+            "i=0\nwhile [ ! -e '{}'/$$ ] && [ $i -lt 80 ]; do sleep 0.1; i=$((i+1)); done",
+            self.seen().display()
+        )
+    }
+
     /// Puts a stand-in for `python3` first on the far path.
     pub(super) fn stand_in(&self, script: &str) {
         let path = self.lab.at(BIN).join("python3");
@@ -401,10 +419,15 @@ impl Watch {
         let stop = Arc::new(AtomicBool::new(false));
         let (mark, database) = (world.mark(), world.database().display().to_string());
         let stopped = Arc::clone(&stop);
+        let seen = world.seen();
         let looks = thread::spawn(move || {
             let mut samples = Vec::new();
             while !stopped.load(Ordering::SeqCst) {
                 let readers = readers(&mark);
+                // Each reader it saw, for a stand-in that waits to be seen.
+                for pid in &readers {
+                    let _ = fs::write(seen.join(pid.to_string()), "");
+                }
                 let open = open(&readers, &database);
                 samples.push(Sample {
                     at: Instant::now(),

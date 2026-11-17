@@ -185,7 +185,10 @@ fn a_gateway_that_turns_up_as_another_install_is_never_told_and_uncovers_the_mac
         waiting.values().all(|sessions| sessions.is_empty()),
         "{waiting:?}"
     );
-    let log = far.log();
-    assert!(log.contains("not covered why=install_id_changed"), "{log}");
+    // The standing is set before its line is written (`machine.rs`
+    // `stand`): a loaded machine can show the one before the other.
+    until("the log says why", || {
+        far.log().contains("not covered why=install_id_changed")
+    });
     not_covered(&far, "install_ids_disagree");
 }

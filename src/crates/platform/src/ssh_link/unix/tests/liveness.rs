@@ -13,7 +13,7 @@ use std::{
 fn a_killed_master_is_lost_within_the_keepalive_bound_and_a_new_link_works() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
-    let settings = lab.settings();
+    let settings = lab.keepalive_settings();
     let link = Link::open(&folder, &lab.target(), &settings).unwrap();
     assert_eq!(link.alive(), Ok(()));
     let pid = link.master_pid().unwrap();
@@ -43,7 +43,7 @@ fn a_killed_master_is_lost_within_the_keepalive_bound_and_a_new_link_works() {
 fn a_silent_far_side_is_lost_as_timed_out_within_the_keepalive_bound() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
-    let settings = lab.settings();
+    let settings = lab.keepalive_settings();
     let link = Link::open(&folder, &lab.target(), &settings).unwrap();
     lab.freeze();
     let silent = Instant::now();
@@ -70,7 +70,7 @@ fn a_silent_far_side_is_lost_as_timed_out_within_the_keepalive_bound() {
 fn a_long_log_is_emptied_and_the_masters_last_words_are_still_read() {
     let Some(lab) = Lab::start() else { return };
     let folder = lab.folder();
-    let settings = lab.settings();
+    let settings = lab.keepalive_settings();
     let link = Link::open(&folder, &lab.target(), &settings).unwrap();
     let log = entries(folder.path())
         .into_iter()

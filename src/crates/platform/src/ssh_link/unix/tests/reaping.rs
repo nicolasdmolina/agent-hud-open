@@ -136,6 +136,11 @@ fn running() -> Running {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    // As a lab test run by itself, without the lab runner: the program
+    // leads no process group (ticket 56).
+    // SAFETY: a plain query of the program this test started.
+    let group = unsafe { libc::getpgid(program.id() as libc::pid_t) };
+    assert_ne!(group, program.id() as libc::pid_t, "a group of its own");
     assert!(until(Duration::from_secs(120), || said.exists()));
     let dir = fs::read_to_string(&said).unwrap();
     let dir = dir.trim_end_matches('/').to_owned();
@@ -527,4 +532,102 @@ fn a_nested_lab_program_s_folder_is_removed_too() {
         runs(inner)
     );
     assert!(clean);
+}
+
+/// Not a test of its own: a lab program that starts a lab while its
+/// watchdog has stopped itself before it says `ready`. Run without its
+/// variable it does nothing.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_lab_program_whose_watchdog_is_late() {
+    if std::env::var_os(AS_A_LAB).is_none() {
+        return;
+    }
+    let _lab = Lab::start();
+    loop {
+        thread::sleep(Duration::from_secs(1));
+    }
+}
+
+/// The fourth verifier's startup gap: the lab program dies while its
+/// watchdog has not yet said `ready`. No lab folder is left: none was made
+/// before the watchdog held it (ticket 56).
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_lab_program_killed_before_its_watchdog_is_ready_leaves_no_folder() {
+    let base = tempfile::Builder::new()
+        .prefix("ah56-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let mut program = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "ssh_link::unix::tests::reaping::a_lab_program_whose_watchdog_is_late",
+            "--exact",
+            "--ignored",
+        ])
+        .env(AS_A_LAB, base.path().join("unused"))
+        .env(super::reaper::AS_A_LATE_WATCHDOG, "1")
+        .env("TMPDIR", base.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // Its watchdog: the program's child, stopped before its `ready`.
+    let stopped = |pid: u32| {
+        let state = Command::new("/bin/ps")
+            .args(["-o", "state=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&state.stdout).contains('T')
+    };
+    let mut watchdog = None;
+    let found = until(Duration::from_secs(60), || {
+        watchdog = super::watchdog::processes()
+            .into_iter()
+            .find(|(pid, parent, _)| *parent == program.id() && stopped(*pid));
+        watchdog.is_some()
+    });
+    assert!(found, "no stopped watchdog below the lab program");
+    let (watchdog, _, born) = watchdog.unwrap();
+    let before = fs::read_dir(base.path()).unwrap().count();
+    // SAFETY: a signal to the program this test started.
+    unsafe { libc::kill(program.id() as libc::pid_t, libc::SIGKILL) };
+    let _ = program.wait();
+    if process(watchdog).is_some_and(|now| now.2 == born) {
+        // SAFETY: the stopped child of that program, checked by its birth.
+        unsafe { libc::kill(watchdog as libc::pid_t, libc::SIGCONT) };
+    }
+    let ended = until(Duration::from_secs(5), || process(watchdog).is_none());
+    let left: Vec<String> = fs::read_dir(base.path())
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    println!("  folders while the watchdog waited: {before}; left: {left:?}");
+    assert!(ended, "the watchdog did not end");
+    assert!(left.is_empty(), "a lab folder was left: {left:?}");
+}
+
+/// A folder asked for just before the program's pipe closes is made, said,
+/// and removed all the same: the watchdog holds it from the start.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_folder_asked_for_as_its_program_goes_is_removed() {
+    let base = tempfile::tempdir().unwrap();
+    let mut owner = Command::new("/bin/sleep").arg("1").spawn().unwrap();
+    let (pid, _, born) = process(owner.id()).unwrap();
+    let mut watchdog = super::reaper::begin((pid, born));
+    let ready = watchdog.said.recv_timeout(Duration::from_secs(60));
+    assert_eq!(ready.as_deref(), Ok("ready"));
+    let line = format!("make {}\n", base.path().display());
+    std::io::Write::write_all(&mut watchdog.pipe, line.as_bytes()).unwrap();
+    let said = watchdog.said.recv_timeout(Duration::from_secs(60)).unwrap();
+    let made = PathBuf::from(said.strip_prefix("made ").expect("made"));
+    assert!(made.is_dir() && made.starts_with(base.path()), "{said}");
+    fs::write(made.join("file"), "the lab's").unwrap();
+    drop(watchdog);
+    owner.wait().unwrap();
+    let removed = until(Duration::from_secs(5), || !made.exists());
+    assert!(removed, "a folder the watchdog made was left: {made:?}");
 }
