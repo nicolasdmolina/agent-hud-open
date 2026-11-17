@@ -6,10 +6,15 @@ use super::{
 };
 use crate::ssh_link::unix::tests::lab::SHELL;
 use agent_hud_agents::hermes::gateway::{
-    far::{Asked, FarHome, Picture, Quiet, Unchecked},
+    far::{Asked, FarHome, Picture, Quiet, Unchecked, HOMES_SECONDS},
     Failure, Identified, Profile,
 };
-use std::{fs, os::unix::fs::symlink, path::Path};
+use std::{
+    fs,
+    os::unix::fs::symlink,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 fn home(profile: Option<&str>, path: &Path) -> FarHome {
     FarHome {
@@ -150,6 +155,49 @@ fn a_hermes_home_named_by_the_login_shell_is_found() {
     );
 }
 
+/// What `ask` gets from `far` once the far side's listing of the homes
+/// ends in time. Listing 202 homes takes a moment on a quiet machine and
+/// can take longer than the deadline the listing carries
+/// (`HOMES_SECONDS`) on a loaded one. Only that is asked again, at most
+/// four times, by the same `far`, as the app's route keeps its own:
+/// - the far side ended itself at its deadline: `Relay(Failed)`, a
+///   non-zero end the script only has once its 15 s watchdog killed it,
+///   no sooner than that deadline;
+/// - this side stopped waiting first: `CutOff`, no sooner than it either.
+///   The route is then busy until what it cut off is gone, `HOMES_SECONDS`
+///   and its 2 s margin from then, and a `Busy` answer is waited out
+///   until that time and no later.
+///
+/// Any other answer is the answer: a garbled one, a busy route nothing
+/// cut off, an unreached one sooner than the deadline.
+fn listed<T>(far: &Far, mut ask: impl FnMut(&Far) -> Result<T, NoPicture>) -> Result<T, NoPicture> {
+    let deadline = Duration::from_secs(HOMES_SECONDS.into());
+    let mut busy_until = None;
+    let mut ran_out = 0;
+    loop {
+        let began = Instant::now();
+        let said = ask(far);
+        let took = began.elapsed();
+        match &said {
+            Err(NoPicture::Unreached(Silent::Busy))
+                if busy_until.is_some_and(|until| Instant::now() < until) =>
+            {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(NoPicture::Unreached(why @ (Silent::Relay(Quiet::Failed) | Silent::CutOff)))
+                if took >= deadline && ran_out < 4 =>
+            {
+                ran_out += 1;
+                println!("listing ran out of its deadline after {took:?}: {why:?}");
+                if *why == Silent::CutOff {
+                    busy_until = Some(Instant::now() + deadline + Duration::from_secs(3));
+                }
+            }
+            _ => return said,
+        }
+    }
+}
+
 /// The verifier's probe: 201 profiles, and a gateway only in the last.
 /// Discovery returns every home or refuses the machine, and never asks
 /// some of the homes as if they were all of them.
@@ -161,10 +209,11 @@ fn v_discovery_never_silently_drops_a_valid_home() {
     let paths: Vec<_> = (0..201).map(|n| lab.profile(&format!("p{n:03}"))).collect();
     let late = paths.last().unwrap();
     let gate = lab.gate(late, Manner::gateway("last", &[late]));
+    // One `Far` for every listing, as the app's route keeps one.
     let far = Far::default();
-    match far.homes(&lab.link) {
+    match listed(&far, |far| far.homes(&lab.link)) {
         Ok(found) => {
-            let picture = far.discover(&lab.link).expect("a discovery result");
+            let picture = listed(&far, |far| far.discover(&lab.link)).expect("a discovery result");
             println!(
                 "Actual folders: root + 201 profiles. Returned homes: {}. Final valid profile \
                  included: {}. Discovery asked {} homes and found {} gateways. Final profile \
@@ -185,7 +234,7 @@ fn v_discovery_never_silently_drops_a_valid_home() {
         Err(reason) => {
             println!("Oversized discovery explicitly refused: {reason:?}");
             assert_eq!(format!("{reason:?}"), "NotCovered(TooManyProfiles)");
-            let whole = far.discover(&lab.link).unwrap_err();
+            let whole = listed(&far, |far| far.discover(&lab.link)).unwrap_err();
             assert_eq!(format!("{whole:?}"), "NotCovered(TooManyProfiles)");
             assert_eq!(gate.connections(), 0, "no home of it was asked");
         }
@@ -193,7 +242,7 @@ fn v_discovery_never_silently_drops_a_valid_home() {
     assert!(root.exists());
     // With one profile fewer every home is named, the last one too.
     fs::remove_dir(&paths[0]).unwrap();
-    let found = far.homes(&lab.link).expect("the homes of 200 profiles");
+    let found = listed(&far, |far| far.homes(&lab.link)).expect("the homes of 200 profiles");
     assert_eq!(found.homes.len(), 201);
     assert_eq!(
         found.homes.last().map(|home| home.path.as_str()),

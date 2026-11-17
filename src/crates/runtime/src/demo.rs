@@ -288,7 +288,9 @@ mod tests {
         let view = json!({"title": "Pick", "source": "far-client", "toolName": "ask", "input": "",
             "sessionId": "far-client:s1", "allowsAlways": false, "kind": "question", "machine": "Studio"});
         let script = DemoScript::from_json(&json!({
-            "settings": {"language": "zh-CN", "approvalWaitMinutes": 1},
+            // The longest hold there is: the card stays for as long as a
+            // loaded machine takes to run the test.
+            "settings": {"language": "zh-CN", "approvalWaitMinutes": 60},
             "steps": [
                 {"at": 1, "do": "request", "request": "q1", "view": view},
                 {"at": 2, "do": "mark", "request": "q1", "reason": "Out of reach"},
@@ -303,10 +305,13 @@ mod tests {
         let card = |runtime: &mut Runtime| {
             let snapshot = runtime.core.request("snapshot", Value::Null).unwrap();
             assert_eq!(snapshot["settings"]["language"], "zh-CN");
-            assert_eq!(snapshot["settings"]["approvalWaitMinutes"], 1);
+            assert_eq!(snapshot["settings"]["approvalWaitMinutes"], 60);
             snapshot["approvals"][0].clone()
         };
         runtime.demo_play(start + 1_000).unwrap();
+        // The script's wait is the card's hold, from when it was asked.
+        let hold = runtime.core.requests().deadline("q1");
+        assert_eq!(hold, Some(start + 1_000 + 60 * 60_000));
         let asked = card(&mut runtime);
         assert_eq!(asked["machine"], "Studio");
         assert!(asked.get("unreachable").is_none());

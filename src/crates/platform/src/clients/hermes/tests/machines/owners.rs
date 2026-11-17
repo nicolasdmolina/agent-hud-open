@@ -48,6 +48,68 @@ fn readers(fleet: &Fleet, names: &[String]) -> Vec<bool> {
         .collect()
 }
 
+/// When the log's `n`th line (from 1) that holds `said` was written.
+fn written(log: &str, said: &str, n: usize) -> Option<i64> {
+    let line = log.lines().filter(|line| line.contains(said)).nth(n - 1)?;
+    let stamp = line.split(' ').next()?;
+    let at = chrono::DateTime::parse_from_rfc3339(stamp).ok()?;
+    Some(at.timestamp_millis())
+}
+
+/// Answers `card` with `choice` until Hermes hears it, and says how many
+/// sends that took. On a loaded machine a send can run out of one of its
+/// waits on the way: the forward, the ticket asked on the far side (the
+/// pace's answer wait), the stream through the forward (3 s). Nothing of
+/// it is written then; the app gives the card back, marked, and once it
+/// is in reach again it is answered once more, as a person would. Only
+/// such a send is forgiven: one that went to the route of the entry
+/// `entry` (its `prepare` was asked while the send was out) and gave up
+/// no sooner than 3 s after the answer. A send that never reached the
+/// route, one that gave up sooner, and three sends that fail, fail the
+/// test.
+fn answered(fleet: &Fleet, gateway: &Fake, entry: &str, card: &Value, choice: &str) -> usize {
+    let prepared = || {
+        let route = fleet.book().route_of(entry).expect("the entry's route");
+        route.route.steps("prepare")
+    };
+    let id = card["id"].as_str().unwrap().to_owned();
+    let first = kept(fleet, card);
+    let undelivered = format!("undelivered id={id}");
+    for sends in 1..=3 {
+        let before = fleet.log().matches(&undelivered).count();
+        let asked = prepared();
+        let sent = crate::hooks::now_ms();
+        (fleet.requests)
+            .answer(&id, &pick(card, choice), sent)
+            .unwrap();
+        let mut failed = None;
+        until("Hermes hears the answer, or the card comes back", || {
+            failed = written(&fleet.log(), &undelivered, before + 1);
+            failed.is_some() || !gateway.world().calls("clarify.respond").is_empty()
+        });
+        let Some(failed) = failed else {
+            return sends;
+        };
+        let log = fleet.log();
+        let took = failed - sent;
+        assert!(took >= 3_000, "send {sends} failed after {took} ms: {log}");
+        let tried = prepared() - asked;
+        assert!(
+            tried > 0,
+            "send {sends} never reached the route of {entry}: {log}"
+        );
+        assert!(gateway.world().calls("clarify.respond").is_empty(), "{log}");
+        println!("send {sends} ran out of a wait after {took} ms; answered again");
+        let back = fleet.reached();
+        assert_eq!(
+            kept(fleet, &back),
+            first,
+            "the same card, its time and hold"
+        );
+    }
+    panic!("three sends failed: {}", fleet.log());
+}
+
 #[test]
 #[ignore = "starts processes: run by the_lab_tests_pass"]
 fn an_alias_follows_nothing() {
@@ -205,12 +267,11 @@ fn owner_removed_with_a_dismissed_card() {
     assert_eq!(readers(&fleet, &reader), [true], "the reader never ended");
     until("one master is left", || fleet.masters().len() == 1);
     // The card is answered over the new owner's route.
-    (fleet.requests)
-        .answer(&id, &pick(&after, "one"), crate::hooks::now_ms())
-        .unwrap();
-    until("Hermes hears the answer", || {
-        !gateway.world().calls("clarify.respond").is_empty()
-    });
+    answered(&fleet, &gateway, "b", &after, "one");
+    // The dismissed one was never answered, nor registered again.
+    assert_eq!(gateway.world().calls("clarify.respond").len(), 1);
+    assert_eq!(fleet.calls(&gone), (1, 0));
+    assert_eq!(fleet.calls(&id), (1, 0));
     until("the card goes", || fleet.cards().is_empty());
     assert_eq!(fleet.sounds().0, 1);
     println!(
