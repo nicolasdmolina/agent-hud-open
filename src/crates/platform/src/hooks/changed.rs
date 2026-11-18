@@ -2,9 +2,10 @@
 //! keeps what it learns in a file core reads as a log (a far machine's
 //! mirror, `clients/hermes/mirror.rs`) says so after each write
 //! (`Changed`): the paths wait here, and the channel's wake asks for a
-//! pass. That pass hands them to core through the entry the file watcher
-//! uses (`AgentHudCore::file_changes`) and reads them at once
-//! (`agent_hud_runtime`, `request`).
+//! pass. That pass hands them to core (`AgentHudCore::written_files`),
+//! which takes them for changed as it takes the file watcher's, and
+//! reads them at once (`agent_hud_runtime`, `request`), also one whose
+//! last read failed and that would be left be for 30 s otherwise.
 //!
 //! The file watcher reports the same writes when it can, and that only
 //! makes the read sooner. Nothing may rest on it: its events arrive late

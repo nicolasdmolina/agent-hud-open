@@ -57,6 +57,19 @@ impl AgentHudCore {
         self.reads.listing.note_changes(paths);
     }
 
+    /// Files a native channel says it wrote itself (a far machine's
+    /// mirror): changed, as `file_changes` has it, and read at the next
+    /// pass even where the last read of one failed and its pause still
+    /// runs. The pause is for a log that cannot be read as it is; the one
+    /// that writes it saying it wrote it anew is the reason to look again,
+    /// which a file event, sent for half a write too, is not.
+    pub fn written_files(&mut self, paths: HashSet<PathBuf>) {
+        for path in &paths {
+            self.reads.failed.written(&log_files::native_path(path));
+        }
+        self.file_changes(Some(paths));
+    }
+
     /// The cheap half of collection, between passes: a stat-only look at the
     /// logs clients hold open, whose writes can reach the watcher late, and at
     /// Claude Desktop's session files. Reads no log; true when a pass is due.

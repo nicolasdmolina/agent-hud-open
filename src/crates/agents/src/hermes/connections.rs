@@ -182,11 +182,15 @@ impl RawEntry {
             Kind::This => "local".to_owned(),
             _ => trimmed(self.id),
         };
-        Entry {
-            id,
-            label: trimmed(self.label),
-            kind,
-        }
+        let label = match (trimmed(self.label), &kind) {
+            // The list's reader is the one place that names a machine. An
+            // `ssh` entry saved with no label goes by its host, as a
+            // terminal would call it: its sessions' rows, its cards and its
+            // mirror all need a name (ticket 54).
+            (label, Kind::Ssh(address)) if label.is_empty() => address.host.clone(),
+            (label, _) => label,
+        };
+        Entry { id, label, kind }
     }
 }
 

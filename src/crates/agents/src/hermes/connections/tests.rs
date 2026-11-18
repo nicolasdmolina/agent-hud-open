@@ -374,3 +374,38 @@ fn the_list_is_declared_for_each_system() {
     assert!(matches!(CONNECTIONS.linux, Support::Unverified(_)));
     assert!(matches!(CONNECTIONS.windows, Support::Unsupported(_)));
 }
+
+/// Ticket 54: an `ssh` entry saved with no label goes by its host, so
+/// its machine has a name for its rows, its cards and its mirror. Other
+/// kinds are not followed, and keep what the list says.
+#[test]
+fn an_ssh_entry_with_no_label_goes_by_its_host() {
+    let text = r#"{"version":2,"connections":[
+        {"id":"a","kind":"ssh","host":"lab-box"},
+        {"id":"b","kind":"ssh","label":"  ","host":"deploy@10.0.0.7","port":2222},
+        {"id":"c","kind":"ssh","label":null,"host":" lab-box "},
+        {"id":"d","kind":"ssh","label":"Named","host":"lab-box"},
+        {"id":"e","kind":"ssh","host":"-oProxyCommand=x"},
+        {"id":"f","kind":"remote"},
+        {"id":"g","kind":"local"}]}"#;
+    let entries = parse(text).unwrap();
+    let labels: Vec<(&str, &str)> = entries
+        .iter()
+        .map(|entry| (entry.id.as_str(), entry.label.as_str()))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            ("a", "lab-box"),
+            ("b", "10.0.0.7"),
+            ("c", "lab-box"),
+            ("d", "Named"),
+            // Not followed: an unusable address, and a kind not covered.
+            ("e", ""),
+            ("f", ""),
+            ("local", ""),
+        ]
+    );
+    // The host of the address, never the text as it was typed.
+    assert!(matches!(&entries[1].kind, Kind::Ssh(address) if address.host == "10.0.0.7"));
+}

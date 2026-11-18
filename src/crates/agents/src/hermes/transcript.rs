@@ -1,250 +1,135 @@
 //! Hermes SQLite session reader (`state.db`).
-use super::gateway::{hud_session_id, stored_session_id, Machine, Profile};
+//!
+//! A page reads the newest sessions first, then goes on with the pass
+//! over the old ones (ticket 54):
+//!
+//! - **New sessions**, those above the highest rowid read so far, newest
+//!   first, a hundred a page at most. Where there were more than a page
+//!   reads, the rest are a gap that later pages read, again from its
+//!   newest end, once nothing newer waits. Each is read once.
+//! - **The pass over the old ones**, the sessions the last pass ended
+//!   with, from the lowest rowid up. It reads those whose counts grew or
+//!   that were active since, as it always has: Hermes adds to a session
+//!   in place (`session_counts`). A page looks at a hundred of them. In
+//!   a mirror it looks at ten thousand, and reads a hundred at most as
+//!   everywhere: a mirror's rows are short, since its writer cuts every
+//!   word it stores, and every write to one begins this pass anew, which
+//!   then ends in the page that began it and not a hundred rows a pass
+//!   later, each pass at what a pass costs.
+//!
+//! So a session that begins is read on the first page after it, however
+//! many the database holds and wherever a pass has got to. Read at the
+//! end of the pass, as it was, it waited one page for every hundred
+//! sessions before it. A session's rowid tells the new from the old:
+//! SQLite gives a new row a rowid above every one there is. A row put in
+//! the place of the newest one, deleted just before, can get a rowid the
+//! last pass ended with, and is then found by the pass like any old one.
 use super::mirror;
-use super::session_counts::{self, SessionCounts};
-use crate::transcript::{sql_column, sql_columns, sql_count, sql_model, sql_text, sql_time};
-use crate::{
-    transcript::records::{Page, Record, Running},
-    Usage,
-};
+use super::session_counts::SessionCounts;
+use crate::transcript::records::Page;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::path::Path;
+
+mod rows;
+mod usage;
+use rows::Sessions;
+
+/// How many new sessions one page reads; and how many old ones it looks
+/// at, and reads at most.
+const PAGE: i64 = 100;
+/// How many old sessions of a mirror one page looks at.
+const MIRROR_PAGE: i64 = 10_000;
 
 pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Page> {
     // Checked on every page, before anything is read: a mirror that cannot
     // be trusted gives nothing.
     let mirror = mirror::identity(db)?;
-    let s = sql_columns(db, "sessions")?;
-    if !s.contains("id") || !s.contains("started_at") {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    let u = sql_columns(db, "session_model_usage")?;
-    let fields = [
-        "title",
-        "cwd",
-        "source",
-        "model",
-        "billing_provider",
-        "billing_base_url",
-        "billing_mode",
-        "input_tokens",
-        "output_tokens",
-        "cache_read_tokens",
-        "cache_write_tokens",
-        "ended_at",
-        "last_activity_at",
-        "profile_name",
-    ]
-    .map(|key| sql_column(&s, "s", key, "NULL"));
-    // A running session's activity: Hermes stamps each usage row's
-    // `last_seen` as it adds to it (HermesSessions.swift:45-46).
-    let last_seen = if u.contains("session_id") && u.contains("last_seen") {
-        "(SELECT MAX(last_seen) FROM session_model_usage WHERE session_id=s.id)"
-    } else {
-        "NULL"
-    };
-    let print = session_counts::sql(&s, &u);
-    let scan = cursor["scan"]
-        .as_i64()
-        .or_else(|| cursor.as_i64())
-        .unwrap_or(0);
-    let rowid_after = cursor["rowid_after"].as_i64().unwrap_or(0);
-    let ts_after = cursor["ts_after"].as_i64().unwrap_or(0);
-    let mut max_rowid = cursor["max_rowid"].as_i64().unwrap_or(rowid_after);
-    let mut max_ts = cursor["max_ts"].as_i64().unwrap_or(ts_after);
+    let sessions = Sessions::of(db, path, mirror)?;
+    let whole = |key: &str| cursor[key].as_i64();
+    let scan = whole("scan").or_else(|| cursor.as_i64()).unwrap_or(0);
+    let rowid_after = whole("rowid_after").unwrap_or(0);
+    let ts_after = whole("ts_after").unwrap_or(0);
+    // The first page of a pass goes on from the last pass's watermark.
+    let first = scan == 0 && cursor["max_rowid"].is_null();
+    // The highest rowid read so far: what is above it is new.
+    let mut top = whole("max_rowid").unwrap_or(rowid_after);
+    let mut max_ts = whole("max_ts").unwrap_or(ts_after);
+    let mut gaps = gaps(&cursor["gaps"]);
     let mut prints = SessionCounts::from_cursor(cursor);
-    let mut statement = db.prepare(&format!(
-        "SELECT s.rowid,s.id,s.started_at,{},{last_seen},{print} FROM sessions s WHERE s.rowid>?1 ORDER BY s.rowid LIMIT 100",
-        fields.join(",")
-    ))?;
-    let mut rows = statement.query([scan])?;
     let mut records = Vec::new();
-    let mut last = scan;
-    let mut seen = 0;
-    // A `state.db` under a Hermes home is this machine's, and its folder
-    // says whose: a named profile's in `profiles/<name>`, else the default
-    // profile's of whatever root holds it. A mirror's own table says whose
-    // it is, whatever folder holds it.
-    let of = match &mirror {
-        Some(mirror) => mirror.profile.clone(),
-        None => Profile::of_home(path.parent().unwrap_or(Path::new(""))),
-    };
-    let label = mirror.as_ref().map(|mirror| mirror.label.clone());
-    let profile = match &of {
-        Profile::Named(name) => Some(name.as_str().to_owned()),
-        Profile::Default => None,
-    };
-    while let Some(row) = rows.next()? {
-        seen += 1;
-        last = row.get(0)?;
-        max_rowid = max_rowid.max(last);
-        let Some(raw) = sql_text(row, 1) else {
-            continue;
-        };
-        // A row whose id can be no session's is left out, like one without.
-        let id = match &mirror {
-            Some(mirror) => stored_session_id(&mirror.key, &of, &raw),
-            None => hud_session_id(&Machine::This, &of, &raw),
-        };
-        let Some(id) = id else {
-            continue;
-        };
-        let Some(started) = sql_time(row, 2, true) else {
-            continue;
-        };
-        let updated = sql_time(row, 14, true)
-            .into_iter()
-            .chain(sql_time(row, 15, true))
-            .chain(sql_time(row, 17, true))
-            .chain(Some(started))
-            .max()
-            .unwrap_or(started);
+
+    // A new session is read whatever its counts, which are noted.
+    let mut new = |rowid: i64, updated: i64, print: &str| {
         max_ts = max_ts.max(updated);
-        let counts = sql_text(row, 18).unwrap_or_default();
-        // A mirror's label is part of each session's print, so a machine
-        // shown under a new label reads every session again.
-        let grew = prints.changed(
-            last,
-            &label
-                .as_ref()
-                .map_or(counts.clone(), |label| format!("{label}\n{counts}")),
-        );
-        if last <= rowid_after && updated <= ts_after && !grew {
-            continue;
-        }
-        let title = sql_text(row, 3);
-        let cwd = sql_text(row, 4);
-        let title_fallback = sql_text(row, 5).map(|source| format!("Hermes · {source}"));
-        // The profile the session names, else its database's (Open's
-        // HermesSessions); the default profile names none.
-        let client = sql_text(row, 16)
-            .filter(|name| !name.is_empty() && name != "default")
-            .or_else(|| profile.clone());
-        let mut any = false;
-        if u.contains("session_id") && u.contains("model") {
-            let fields = [
-                "model",
-                "billing_provider",
-                "billing_base_url",
-                "billing_mode",
-                "task",
-                "input_tokens",
-                "output_tokens",
-                "cache_read_tokens",
-                "cache_write_tokens",
-                "first_seen",
-                "last_seen",
-            ]
-            .map(|key| sql_column(&u, "u", key, "NULL"));
-            let mut statement = db.prepare(&format!(
-                "SELECT {} FROM session_model_usage u WHERE u.session_id=?1 LIMIT 501",
-                fields.join(",")
-            ))?;
-            let mut usage = statement.query([&raw])?;
-            let mut limit = 0;
-            while let Some(row) = usage.next()? {
-                limit += 1;
-                if limit > 500 {
-                    return Err(rusqlite::Error::InvalidQuery);
-                }
-                any = true;
-                let parts = (0..5)
-                    .map(|i| sql_text(row, i).unwrap_or_default())
-                    .collect::<Vec<_>>();
-                let key = format!("usage:{id}:{}", serde_json::to_string(&parts).unwrap());
-                records.push(Record {
-                    id: id.clone(),
-                    title: title.clone(),
-                    title_fallback: title_fallback.clone(),
-                    client: client.clone(),
-                    machine: label.clone(),
-                    cwd: cwd.clone(),
-                    model: routed(
-                        sql_model(sql_text(row, 0)),
-                        sql_text(row, 1),
-                        sql_text(row, 2),
-                    ),
-                    key,
-                    at: sql_time(row, 9, true).unwrap_or(started),
-                    usage: Usage {
-                        input: sql_count(row, 5)?,
-                        output: sql_count(row, 6)?,
-                        read: sql_count(row, 7)?,
-                        write: sql_count(row, 8)?,
-                        reasoning: 0,
-                    },
-                    parent: None,
-                    archived: Some(false),
-                    updated: None,
-                    duration_ms: None,
-                    // Hermes adds to the row in place and stamps it.
-                    running: Some(Running {
-                        last_seen: sql_time(row, 10, true),
-                    }),
-                });
-            }
-        }
-        if !any {
-            let parts = (6..10)
-                .map(|i| {
-                    sql_text(row, i).unwrap_or_else(|| {
-                        if i == 6 {
-                            "unknown".into()
-                        } else {
-                            String::new()
-                        }
-                    })
-                })
-                .chain(Some(String::new()))
-                .collect::<Vec<_>>();
-            records.push(Record {
-                id: id.clone(),
-                title,
-                title_fallback,
-                client,
-                machine: label.clone(),
-                cwd,
-                model: routed(
-                    sql_model(sql_text(row, 6)),
-                    sql_text(row, 7),
-                    sql_text(row, 8),
-                ),
-                key: format!("usage:{}:{}", id, serde_json::to_string(&parts).unwrap()),
-                at: started,
-                usage: Usage {
-                    input: sql_count(row, 10)?,
-                    output: sql_count(row, 11)?,
-                    read: sql_count(row, 12)?,
-                    write: sql_count(row, 13)?,
-                    reasoning: 0,
-                },
-                parent: None,
-                archived: Some(false),
-                updated: None,
-                duration_ms: None,
-                // Hermes adds to the session's own counts in place; its
-                // activity is when they last grew.
-                running: Some(Running {
-                    last_seen: Some(updated),
-                }),
-            });
-        }
-        if let Some(record) = records.last_mut() {
-            record.updated = Some(updated);
-        }
+        prints.changed(rowid, print);
+        true
+    };
+    let fresh = sessions.page(
+        ("rowid>?1", true),
+        &[top],
+        (PAGE, PAGE),
+        &mut new,
+        &mut records,
+    )?;
+    if fresh.more {
+        // More may lie between these and what was read before.
+        gaps.push((top, fresh.lowest));
     }
-    let prints = prints.finish(scan, last, seen < 100);
+    top = top.max(fresh.highest);
+    let mut room = PAGE - fresh.seen;
+    while let (Some((after, before)), true) = (gaps.last().copied(), room > 0) {
+        let held = sessions.page(
+            ("rowid>?1 AND rowid<?2", true),
+            &[after, before],
+            (room, room),
+            &mut new,
+            &mut records,
+        )?;
+        gaps.pop();
+        if held.more {
+            gaps.push((after, held.lowest));
+        }
+        room -= held.seen;
+    }
+
+    // The pass over the sessions the last one ended with: up to where it
+    // has got to now, and whether that is their end.
+    let (swept, ended) = if scan < rowid_after {
+        let looked = match sessions.of_a_mirror() {
+            true => MIRROR_PAGE,
+            false => PAGE,
+        };
+        let old = sessions.page(
+            ("rowid>?1 AND rowid<=?2", false),
+            &[scan, rowid_after],
+            (looked, PAGE),
+            &mut |rowid, updated, print| {
+                max_ts = max_ts.max(updated);
+                let grew = prints.changed(rowid, print);
+                grew || updated > ts_after
+            },
+            &mut records,
+        )?;
+        match old.more {
+            true => (old.highest, false),
+            false => (rowid_after, true),
+        }
+    } else {
+        (scan, true)
+    };
+    let prints = prints.finish(scan, swept);
+    let over = ended && gaps.is_empty();
     Ok(Page {
         records,
-        watermark: if seen < 100 {
+        watermark: if over {
             Some(json!({
                 "scan": 0,
-                "rowid_after": max_rowid,
+                "rowid_after": top,
                 "ts_after": max_ts,
                 "prints": prints,
             }))
-        } else if scan == 0 {
+        } else if first {
             // The pass's cursor now holds the map, so the last pass's
             // watermark is dropped rather than kept beside it; it is read only
             // once a pass ends, which leaves a new one.
@@ -252,17 +137,28 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
         } else {
             None
         },
-        cursor: (seen == 100).then(|| {
+        cursor: (!over).then(|| {
             json!({
-                "scan": last,
+                "scan": swept,
                 "rowid_after": rowid_after,
                 "ts_after": ts_after,
-                "max_rowid": max_rowid,
+                "max_rowid": top,
                 "max_ts": max_ts,
+                "gaps": gaps,
                 "prints": prints,
             })
         }),
     })
+}
+
+/// The stretches of new sessions a cursor says are still to be read:
+/// each the rowids above its first number and below its second, the
+/// newest stretch last.
+fn gaps(cursor: &Value) -> Vec<(i64, i64)> {
+    let stretch = |gap: &Value| Some((gap[0].as_i64()?, gap[1].as_i64()?));
+    (cursor.as_array().into_iter().flatten())
+        .filter_map(stretch)
+        .collect()
 }
 
 /// A Hermes model with the route its billing provider and address name

@@ -7,7 +7,7 @@
 //! listed only because the mirrors' writer said which file it wrote. A
 //! turn is what the runtime does when a channel's wake asks for one
 //! (`agent_hud_runtime`, `request`): the paths told go to
-//! `AgentHudCore::file_changes`, and a pass reads them.
+//! `AgentHudCore::written_files`, and a pass reads them.
 use super::{
     super::fake::{Fake, Hold},
     fleet, here, ssh, until, Fleet, INSTALL,
@@ -60,7 +60,7 @@ impl Fleet {
         if count == 0 {
             self.core.request("request_snapshot", json!({})).unwrap();
         } else {
-            self.core.file_changes(Some(told));
+            self.core.written_files(told);
             self.core.request("snapshot", json!({})).unwrap();
         }
         count
@@ -96,8 +96,30 @@ impl Fleet {
         found.unwrap()
     }
 
+    /// Whether a writer has told of a file since the last turn: the
+    /// collector is asked for one.
+    pub(in crate::clients::hermes) fn asked(&self) -> bool {
+        !self.told.lock().unwrap().is_empty()
+    }
+
+    /// Whether core lists the far session `id`, which is titled `title`
+    /// and found by that: a page of the list holds 200 sessions at most.
+    pub(in crate::clients::hermes) fn lists(&mut self, id: &str, title: &str) -> bool {
+        let query = json!({"scope": "all", "search": title});
+        let found = self.core.request("sessions", query).unwrap();
+        let items = found["items"].as_array().unwrap();
+        items.iter().any(|item| item["id"] == id)
+    }
+
+    /// How many sessions core lists.
+    pub(in crate::clients::hermes) fn count(&mut self) -> usize {
+        let query = json!({"scope": "all", "search": ""});
+        let found = self.core.request("sessions", query).unwrap();
+        found["total"].as_u64().unwrap() as usize
+    }
+
     /// The mirror writer of the machine the entry `entry` owns.
-    fn writer(&self, entry: &str) -> Arc<Writer> {
+    pub(in crate::clients::hermes) fn writer(&self, entry: &str) -> Arc<Writer> {
         let followers = self.book().followers_of(entry).expect("followed");
         followers.mirror.clone().expect("a writer")
     }
@@ -112,7 +134,7 @@ impl Fleet {
         names
     }
 
-    fn mirror(&self, key: &str, profile: &str) -> PathBuf {
+    pub(in crate::clients::hermes) fn mirror(&self, key: &str, profile: &str) -> PathBuf {
         let folder = format!("{key}-{profile}");
         (self.data.join(mirror::ROOT).join("profiles").join(folder)).join("state.db")
     }
@@ -262,6 +284,39 @@ fn a_far_session_gets_its_row_from_the_live_list() {
         "{asked:?}"
     );
     assert_eq!(fleet.masters().len(), 1);
+}
+
+/// Ticket 54: the desktop app's list can hold an `ssh` entry with no
+/// label. Its machine was followed and had cards, and no mirror could be
+/// claimed for it, so its sessions had no rows. It goes by its host.
+#[test]
+#[ignore = "starts processes: run by the_lab_tests_pass"]
+fn an_entry_with_no_label_gets_its_rows_under_its_host() {
+    let Some(mut fleet) = fleet(1) else {
+        return;
+    };
+    fleet.reads_mirrors();
+    let gateway = fleet.hosts[0].gateway("instance-1", INSTALL[0]);
+    works(&gateway, "s-one", "Plan the week");
+    let mut unnamed = ssh("a", "", "m0");
+    unnamed.as_object_mut().unwrap().remove("label");
+    fleet.write(&[here(), unnamed]);
+    fleet.start();
+    let key = fleet.connected("m0");
+    let row = fleet.listed(&far(&key, "s-one"));
+    assert_eq!(row.machine, "m0");
+    let rows = dump(&fleet.mirror(&key, "default"));
+    let named =
+        format!("hud_mirror [Integer(1), Text(\"{key}\"), Text(\"m0\"), Text(\"default\")]");
+    assert!(rows.contains(&named), "{rows}");
+    assert!(!fleet.log().contains("mirror failed"), "{}", fleet.log());
+    // Given a label, it is the same machine under it.
+    fleet.write(&[here(), ssh("a", "Mini", "m0")]);
+    assert_eq!(fleet.connected("Mini"), key);
+    until("its rows say the label", || {
+        fleet.turn();
+        fleet.far_rows().iter().all(|row| row.machine == "Mini")
+    });
 }
 
 #[test]

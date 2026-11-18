@@ -43,8 +43,9 @@ mod files;
 mod tests;
 mod work;
 
-/// The most writes that wait. A disk that stalls drops the oldest: every
-/// poll lists its sessions anew.
+/// The most listings that wait. A disk that stalls drops the oldest:
+/// every poll lists its sessions anew. A new label is told once, so it
+/// is never the one dropped.
 const MOST: usize = 64;
 
 /// Whether a route number is still a machine's own.
@@ -139,8 +140,10 @@ impl Writer {
             return;
         }
         for (profile, sessions) in listing.profiles {
-            if state.queue.len() >= MOST {
-                state.queue.pop_front();
+            let listing = |write: &Write| matches!(write, Write::Listed { .. });
+            if state.queue.iter().filter(|write| listing(write)).count() >= MOST {
+                let oldest = state.queue.iter().position(listing);
+                oldest.and_then(|oldest| state.queue.remove(oldest));
             }
             state.queue.push_back(Write::Listed {
                 profile,
@@ -160,7 +163,15 @@ impl Writer {
             return;
         }
         state.label = label.to_owned();
-        state.queue.push_back(Write::Label);
+        // The write takes the label as it is when its turn comes, so one
+        // that waits already serves.
+        if !state
+            .queue
+            .iter()
+            .any(|write| matches!(write, Write::Label))
+        {
+            state.queue.push_back(Write::Label);
+        }
         drop(state);
         self.wake.notify_all();
     }

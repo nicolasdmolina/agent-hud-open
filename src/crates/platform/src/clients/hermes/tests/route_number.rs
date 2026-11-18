@@ -6,15 +6,21 @@
 use super::{
     super::{
         control::Silent,
+        followers::Followers,
+        log::Log,
+        mirror::{Routes, Writer},
         route::{Call, Home, Inventory, Route, Stop},
         Observer,
     },
     fake::Fake,
-    lab, quick,
+    lab,
+    machines::mirrors::works,
+    quick,
     route::Way,
     until,
 };
-use agent_hud_agents::hermes::gateway::{Failure, Instance};
+use crate::hooks::Changed;
+use agent_hud_agents::hermes::gateway::{machine_key, Failure, Instance, Machine, Profile};
 use std::{
     borrow::Cow,
     net::TcpStream,
@@ -101,4 +107,92 @@ fn a_route_that_never_changes_has_the_number_nought() {
     assert_eq!(lab.route.number(), 0);
     let follower = lab.observer.as_ref().unwrap().local();
     assert_eq!(follower.under.load(Ordering::Acquire), 0);
+}
+
+/// The machine's route number, asked as its mirrors' writer asks the
+/// switch of a real machine.
+struct Asked(Arc<Numbered>);
+
+impl Routes for Asked {
+    fn under(&self, number: u64, commit: &mut dyn FnMut()) -> bool {
+        let current = self.0.number() == number;
+        if current {
+            commit();
+        }
+        current
+    }
+}
+
+/// What a poll listed is queued for the mirror under the number its
+/// socket was opened under, not under the route's number at that
+/// moment (ticket 54; ticket 34's verifier, finding 5). Here the number
+/// goes up and nothing else happens: the follower is told of no change,
+/// so its model takes the next poll like any other, and the number the
+/// listing carries is all that keeps it out of the mirror.
+#[test]
+fn a_poll_is_written_under_the_route_number_its_socket_was_opened_under() {
+    let lab = lab();
+    let gateway = Fake::start(&lab.home, "instance-1");
+    let route = Arc::new(Numbered {
+        way: lab.route.clone(),
+        number: AtomicU64::new(1),
+        raise_at_admit: AtomicBool::new(false),
+    });
+    let key = machine_key(Some("0123456789abcdef0123456789abcdef"), "/far/.hermes").unwrap();
+    let untold: Changed = Arc::new(|_| {});
+    let log = Log::new(&lab.data).of(Some("mirror"));
+    let asked = Arc::new(Asked(route.clone()));
+    let writer = Writer::start(&lab.data, (&key, "Mini"), asked, untold, log).unwrap();
+    let far = (Machine::Far(key), Some("Mini".to_owned()));
+    let (requests, wake) = (lab.requests.clone(), Arc::new(|| {}));
+    let mirror = Some(writer.clone());
+    let followers = Followers::start(
+        route.clone(),
+        far,
+        &lab.data,
+        requests,
+        wake,
+        quick(),
+        mirror,
+    )
+    .unwrap();
+    let rows = || {
+        let path = writer.file(&Profile::Default);
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
+        let Ok(db) = rusqlite::Connection::open_with_flags(path, flags) else {
+            return Vec::new();
+        };
+        let mut ids: Vec<String> = (db.prepare("SELECT id FROM sessions ORDER BY id"))
+            .and_then(|mut all| all.query_map([], |row| row.get(0))?.collect())
+            .unwrap_or_default();
+        ids.sort();
+        ids
+    };
+
+    // A session in a turn: the polls, on a socket opened under 1, list
+    // it, and it gets its row.
+    works(&gateway, "s-before", "Before the route changed");
+    until("its row is written", || rows() == ["s-before"]);
+
+    // The number goes up. The socket is the one opened under 1 still.
+    route.number.store(2, Ordering::Release);
+    works(&gateway, "s-after", "After the route changed");
+    // The poll that begins next lists it; once another has begun, that
+    // one has ended and queued what it listed.
+    let seen = gateway.world().listed.len();
+    until("two more polls begin", || {
+        gateway.world().listed.len() >= seen + 2
+    });
+    writer.settle();
+    let under: Vec<u64> = (followers.set().iter())
+        .map(|follower| follower.under.load(Ordering::Acquire))
+        .collect();
+    assert_eq!(under, [1]);
+    assert_eq!(rows(), ["s-before"], "written under the number as it is");
+    let log = std::fs::read_to_string(lab.data.join("hermes-gateway.log")).unwrap();
+    assert!(
+        log.contains("mirror dropped profile=default why=route"),
+        "{log}"
+    );
+    followers.stop();
 }

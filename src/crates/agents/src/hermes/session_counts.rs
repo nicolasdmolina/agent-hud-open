@@ -48,18 +48,33 @@ impl SessionCounts {
     pub(super) fn changed(&mut self, rowid: i64, counts: &str) -> bool {
         self.visited.insert(rowid);
         let digest = Value::from(fnv(counts));
-        self.map.insert(rowid.to_string(), digest.clone()) != Some(digest)
+        // Looked up before it is put in: putting a key the map holds in
+        // again costs as much as the map is long, which is every session
+        // of every pass over a database nothing changed in.
+        match self.map.get_mut(&rowid.to_string()) {
+            Some(noted) if *noted == digest => false,
+            Some(noted) => {
+                *noted = digest;
+                true
+            }
+            None => {
+                self.map.insert(rowid.to_string(), digest);
+                true
+            }
+        }
     }
 
-    /// The map once this page read the rows after `scan` up to `last`:
-    /// sessions gone from those rows, and past `last` once the pass `ended`,
-    /// leave it.
-    pub(super) fn finish(mut self, scan: i64, last: i64, ended: bool) -> Value {
+    /// The map once this page's pass over the old sessions read the rows
+    /// after `scan` up to `swept`: sessions gone from those rows leave it.
+    /// What it holds of rows before and after them stays: those the pass
+    /// read on earlier pages or has yet to reach, and the new sessions,
+    /// which are above them all.
+    pub(super) fn finish(mut self, scan: i64, swept: i64) -> Value {
         let visited = self.visited;
         self.map.retain(|rowid, _| {
-            rowid.parse::<i64>().is_ok_and(|rowid| {
-                visited.contains(&rowid) || rowid <= scan || (!ended && rowid > last)
-            })
+            rowid
+                .parse::<i64>()
+                .is_ok_and(|rowid| visited.contains(&rowid) || rowid <= scan || rowid > swept)
         });
         Value::Object(self.map)
     }

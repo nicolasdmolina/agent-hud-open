@@ -374,3 +374,76 @@ fn a_row_made_from_the_live_list_adds_nothing_to_the_ledger() {
     assert_eq!(ledger(&core), events);
     assert_eq!(statistics(&mut core), before);
 }
+
+/// Ticket 54: a mirror core read while it had no table yet is left be
+/// for 30 s and longer, like any log that cannot be read. A file event
+/// does not end that. Its writer saying it wrote it does: the next pass
+/// reads it.
+#[test]
+fn a_file_its_writer_says_it_wrote_is_read_though_its_last_read_failed() {
+    let fixture = fixture(KEY);
+    let path = fixture.roots[1]
+        .0
+        .join(format!("profiles/{KEY}-reports/state.db"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap(); // plain directory
+    let made = rusqlite::Connection::open(&path).unwrap();
+    made.pragma_update(None, "journal_mode", "WAL").unwrap();
+    drop(made);
+    let mut core = fixture.open();
+    let before = Utc::now().timestamp_millis();
+    refresh(&mut core);
+    // Read, which failed: it is not tried again for 30 s.
+    let paused = core.reads.failed.retry_at(&path).expect("a failed read");
+    assert!(paused >= before + 30_000);
+    assert!(!core.indexing(), "a pausing log is not waited for");
+
+    // The writer's first commit.
+    let db = state_db(&path, &[("r1", 5, 1)]);
+    db.execute_batch(&format!(
+        "CREATE TABLE hud_mirror (schema INTEGER, machine TEXT, label TEXT, profile TEXT);
+         INSERT INTO hud_mirror VALUES (1, '{KEY}', 'Mac mini', 'reports');"
+    ))
+    .unwrap();
+    let wanted = format!("hermes:{KEY}/reports:r1");
+    let listed = |core: &mut AgentHudCore| rows(core, "").iter().any(|row| row.0 == wanted);
+
+    // The file watcher reports the write: the pause stands.
+    core.file_changes(Some(HashSet::from([path.clone()])));
+    core.request("snapshot", json!({})).unwrap();
+    assert!(!listed(&mut core));
+    assert_eq!(core.reads.failed.retry_at(&path), Some(paused));
+
+    // The writer says it wrote the file.
+    core.written_files(HashSet::from([path.clone()]));
+    assert!(core.indexing(), "it is waited for again");
+    assert!(core.next_pass_due().unwrap() <= std::time::Instant::now());
+    core.request("snapshot", json!({})).unwrap();
+    assert!(listed(&mut core));
+    assert_eq!(core.reads.failed.retry_at(&path), None);
+    // A file that was never paused is told like any change.
+    core.written_files(HashSet::from([path.clone()]));
+    core.request("snapshot", json!({})).unwrap();
+    assert!(listed(&mut core));
+}
+
+/// And a read that fails again after its writer's word pauses again,
+/// for longer.
+#[test]
+fn a_told_file_that_still_cannot_be_read_pauses_again_for_longer() {
+    let fixture = fixture(KEY);
+    let path = fixture.roots[1]
+        .0
+        .join(format!("profiles/{KEY}-reports/state.db"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap(); // plain directory
+    let made = rusqlite::Connection::open(&path).unwrap();
+    made.pragma_update(None, "journal_mode", "WAL").unwrap();
+    let mut core = fixture.open();
+    refresh(&mut core);
+    let before = Utc::now().timestamp_millis();
+    core.written_files(HashSet::from([path.clone()]));
+    core.request("snapshot", json!({})).unwrap();
+    let after = Utc::now().timestamp_millis();
+    // The second failure in a row: 60 s.
+    let paused = core.reads.failed.retry_at(&path).expect("a failed read");
+    assert!((before + 60_000..=after + 60_000).contains(&paused));
+}

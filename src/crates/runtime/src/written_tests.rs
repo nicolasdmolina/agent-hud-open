@@ -64,3 +64,60 @@ fn a_file_a_native_channel_says_it_wrote_is_read_at_the_turn_its_wake_asks_for()
     changed(&[]);
     assert_eq!(woken.load(Ordering::Acquire), 1);
 }
+
+/// Ticket 54: a file core could not read is left be for 30 s and
+/// longer, whatever the file watcher says of it. Its writer saying it
+/// wrote it is the reason to read it again, at that turn.
+#[test]
+fn a_file_a_native_channel_says_it_wrote_is_read_though_its_last_read_failed() {
+    let temp = tempfile::tempdir().unwrap();
+    let mirrors = temp.path().join("hermes-far");
+    let elsewhere = temp.path().join("elsewhere");
+    let path = mirrors.join("profiles/made-up/state.db");
+    fs::create_dir_all(path.parent().unwrap()).unwrap(); // plain directory
+    fs::create_dir_all(&elsewhere).unwrap(); // plain directory
+    let root = |path: &Path, provider: &'static str| SourceRoot {
+        path: path.to_owned(),
+        provider,
+    };
+    // A database with no table in it yet, as a writer's file is between
+    // being made and its first commit.
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.pragma_update(None, "journal_mode", "WAL").unwrap();
+    assert!(fs::metadata(&path).unwrap().len() > 0);
+    let mut runtime =
+        Runtime::with_sources(vec![root(&mirrors, "hermes")], temp.path().join("app-data"))
+            .unwrap();
+    runtime.changes = FileChanges::new(&[root(&elsewhere, "claude")]);
+    let total = |snapshot: Value| snapshot["totals"]["total"].clone();
+    let turn =
+        |runtime: &mut Runtime, method: &str| total(runtime.request(method, json!({})).unwrap());
+    // The first pass walks the folder, finds the file and cannot read it.
+    assert_eq!(turn(&mut runtime, "refresh"), 0);
+
+    // The first commit: Hermes's tables, and one session of 30 tokens.
+    let started = chrono::Utc::now().timestamp() - 60;
+    db.execute_batch(
+        "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, model TEXT, started_at REAL);
+         CREATE TABLE session_model_usage (session_id TEXT NOT NULL, model TEXT NOT NULL,
+            input_tokens INTEGER, output_tokens INTEGER, first_seen REAL, last_seen REAL);",
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO sessions VALUES ('s1', 'telegram', 'claude-test', ?1)",
+        [started],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO session_model_usage VALUES ('s1', 'claude-test', 10, 20, ?1, ?1)",
+        [started],
+    )
+    .unwrap();
+    // A pass that hears of nothing leaves the file be: it pauses.
+    assert_eq!(turn(&mut runtime, "snapshot"), 0);
+
+    // Its writer says it wrote it: the turn that follows reads it.
+    let changed = runtime.hooks_handle().lock().unwrap().files_changed();
+    changed(std::slice::from_ref(&path));
+    assert_eq!(turn(&mut runtime, "request_snapshot"), 30);
+}
