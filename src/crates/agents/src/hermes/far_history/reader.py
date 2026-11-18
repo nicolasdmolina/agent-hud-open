@@ -20,7 +20,7 @@ a SELECT. It imports nothing of Hermes's. `far_history.rs` has the rest.
 
 A write that fails means the channel is gone: end at once. Exit status: 0
 said what it had to; 1 crashed (no row text said); 3 the deadline; 4 that;
-5 too much memory.
+5 too much memory. Every end is `os._exit`: see the last line.
 """
 import hashlib
 import json
@@ -294,6 +294,7 @@ def main():
 
 try:
     main()
-except Exception as error:  # noqa: BLE001 - whatever it is, it is said without its text
+except BaseException as error:  # noqa: BLE001 - whatever it is, it is said without its text
     os.write(2, ("far-history: crash %s\n" % type(error).__name__).encode())
     os._exit(1)
+os._exit(0)  # not Python's own shutdown: the watchdog, waking as that frees its state, crashes the process (3.9)

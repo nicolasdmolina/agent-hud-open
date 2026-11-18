@@ -1,5 +1,6 @@
-//! The reader closes the database before it answers, and its own deadline
-//! ends it whatever it is doing.
+//! The reader closes the database before it answers, its own deadline
+//! ends it whatever it is doing, and it never ends through Python's own
+//! shutdown.
 use super::super::{Failure, Settings, Slots};
 use super::world::{most, open, raw, readers, sessions, settings, Watch, World, PYTHON};
 use crate::ssh_link::unix::tests::lab::until;
@@ -11,6 +12,7 @@ use std::{
     fs::{self, File},
     io::Read,
     os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
+    process::Command,
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
@@ -296,5 +298,42 @@ fn the_deadline_ends_a_blocked_write() {
         "{after:?}"
     );
     assert_eq!(most(&samples).0, 1);
+    link.close();
+}
+
+/// Whatever a reader answers, it ends at once and not through Python's
+/// own shutdown. Its watchdog thread is still running then, and a thread
+/// that wakes just as the shutdown frees its state reads freed memory:
+/// Python 3.9 crashed that way under heavy load (ticket 55). Here an exit
+/// hook, which only that shutdown runs, would make a file.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn the_reader_never_ends_through_pythons_own_shutdown() {
+    let Some(world) = World::start() else { return };
+    world.add_session(&world.db(), "s1", 2);
+    let ran = world.lab.at("shutdown-ran");
+    let hook = format!("import atexit, sys; atexit.register(open, {ran:?}, \"w\")");
+    // The hook does make the file where a Python ends the usual way.
+    let usual = Command::new(PYTHON).args(["-I", "-c", &hook]).status();
+    assert!(usual.expect("the far Python").success() && ran.exists());
+    fs::remove_file(&ran).unwrap();
+    world.stand_in(&format!(
+        "shift 2\nexec {PYTHON} -I -c '{hook}; exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
+    ));
+    let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
+    let slot = slots.of(&world.machine());
+    // One that reads nothing, each kind of read, and one that is refused.
+    let probe = reader.read(&link, &slot, &world.home, &Request::Probe);
+    assert_eq!(probe, Ok(Reply::Probed));
+    let page = reader.prints(&link, &slot, &world.home, 0, 10, None);
+    assert_eq!(page.map(|page| page.prints.len()), Ok(1));
+    let read = reader.sessions(&link, &slot, &world.home, &["s1".to_owned()]);
+    assert_eq!((read.read.len(), read.stopped), (1, None));
+    assert_eq!(reader.held(&link, &slot, &world.home), Ok(None));
+    let linked = world.lab.at("another-way").display().to_string();
+    std::os::unix::fs::symlink(&world.home, &linked).unwrap();
+    let refused = reader.read(&link, &slot, &linked, &Request::Probe);
+    assert_eq!(refused, Err(Failure::Refused(far::No::Request)));
+    assert!(!ran.exists(), "a reader ended through Python's shutdown");
     link.close();
 }
