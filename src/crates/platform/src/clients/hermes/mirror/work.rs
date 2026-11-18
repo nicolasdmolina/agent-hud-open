@@ -121,8 +121,12 @@ impl Writer {
                 .line(&format!("mirror dropped profile={name} why=route")),
             Err(why) => {
                 files.forget(profile);
-                self.log
-                    .line(&format!("mirror failed profile={name} why={why}"));
+                // Every poll lists its sessions anew, and would say this
+                // anew: it is said once for as long as it stays so.
+                if files.fails(profile, &why) {
+                    self.log
+                        .line(&format!("mirror failed profile={name} why={why}"));
+                }
             }
         }
     }

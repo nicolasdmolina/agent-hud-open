@@ -192,16 +192,18 @@ impl Runtime {
         Ok(self.decorate_snapshot(result, true))
     }
     /// Hands core the files native channels said they wrote
-    /// (`hooks::Changed`), through the entry the file watcher uses; true
-    /// where there were any. The watcher may never report them: a mirror
-    /// in a folder made after launch, or one core has not read before.
+    /// (`hooks::Changed`); true where there were any. They go where the
+    /// file watcher's go, and are read though the last read of one failed
+    /// (`AgentHudCore::written_files`). The watcher may never report them:
+    /// a mirror in a folder made after launch, or one core has not read
+    /// before.
     fn note_written(&mut self) -> bool {
         let hooks = self.hooks.lock().unwrap_or_else(PoisonError::into_inner);
         let written = hooks.drain_file_changes();
         drop(hooks);
         let any = !written.is_empty();
         if any {
-            self.core.file_changes(Some(written));
+            self.core.written_files(written);
         }
         any
     }

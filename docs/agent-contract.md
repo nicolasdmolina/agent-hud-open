@@ -203,8 +203,9 @@ engine code that decides by client name. It goes in five slices:
    files the channel wrote itself changed. A channel that keeps what it
    learns in a file core reads as a log (the mirrors of Hermes's far
    machines, `agents/src/hermes/mirror.rs`) calls it after each write; the
-   turn its wake asks for hands those paths to `AgentHudCore::file_changes`
-   and reads them, with no file event needed. A channel never reads a
+   turn its wake asks for hands those paths to `AgentHudCore::written_files`
+   and reads them, with no file event needed, and also where the last
+   read of one failed and its pause still runs. A channel never reads a
    source itself: collection reads stay in the collector's passes.
 4. **Telling a client's process**.
    - `Agent::program` names the command-line program.

@@ -1,5 +1,7 @@
 use super::*;
+use crate::hermes::gateway::Profile;
 use crate::naming::clients::client_name;
+use crate::transcript::records::Record;
 
 /// A `state.db` with the columns the reader reads, spelled as Hermes spells
 /// them (Open's `HermesProviderTests.stateDatabase`), holding session `s1`
@@ -469,4 +471,254 @@ fn a_mirror_that_cannot_be_trusted_is_refused_whole() {
             assert!(read(&db, &path, &cursor).is_err(), "{case} {cursor}");
         }
     }
+}
+
+/// One more session in `db`, `s<n>`, with one usage row.
+fn begins(db: &Connection, n: i64) {
+    db.execute(
+        "INSERT INTO sessions(id,source,model,started_at,last_activity_at) VALUES(?1,'cli','m',1760000700,1760000700)",
+        [format!("s{n}")],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO session_model_usage(session_id,model,input_tokens,first_seen,last_seen) VALUES(?1,'m',10,1760000700,1760000700)",
+        [format!("s{n}")],
+    )
+    .unwrap();
+}
+
+/// The sessions one page reads from `cursor`, and the page.
+fn page(db: &Connection, cursor: &Value) -> (Vec<String>, Page) {
+    let page = read(db, Path::new("state.db"), cursor).unwrap();
+    let ids = page
+        .records
+        .iter()
+        .map(|record| record.id.clone())
+        .collect();
+    (ids, page)
+}
+
+/// The pages from `cursor`, which a pass under way left, to the pass's
+/// end: the sessions read, and the watermark it ends with.
+fn rest(db: &Connection, cursor: Value) -> (Vec<String>, Value) {
+    let (mut cursor, mut all) = (cursor, Vec::new());
+    loop {
+        let (ids, page) = page(db, &cursor);
+        all.extend(ids);
+        let Some(next) = page.cursor else {
+            return (all, page.watermark.unwrap());
+        };
+        assert_eq!(page.watermark, None);
+        cursor = next;
+    }
+}
+
+fn named(sessions: impl IntoIterator<Item = i64>) -> Vec<String> {
+    sessions
+        .into_iter()
+        .map(|n| format!("hermes:s{n}"))
+        .collect()
+}
+
+/// Ticket 54: a session that begins is read on the first page after it,
+/// however many sessions the database holds already. Read last, as it
+/// was, it waited one pass for each hundred of them.
+#[test]
+fn a_new_session_is_read_on_the_first_page_however_many_are_there() {
+    for held in [90, 250, 1_000, 5_000] {
+        let db = sessions(held);
+        let (_, watermark) = pass(&db, Value::Null);
+        begins(&db, held + 1);
+        let (first, _) = page(&db, &watermark);
+        assert_eq!(first, named([held + 1]), "{held} held");
+        // The whole pass reads it once, and nothing else.
+        let (ids, watermark) = pass(&db, watermark);
+        assert_eq!(ids, named([held + 1]), "{held} held");
+        assert_eq!(watermark["rowid_after"], held + 1);
+        assert_eq!(
+            watermark["prints"].as_object().unwrap().len() as i64,
+            held + 1
+        );
+        let (ids, _) = pass(&db, watermark);
+        assert!(ids.is_empty(), "{held} held: nothing changed");
+    }
+}
+
+/// The same while a pass is under way: the page after the session began
+/// reads it, wherever the pass has got to.
+#[test]
+fn a_session_that_begins_while_a_pass_is_under_way_is_read_on_the_next_page() {
+    let db = sessions(1_000);
+    let (_, watermark) = pass(&db, Value::Null);
+    let (ids, first) = page(&db, &watermark);
+    assert!(ids.is_empty());
+    let mut cursor = first.cursor.unwrap();
+    for _ in 0..3 {
+        cursor = page(&db, &cursor).1.cursor.unwrap();
+    }
+    begins(&db, 1_001);
+    let (ids, next) = page(&db, &cursor);
+    assert_eq!(ids, named([1_001]));
+    // A session whose counts grew behind the pass is still found by it,
+    // and the new one is not read a second time.
+    db.execute_batch("UPDATE session_model_usage SET input_tokens=20 WHERE session_id='s950'")
+        .unwrap();
+    let (ids, watermark) = rest(&db, next.cursor.unwrap());
+    assert_eq!(ids, named([950]));
+    assert_eq!(watermark["rowid_after"], 1_001);
+    assert_eq!(watermark["prints"].as_object().unwrap().len(), 1_001);
+    let (ids, _) = pass(&db, watermark);
+    assert!(ids.is_empty(), "nothing changed");
+}
+
+/// A database never read before: its newest sessions come first, and
+/// each is read once.
+#[test]
+fn a_first_read_takes_the_newest_sessions_first_and_each_once() {
+    let db = sessions(250);
+    let (first, _) = page(&db, &Value::Null);
+    assert_eq!(first, named(151..=250));
+    let (mut ids, watermark) = pass(&db, Value::Null);
+    ids.sort();
+    let mut all = named(1..=250);
+    all.sort();
+    assert_eq!(ids, all);
+    assert_eq!(watermark["rowid_after"], 250);
+}
+
+/// More new sessions than a page reads, and more again while those are
+/// read: every page takes the newest there are, none is left out and
+/// none is read twice.
+#[test]
+fn more_new_sessions_than_a_page_reads_come_newest_first_and_each_once() {
+    let db = sessions(300);
+    let (_, watermark) = pass(&db, Value::Null);
+    (301..=550).for_each(|n| begins(&db, n));
+    let (ids, first) = page(&db, &watermark);
+    assert_eq!(ids, named(451..=550));
+    let mut read_so_far = ids;
+
+    (551..=700).for_each(|n| begins(&db, n));
+    let (ids, second) = page(&db, &first.cursor.unwrap());
+    assert_eq!(ids, named(601..=700));
+    read_so_far.extend(ids);
+
+    // One more, and the page has room for those still waiting: the
+    // newest of them first, from each stretch that was passed over.
+    begins(&db, 701);
+    let (ids, third) = page(&db, &second.cursor.unwrap());
+    assert_eq!(ids, named((701..=701).chain(551..=600).chain(402..=450)));
+    read_so_far.extend(ids);
+
+    let (ids, watermark) = rest(&db, third.cursor.unwrap());
+    read_so_far.extend(ids);
+    read_so_far.sort();
+    let mut all = named(301..=701);
+    all.sort();
+    assert_eq!(read_so_far, all);
+    assert_eq!(watermark["rowid_after"], 701);
+    assert_eq!(watermark["prints"].as_object().unwrap().len(), 701);
+    let (ids, _) = pass(&db, watermark);
+    assert!(ids.is_empty(), "nothing changed");
+}
+
+/// Sessions removed from the end of the table leave the map of counts,
+/// as those removed from its middle do.
+#[test]
+fn sessions_removed_from_the_end_leave_the_map_of_counts() {
+    let db = sessions(250);
+    let (_, watermark) = pass(&db, Value::Null);
+    db.execute_batch(
+        "DELETE FROM session_model_usage WHERE session_id IN ('s249','s250');
+         DELETE FROM sessions WHERE id IN ('s249','s250');",
+    )
+    .unwrap();
+    let (ids, watermark) = pass(&db, watermark);
+    assert!(ids.is_empty());
+    let prints = watermark["prints"].as_object().unwrap();
+    assert_eq!(prints.len(), 248);
+    assert!(!prints.contains_key("250"));
+}
+
+fn far_named(sessions: impl IntoIterator<Item = i64>) -> Vec<String> {
+    let far = |n| format!("hermes:{KEY}/default:s{n}");
+    sessions.into_iter().map(far).collect()
+}
+
+/// Every write to a mirror begins the pass over its old sessions anew,
+/// and each pass costs what a pass costs. A mirror's rows are short, so
+/// one page looks at ten thousand of them: the pass ends in the page
+/// that began it. Hermes's own database is read a hundred a page.
+#[test]
+fn a_mirrors_pass_over_its_old_sessions_ends_in_the_page_that_began_it() {
+    let grow = "UPDATE session_model_usage SET input_tokens=20 WHERE session_id='s400'";
+    let db = sessions(1_000);
+    mirror(&db, row(1, KEY, "Mac mini", "default"));
+    let (ids, watermark) = pass(&db, Value::Null);
+    assert_eq!(ids.len(), 1_000);
+    // A session begins, and an old one's counts grow.
+    begins(&db, 1_001);
+    db.execute_batch(grow).unwrap();
+    let (ids, only) = page(&db, &watermark);
+    assert_eq!(ids, far_named([1_001, 400]));
+    assert!(only.cursor.is_none(), "the pass goes on");
+    let watermark = only.watermark.unwrap();
+    assert_eq!(watermark["rowid_after"], 1_001);
+    assert_eq!(watermark["prints"].as_object().unwrap().len(), 1_001);
+    let (ids, _) = pass(&db, watermark);
+    assert!(ids.is_empty(), "nothing changed");
+
+    // The same sessions in a database that is Hermes's own.
+    let db = sessions(1_000);
+    let (_, watermark) = pass(&db, Value::Null);
+    begins(&db, 1_001);
+    db.execute_batch(grow).unwrap();
+    let (ids, first) = page(&db, &watermark);
+    assert_eq!(ids, named([1_001]));
+    let (mut cursor, mut pages) = (first.cursor, 1);
+    while let Some(next) = cursor {
+        cursor = page(&db, &next).1.cursor;
+        pages += 1;
+    }
+    assert_eq!(pages, 11);
+}
+
+/// What a page reads stays a hundred sessions: a mirror whose every
+/// session changed, here by its label, is read over as many pages as
+/// before, each session once.
+#[test]
+fn a_mirror_whose_every_session_changed_is_read_a_hundred_a_page() {
+    let db = sessions(1_000);
+    mirror(&db, row(1, KEY, "Mac mini", "default"));
+    let (_, watermark) = pass(&db, Value::Null);
+    db.execute("UPDATE hud_mirror SET label='Studio'", [])
+        .unwrap();
+    let (mut cursor, mut all, mut pages) = (Some(watermark), Vec::new(), 0);
+    while let Some(next) = cursor {
+        let (ids, page) = page(&db, &next);
+        assert!(ids.len() <= 100, "{} read by one page", ids.len());
+        all.extend(ids);
+        cursor = page.cursor;
+        pages += 1;
+    }
+    assert_eq!(all, far_named(1..=1_000));
+    assert!((10..=11).contains(&pages), "{pages} pages");
+}
+
+/// And what a page looks at is bounded too: ten thousand old sessions.
+#[test]
+fn a_page_looks_at_ten_thousand_of_a_mirrors_old_sessions_at_most() {
+    let db = sessions(10_050);
+    mirror(&db, row(1, KEY, "Mac mini", "default"));
+    let (_, watermark) = pass(&db, Value::Null);
+    begins(&db, 10_051);
+    db.execute_batch("UPDATE session_model_usage SET input_tokens=20 WHERE session_id='s10020'")
+        .unwrap();
+    let (ids, first) = page(&db, &watermark);
+    assert_eq!(ids, far_named([10_051]));
+    let cursor = first.cursor.expect("the pass has fifty more to look at");
+    assert_eq!(cursor["scan"], 10_000);
+    let (ids, second) = page(&db, &cursor);
+    assert_eq!(ids, far_named([10_020]));
+    assert!(second.cursor.is_none());
 }

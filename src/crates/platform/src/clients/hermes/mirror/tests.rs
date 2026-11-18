@@ -4,7 +4,7 @@
 //! because the writer said which file it wrote (`hooks::Changed`). A
 //! turn here is what the runtime does at the turn a channel's wake asks
 //! for (`agent_hud_runtime`, `request`): the paths told are handed to
-//! `file_changes`, and a pass reads them. Every machine, label and
+//! `written_files`, and a pass reads them. Every machine, label and
 //! session is made up.
 use super::*;
 use agent_hud_agents::hermes::gateway::machine_key;
@@ -15,6 +15,9 @@ use std::{
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     time::{Duration, Instant, SystemTime},
 };
+
+mod failed;
+mod large;
 
 /// How soon after its commit a write must be listed (ticket 34).
 const SOON: Duration = Duration::from_secs(2);
@@ -160,7 +163,7 @@ impl Bench {
     fn turn(&mut self) -> usize {
         let told = std::mem::take(&mut *self.told.paths.lock().unwrap());
         let count = told.len();
-        self.core.file_changes(Some(told));
+        self.core.written_files(told);
         self.core.request("snapshot", json!({})).unwrap();
         count
     }

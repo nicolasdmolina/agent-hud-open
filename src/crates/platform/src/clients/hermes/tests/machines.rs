@@ -91,6 +91,9 @@ pub(super) struct Fleet {
     /// The files the mirrors' writers said they wrote, which a turn
     /// hands to core (`machines/mirrors.rs`).
     pub told: Arc<Mutex<HashSet<PathBuf>>>,
+    /// When a writer first said so since a test last asked
+    /// (`far_rows_timing.rs`): the moment after its commit.
+    pub told_at: Arc<Mutex<Option<Instant>>>,
     /// Core reads the mirrors, and its file watcher has nothing to say:
     /// it hears that no file changed before every pass.
     pub silent: bool,
@@ -202,6 +205,7 @@ pub(super) fn fleet(hosts: usize) -> Option<Fleet> {
         requests: core.requests(),
         core,
         told: Arc::default(),
+        told_at: Arc::default(),
         silent: false,
         data,
         local,
@@ -262,8 +266,9 @@ impl Fleet {
     /// What a mirror writer is given to say which file it wrote: the
     /// paths are kept, as the hooks keep them.
     pub(super) fn changed(&self) -> Changed {
-        let kept = self.told.clone();
+        let (kept, at) = (self.told.clone(), self.told_at.clone());
         Arc::new(move |paths: &[PathBuf]| {
+            at.lock().unwrap().get_or_insert_with(Instant::now);
             kept.lock().unwrap().extend(paths.iter().cloned());
         })
     }

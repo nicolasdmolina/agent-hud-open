@@ -74,6 +74,14 @@ impl FailedReads {
     pub(crate) fn succeeded(&mut self, path: &Path) {
         self.failures.remove(path);
     }
+    /// The log's writer says it wrote it: the next pass tries it, however
+    /// long its pause had to run. A read that fails again pauses for
+    /// longer, as after any failure in a row.
+    pub(crate) fn written(&mut self, path: &Path) {
+        if let Some((_, retry, _)) = self.failures.get_mut(path) {
+            *retry = 0;
+        }
+    }
     /// Forgets the files that are no longer listed.
     fn keep(&mut self, listed: &HashMap<PathBuf, FileStamp>) {
         self.failures.retain(|path, _| listed.contains_key(path));

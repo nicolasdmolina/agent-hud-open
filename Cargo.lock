@@ -183,6 +183,7 @@ dependencies = [
  "agent-hud-core",
  "agent-hud-platform",
  "chrono",
+ "rusqlite",
  "serde_json",
  "tempfile",
 ]
