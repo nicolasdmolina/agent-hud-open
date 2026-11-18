@@ -42,6 +42,9 @@ struct Kept {
     says: Says,
     state: Mutex<State>,
     changed: Condvar,
+    /// A test keeps the keeper from looking at its master meanwhile.
+    #[cfg(test)]
+    blind: std::sync::atomic::AtomicBool,
 }
 
 struct State {
@@ -73,6 +76,8 @@ impl Keeper {
             says,
             state: Mutex::new(state),
             changed: Condvar::new(),
+            #[cfg(test)]
+            blind: Default::default(),
         });
         let owned = kept.clone();
         thread::Builder::new()
@@ -86,6 +91,13 @@ impl Keeper {
     pub(super) fn link(&self) -> Option<(Arc<Link>, u64)> {
         let state = self.kept.state();
         Some((state.link.clone()?, state.number))
+    }
+
+    /// Whether the keeper looks at its master, for a test that must
+    /// see what is asked before it does.
+    #[cfg(test)]
+    pub(super) fn blind(&self, blind: bool) {
+        (self.kept.blind).store(blind, std::sync::atomic::Ordering::Release);
     }
 
     /// Why there is no link, where one failed to open or was lost.
@@ -191,6 +203,10 @@ impl Kept {
             self.pause(GLANCE);
             if !self.active() {
                 return None;
+            }
+            #[cfg(test)]
+            if self.blind.load(std::sync::atomic::Ordering::Acquire) {
+                continue;
             }
             if let Err(lost) = link.running() {
                 return Some(lost);

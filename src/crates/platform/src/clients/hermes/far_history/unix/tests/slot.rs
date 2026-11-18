@@ -31,6 +31,9 @@ fn a_cut_off_reader_holds_the_slot() {
     // listings took longer (ticket 49).
     let lasting = world.reader(Settings::default());
     let kept = lasting.settings().deadline + lasting.settings().margin;
+    // The probe's reader has answered; it may still be ending.
+    let mark = world.mark();
+    assert!(until(Duration::from_secs(20), || readers(&mark).is_empty()));
     let watch = Watch::start(&world);
     let (held_until, old) = thread::scope(|scope| {
         let first = scope.spawn(|| lasting.read(&link, &slot, &world.home, &request));
@@ -70,6 +73,15 @@ fn a_cut_off_reader_holds_the_slot() {
         Err(Failure::Exit(3))
     );
     let samples = watch.finish();
+    // Every reader there was before the next was asked for is an old one:
+    // the one cut off, which one look at a loaded far side can leave out,
+    // and the probe's, which can still be ending when the watch begins
+    // (ticket 59). A slot freed too early starts its reader after `asked`.
+    let before = samples.iter().filter(|look| look.at < asked);
+    let old: Vec<u32> = before
+        .flat_map(|look| look.readers.clone())
+        .chain(old)
+        .collect();
     let next = samples
         .iter()
         .find(|look| look.readers.iter().any(|pid| !old.contains(pid)))

@@ -148,6 +148,39 @@ mod tests {
         assert!(joined(&mut events, Vec::new(), "cursor"));
     }
 
+    /// The same through the hooks themselves, with Hermes followed (in a
+    /// lab): a turn a channel told asks for no poll, and the hook's own
+    /// word of Hermes asks for one (ticket 33's round-2 verifier).
+    #[test]
+    fn the_hooks_ask_hermes_for_a_poll_for_a_hooks_word_and_not_for_a_told_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let (lab, data) = (temp.path().join("lab"), temp.path().join("hooks"));
+        crate::os::private_directory(&lab).unwrap();
+        crate::os::private_directory(&data).unwrap();
+        let requests = agent_hud_core::requests::Requests::default();
+        let mut hooks = Hooks::start(data, requests.clone(), Arc::new(|| {})).unwrap();
+        hooks.hermes = Some(crate::clients::hermes::Machines::in_a_lab(&lab, requests));
+        let hermes = agent_hud_agents::hermes::AGENT.id;
+        let of_hermes = |kind: &str, session: &str| HookEvent {
+            source: hermes.into(),
+            ..fact(kind, session, 5)
+        };
+        let nudges = |hooks: &Hooks| hooks.hermes.as_ref().unwrap().nudges();
+
+        let told = hooks.told();
+        told(of_hermes("session-observation", "far-1"));
+        told(of_hermes("completion", "far-1"));
+        let mut events = vec![fact("completion", "near-1", 4)];
+        hooks.with_told(&mut events);
+        assert_eq!(events.len(), 3, "the told turns are handed on");
+        assert_eq!(nudges(&hooks), 0, "a told turn asked for a poll");
+
+        let mut events = vec![of_hermes("completion", "near-2")];
+        hooks.with_told(&mut events);
+        assert_eq!(nudges(&hooks), 1, "a hook's own word asks for one");
+        drop(hooks);
+    }
+
     /// A collector that never comes costs a bounded queue.
     #[test]
     fn a_queue_nobody_drains_stops_growing() {

@@ -63,6 +63,9 @@ pub struct Machines {
     local: Observer,
     book: Arc<Book>,
     looks: Arc<Looks>,
+    /// Counts the nudges, for the tests of who asks for one.
+    #[cfg(test)]
+    nudged: std::sync::atomic::AtomicU64,
 }
 
 /// Where everything is: the app's own places, or a lab's.
@@ -169,12 +172,20 @@ impl Machines {
             book.stop();
             return Err("the Hermes connection list could not be watched".to_owned());
         }
-        Ok(Self { local, book, looks })
+        Ok(Self {
+            local,
+            book,
+            looks,
+            #[cfg(test)]
+            nudged: Default::default(),
+        })
     }
 
     /// A Hermes hook reported a turn started, waiting or ended. Hooks run
     /// on this machine: its gateways are polled now.
     pub fn nudge(&self) {
+        #[cfg(test)]
+        (self.nudged).fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.local.nudge();
     }
 

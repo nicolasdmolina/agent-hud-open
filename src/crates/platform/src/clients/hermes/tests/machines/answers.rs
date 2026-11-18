@@ -79,7 +79,13 @@ fn no_answer_crosses_a_route_change() {
     until("core took the decision", || taken.0.load(Ordering::Acquire));
 
     // The only entry is pointed at another install. The list is held
-    // where its locked step is over and no route is torn down yet.
+    // where its locked step is over and no route is torn down yet. The
+    // new route's gateway is held where it says who it is: told, the old
+    // machine is retired, and its waiter for the decision goes with it.
+    // On a loaded machine that came before the decision was handed over
+    // (ticket 59), which then found nobody waiting.
+    let verify = Arc::new(Hold::default());
+    other.world().hold_next = Some(("profiles.list", verify.clone()));
     let gate = Arc::new(Gate::default());
     *fleet.book().teardown.lock().unwrap() = Some(gate.clone());
     fleet.write(&[here(), ssh("a", "Mini", "m1")]);
@@ -111,6 +117,7 @@ fn no_answer_crosses_a_route_change() {
         "no socket to the old machine"
     );
     assert!(gateway.world().calls("clarify.respond").is_empty());
+    verify.released.store(true, Ordering::Release);
 
     // A click after teardown began: refused as well.
     gate.released.store(true, Ordering::Release);

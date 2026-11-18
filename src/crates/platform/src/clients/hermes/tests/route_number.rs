@@ -177,13 +177,13 @@ fn a_poll_is_written_under_the_route_number_its_socket_was_opened_under() {
     // The number goes up. The socket is the one opened under 1 still.
     route.number.store(2, Ordering::Release);
     works(&gateway, "s-after", "After the route changed");
-    // The poll that begins next lists it; once another has begun, that
-    // one has ended and queued what it listed. A poll lists each of the
-    // gateway's two profiles, so two polls are four lists: with two, the
-    // poll that lists it may only have begun.
-    let seen = gateway.world().listed.len();
-    until("two more polls begin", || {
-        gateway.world().listed.len() >= seen + 4
+    // The next poll lists it and queues the listing, which the writer
+    // then drops or writes: that is waited for, not a count of the
+    // gateway's lists, of which a poll makes one per profile (ticket 59).
+    let log = || std::fs::read_to_string(lab.data.join("hermes-gateway.log")).unwrap_or_default();
+    let dropped = "mirror dropped profile=default why=route";
+    until("the listing that holds it is dealt with", || {
+        log().contains(dropped) || rows().contains(&"s-after".to_owned())
     });
     writer.settle();
     let under: Vec<u64> = (followers.set().iter())
@@ -191,10 +191,6 @@ fn a_poll_is_written_under_the_route_number_its_socket_was_opened_under() {
         .collect();
     assert_eq!(under, [1]);
     assert_eq!(rows(), ["s-before"], "written under the number as it is");
-    let log = std::fs::read_to_string(lab.data.join("hermes-gateway.log")).unwrap();
-    assert!(
-        log.contains("mirror dropped profile=default why=route"),
-        "{log}"
-    );
+    assert!(log().contains(dropped), "{}", log());
     followers.stop();
 }

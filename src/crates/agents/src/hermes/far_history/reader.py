@@ -18,9 +18,10 @@ a SELECT. It imports nothing of Hermes's. `far_history.rs` has the rest.
    memory has grown past MORE_MEMORY and twice the output bound.
 4. Only then write the rows and the last line, which carries their counts.
 
-A write that fails means the channel is gone: end at once. Exit status: 0
-said what it had to; 1 crashed (no row text said); 3 the deadline; 4 that;
-5 too much memory. Every end is `os._exit`: see the last line.
+A write that fails means the channel is gone: end at once (4), the crash
+line's too. Exit status: 0 said what it had to; 1 crashed (no row text said);
+3 the deadline; 5 too much memory. No end runs Python's own shutdown (see
+the last line), unless a second interrupt comes as the crash line is written.
 """
 import hashlib
 import json
@@ -71,11 +72,11 @@ def arm(seconds):
 def line(parts):
     return (json.dumps(parts, separators=(",", ":")) + "\n").encode()
 
-def say(data):
+def say(data, to=1):
     view = memoryview(data)
     try:
         while view:
-            view = view[os.write(1, view):]
+            view = view[os.write(to, view):]
     except OSError:
         os._exit(4)
 
@@ -175,9 +176,8 @@ def sessions(cursor, ask, s, u, most):
     ids = list(dict.fromkeys(name for name in ask.get("ids", []) if isinstance(name, str)))[:200]
     marks, (big, mark) = ",".join("?" * len(ids)), print_sql(s, u)
     mine = bound([col(s, "s", key) for key in ("started_at",) + SESSION])
-    sql = "SELECT 0,s.rowid,s.id,%s,CASE WHEN %s THEN NULL ELSE %s END,%s+%s FROM sessions s WHERE s.id IN (%s)" % (
-        mine[0], big, mark, mine[1], big, marks)
-    args = list(ids)
+    sql, args = "SELECT 0,s.rowid,s.id,%s,CASE WHEN %s THEN NULL ELSE %s END,%s+%s FROM sessions s WHERE s.id IN (%s)" % (
+        mine[0], big, mark, mine[1], big, marks), list(ids)
     if "session_id" in u and "model" in u:
         sql += (" UNION ALL SELECT 1,NULL,u.session_id,%s,NULL,NULL,NULL,NULL,NULL,%s FROM session_model_usage u"
                 " WHERE u.session_id IN (%s)") % (bound([col(u, "u", key) for key in USAGE]) + (marks,))
@@ -295,6 +295,6 @@ def main():
 try:
     main()
 except BaseException as error:  # noqa: BLE001 - whatever it is, it is said without its text
-    os.write(2, ("far-history: crash %s\n" % type(error).__name__).encode())
+    say(("far-history: crash %s\n" % type(error).__name__).encode(), 2)
     os._exit(1)
 os._exit(0)  # not Python's own shutdown: the watchdog, waking as that frees its state, crashes the process (3.9)

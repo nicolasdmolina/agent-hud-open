@@ -5,7 +5,11 @@
 //! - No file without its tables is ever at a mirror's place: a first
 //!   write that is given up leaves none.
 //! - A write that fails the same way at every poll is logged once.
-//! - A new label is never the write a full queue drops.
+//! - A new label is never the write a full queue drops, which drops its
+//!   oldest listing.
+//!
+//! And what ticket 59 added: a mirror made beside a deleted one's log is
+//! read as written, and one whose log was not folded in is not named.
 use super::*;
 
 /// What is in the folder of the mirror of `profile`.
@@ -216,6 +220,15 @@ fn a_new_label_is_never_the_write_a_full_queue_drops() {
     // The queue holds its fill of listings, and the one label write.
     let waiting = writer.state().queue.len();
     assert_eq!(waiting, MOST + 1);
+    // Each listing past the fill dropped the oldest that waited: those
+    // that wait are the newest (ticket 54's verifier, mutation v14).
+    let read_at = |write: &Write| match write {
+        Write::Listed { read_ms, .. } => Some(*read_ms),
+        _ => None,
+    };
+    let kept: Vec<i64> = writer.state().queue.iter().filter_map(read_at).collect();
+    let newest: Vec<i64> = (MOST as i64..2 * MOST as i64).map(|n| 3_000 + n).collect();
+    assert_eq!(kept, newest);
     *disk.shut.lock().unwrap() = false;
     disk.moved.notify_all();
     writer.settle();
@@ -307,5 +320,113 @@ fn counts_that_wait_for_the_disk_are_one_write_for_a_profile() {
         [("s1".to_owned(), 110), ("s2".to_owned(), 77)]
     );
     assert_eq!(kept(&reports()), [("r1".to_owned(), 100)]);
+    writer.stop();
+}
+
+/// The session ids in the mirror at `path`, read as core reads them.
+fn stored(path: &Path) -> Vec<String> {
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
+    let db = rusqlite::Connection::open_with_flags(path, flags).unwrap();
+    let mut all = db.prepare("SELECT id FROM sessions ORDER BY id").unwrap();
+    let ids = all.query_map([], |row| row.get(0)).unwrap();
+    ids.map(Result::unwrap).collect()
+}
+
+/// A mirror deleted by hand, file by file, with its log and its index
+/// left beside it (ticket 54's verifier, finding 2). The mirror made in
+/// its place is read as it was written, not through the old log.
+#[test]
+fn a_mirror_made_beside_a_deleted_ones_log_is_read_as_written() {
+    let mut bench = bench("Mac mini");
+    let path = bench.file(&Profile::Default);
+    bench.lists(&Profile::Default, &[("old1", "Old one")], 1_000, 1);
+    let both = [("old1", "Old one"), ("old2", "Old two")];
+    bench.lists(&Profile::Default, &both, 2_000, 1);
+    let side = |end: &str| PathBuf::from(format!("{}{end}", path.display()));
+    let (wal, shm) = (std::fs::read(side("-wal")), std::fs::read(side("-shm")));
+    let (wal, shm) = (wal.unwrap(), shm.unwrap());
+    assert!(!wal.is_empty(), "the old log holds the old rows");
+    bench.writer.stop();
+    for end in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(side(end));
+    }
+    std::fs::write(side("-wal"), &wal).unwrap();
+    std::fs::write(side("-shm"), &shm).unwrap();
+
+    bench.writer = writer(&bench.data, "Mac mini", &bench.told, &bench.number);
+    bench.lists(&Profile::Default, &[("new1", "New one")], 3_000, 1);
+    assert_eq!(stored(&path), ["new1"]);
+    assert_eq!(beside(&bench, &Profile::Default), MADE);
+    assert_eq!(bench.turn(), 1);
+    assert_eq!(bench.ids(), ["default:new1"]);
+    bench.writer.stop();
+}
+
+/// The commit step of a mirror being made, after which a connection of
+/// another's reads it and stays, the first time only (other writes ask
+/// this step too): the writer's close is then not the
+/// last, so its log is not folded into the file.
+struct Reading {
+    making: Mutex<PathBuf>,
+    reader: Mutex<Option<rusqlite::Connection>>,
+    done: std::sync::atomic::AtomicBool,
+}
+
+impl Routes for Reading {
+    fn under(&self, _number: u64, commit: &mut dyn FnMut()) -> bool {
+        commit();
+        // Nothing here may panic: the writer's thread would end, and the
+        // test wait for it without end.
+        let making = self.making.lock().unwrap().clone();
+        if making.is_file() && !self.done.swap(true, Ordering::AcqRel) {
+            let reads = |db: &rusqlite::Connection| {
+                db.execute_batch("BEGIN")?;
+                db.query_row("SELECT COUNT(*) FROM sessions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+            };
+            let db = rusqlite::Connection::open(&making);
+            let read = db.ok().filter(|db| reads(db) == Ok(1));
+            *self.reader.lock().unwrap() = read;
+        }
+        true
+    }
+}
+
+/// A mirror is given its name only once its first transaction is in the
+/// file itself: one whose log could not be folded in is not given it,
+/// and nothing is left (ticket 54's verifier, finding 3, mutation v11).
+#[test]
+fn a_mirror_whose_log_was_not_folded_in_is_not_given_its_name() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().canonicalize().unwrap().join("data");
+    crate::os::private_directory(&data).unwrap();
+    let untold: Changed = Arc::new(|_| {});
+    let log = Log::new(&data).of(Some("mirror"));
+    let disk = Arc::new(Reading {
+        making: Mutex::default(),
+        reader: Mutex::new(None),
+        done: Default::default(),
+    });
+    let writer = Writer::start(&data, (&key(), "Mac mini"), disk.clone(), untold, log).unwrap();
+    let path = writer.file(&Profile::Default);
+    *disk.making.lock().unwrap() = path.with_file_name("state.db.new");
+    writer.listed(listing(&Profile::Default, &[("s1", "First")], 1_000), 1);
+    writer.settle();
+    assert!(disk.reader.lock().unwrap().is_some(), "the commit was made");
+    let said = std::fs::read_to_string(data.join("hermes-gateway.log")).unwrap();
+    assert!(
+        said.contains("mirror failed profile=default why=file"),
+        "{said}"
+    );
+    let folder = std::fs::read_dir(path.parent().unwrap()).unwrap();
+    let left: Vec<_> = folder.map(|entry| entry.unwrap().file_name()).collect();
+    assert!(left.is_empty(), "{left:?}");
+
+    // Once nobody else reads it, the next poll makes it whole.
+    drop(disk.reader.lock().unwrap().take());
+    writer.listed(listing(&Profile::Default, &[("s1", "First")], 2_000), 1);
+    writer.settle();
+    assert_eq!(stored(&path), ["s1"]);
     writer.stop();
 }

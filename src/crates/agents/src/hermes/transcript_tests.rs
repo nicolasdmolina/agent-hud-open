@@ -134,13 +134,24 @@ fn sessions(count: i64) -> Connection {
     db
 }
 
+/// The most pages a pass over `db` may take: one for every hundred sessions
+/// it holds, read as new and again as old, and two more. A reader that
+/// stops moving fails a test here instead of looping in it without end
+/// (ticket 54's verifier, finding 4).
+fn most_pages(db: &Connection) -> usize {
+    let count = db.query_row("SELECT COUNT(*) FROM sessions", [], |row| {
+        row.get::<_, i64>(0)
+    });
+    2 * (count.unwrap() as usize / 100 + 2)
+}
+
 /// One whole pass from `cursor`, as core reads it: the records' session ids,
 /// and the watermark it ends with. Each page carries one map of counts and
 /// the first page drops the last pass's watermark.
 fn pass(db: &Connection, cursor: Value) -> (Vec<String>, Value) {
     let path = Path::new("state.db");
     let (mut cursor, mut ids, mut first) = (cursor, Vec::new(), true);
-    loop {
+    for _ in 0..most_pages(db) {
         let page = read(db, path, &cursor).unwrap();
         ids.extend(page.records.into_iter().map(|record| record.id));
         let Some(next) = page.cursor else {
@@ -151,6 +162,7 @@ fn pass(db: &Connection, cursor: Value) -> (Vec<String>, Value) {
         first = false;
         cursor = next;
     }
+    panic!("the pass did not end in {} pages", most_pages(db));
 }
 
 #[test]
@@ -502,7 +514,7 @@ fn page(db: &Connection, cursor: &Value) -> (Vec<String>, Page) {
 /// end: the sessions read, and the watermark it ends with.
 fn rest(db: &Connection, cursor: Value) -> (Vec<String>, Value) {
     let (mut cursor, mut all) = (cursor, Vec::new());
-    loop {
+    for _ in 0..most_pages(db) {
         let (ids, page) = page(db, &cursor);
         all.extend(ids);
         let Some(next) = page.cursor else {
@@ -511,6 +523,7 @@ fn rest(db: &Connection, cursor: Value) -> (Vec<String>, Value) {
         assert_eq!(page.watermark, None);
         cursor = next;
     }
+    panic!("the pass did not end in {} pages", most_pages(db));
 }
 
 fn named(sessions: impl IntoIterator<Item = i64>) -> Vec<String> {
@@ -640,6 +653,21 @@ fn sessions_removed_from_the_end_leave_the_map_of_counts() {
     assert!(!prints.contains_key("250"));
 }
 
+/// The pass over the old sessions reads one that was active since the
+/// last pass ended, though its counts are as they were: here it ended.
+/// Its time is the only change (ticket 54's verifier, mutation v6).
+#[test]
+fn an_old_session_active_since_the_last_pass_is_read_with_counts_unchanged() {
+    let db = sessions(250);
+    let (_, watermark) = pass(&db, Value::Null);
+    db.execute("UPDATE sessions SET ended_at=1760000900 WHERE id='s20'", [])
+        .unwrap();
+    let (ids, watermark) = pass(&db, watermark);
+    assert_eq!(ids, named([20]));
+    let (ids, _) = pass(&db, watermark);
+    assert!(ids.is_empty(), "nothing changed");
+}
+
 fn far_named(sessions: impl IntoIterator<Item = i64>) -> Vec<String> {
     let far = |n| format!("hermes:{KEY}/default:s{n}");
     sessions.into_iter().map(far).collect()
@@ -679,6 +707,7 @@ fn a_mirrors_pass_over_its_old_sessions_ends_in_the_page_that_began_it() {
     while let Some(next) = cursor {
         cursor = page(&db, &next).1.cursor;
         pages += 1;
+        assert!(pages <= 11, "the pass goes on past {pages} pages");
     }
     assert_eq!(pages, 11);
 }
@@ -723,6 +752,7 @@ fn a_database_that_is_no_mirror_is_read_a_hundred_changed_sessions_a_page() {
         all.extend(ids);
         cursor = page.cursor;
         pages += 1;
+        assert!(pages <= 11, "the pass goes on past {pages} pages");
     }
     assert_eq!(all, named(1..=300));
     assert!((3..=4).contains(&pages), "{pages} pages");

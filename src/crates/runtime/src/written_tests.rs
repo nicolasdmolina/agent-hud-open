@@ -144,7 +144,15 @@ fn a_turn_a_native_channel_told_is_cores_at_the_turn_its_wake_asks_for() {
     let woken = Arc::new(AtomicUsize::new(0));
     let counted = woken.clone();
     runtime.set_request_waker(Arc::new(move || {
-        counted.fetch_add(1, Ordering::AcqRel);
+        // Not the hook inbox watcher's wakes, from the file watcher's own
+        // thread, as in the test above (tickets 56 and 59).
+        let thread = std::thread::current();
+        if !thread
+            .name()
+            .is_some_and(|name| name.starts_with(FILE_WATCHER))
+        {
+            counted.fetch_add(1, Ordering::AcqRel);
+        }
     }));
     let sound = json!({"key": "sound", "value": true});
     runtime.request("set_setting", sound).unwrap();

@@ -150,7 +150,8 @@ pub(super) fn transact(
 /// Makes the mirror at `path` with its first transaction in it, which
 /// `body` writes: under another name, closed so that the file is whole
 /// by itself, and then given its own. Where that transaction is not
-/// committed, for any reason, no file is left under either name.
+/// committed, for any reason, no file is left under either name. A log
+/// and an index left at its own name go first.
 fn make(
     path: &Path,
     route: Option<u64>,
@@ -173,6 +174,11 @@ fn make(
     if !matches!(wrote, Ok(Some(made)) if made > 0) {
         discard();
         return wrote;
+    }
+    // No file is at `path`, so a log and an index beside it are those of
+    // one deleted by hand: SQLite would read the new file through them.
+    for end in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{end}", path.display()));
     }
     if !whole || std::fs::rename(&making, path).is_err() {
         discard();

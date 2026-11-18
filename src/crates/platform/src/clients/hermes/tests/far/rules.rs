@@ -380,6 +380,44 @@ fn turning_the_channel_off_withdraws_the_cards_and_leaves_no_master() {
     });
 }
 
+/// A link whose master was killed has no epoch from the moment the
+/// master is gone, before its keeper has looked and withdrawn it: a
+/// reply read over it can never pass for one of a link that stands
+/// (ticket 58's master check; its verifier pinned it only by a 500 ms
+/// window, and here the keeper is kept from looking).
+#[test]
+#[ignore = "starts processes: run by the_lab_tests_pass"]
+fn a_link_whose_master_is_gone_has_no_epoch_before_its_keeper_has_looked() {
+    let Some(far) = far_lab() else {
+        return;
+    };
+    let _gateway = far.gateway("instance-1");
+    let (folder, target) = (far.lab.folder(), far.lab.target());
+    let route = Ssh::start(
+        folder,
+        target,
+        far.lab.settings(),
+        std::sync::Arc::new(|_| {}),
+    )
+    .expect("the route");
+    until("the link is up", || route.link().is_some());
+    let (link, number) = route.link().unwrap();
+    assert!(route.epoch().is_some(), "a link that stands has an epoch");
+    route.blind_keeper(true);
+    // SAFETY: a signal to the master this test's route started.
+    unsafe { libc::kill(link.master_pid().unwrap() as libc::pid_t, libc::SIGKILL) };
+    until("the master is gone", || link.running().is_err());
+    let kept = route.link().map(|(_, kept)| kept);
+    assert_eq!(kept, Some(number), "the keeper still holds the link");
+    assert_eq!(route.epoch(), None, "a link whose master is gone");
+    route.blind_keeper(false);
+    until("the next link is up", || {
+        route.link().is_some_and(|(_, next)| next > number)
+    });
+    assert!(route.epoch().is_some());
+    route.stop();
+}
+
 /// A command given to a master that is gone never starts, so the route
 /// hands such a link none: the asking fails as not heard, and the home is
 /// not kept from being asked once the link is back. (A relay that was

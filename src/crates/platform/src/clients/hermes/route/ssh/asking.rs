@@ -81,3 +81,12 @@ pub(super) fn silence(silent: far::Silent) -> Silent {
         far::Silent::Link(LinkFailure::Refused(_)) => Silent::Unclear,
     }
 }
+
+impl Ssh {
+    /// Keeps the keeper from looking at its master until `blind` is
+    /// false again: a test sees what is asked before it has looked.
+    #[cfg(test)]
+    pub(crate) fn blind_keeper(&self, blind: bool) {
+        self.keeper.blind(blind);
+    }
+}
