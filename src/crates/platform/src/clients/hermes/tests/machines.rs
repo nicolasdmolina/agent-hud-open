@@ -60,6 +60,8 @@ pub(super) mod mirrors;
 mod owners;
 #[path = "machines/reasons.rs"]
 mod reasons;
+#[path = "machines/unresolved.rs"]
+mod unresolved;
 
 #[test]
 fn the_lab_tests_pass() {

@@ -55,6 +55,69 @@ fn three() -> Homes {
     }
 }
 
+/// Ticket 62. A file name may hold any byte but a NUL, and the words are
+/// ended by NULs: a name or a path that is not UTF-8 is read as the word
+/// it is, and never makes the whole answer unreadable.
+#[test]
+fn a_name_that_is_not_utf8_garbles_nothing() {
+    fn said(words: &[&[u8]]) -> Result<Homes, NoHomes> {
+        homes(
+            &words
+                .iter()
+                .flat_map(|word| [word, &[0][..]])
+                .flatten()
+                .copied()
+                .collect::<Vec<u8>>(),
+        )
+    }
+    let (root, ops) = (ROOT.as_bytes(), OPS.as_bytes());
+    let found = said(&[
+        b"root",
+        root,
+        // No profile's name, resolved or not: told of no more than before.
+        b"unresolved",
+        b"caf\xe9",
+        b"profile",
+        b"\xff\xfe",
+        b"/Users/far/.hermes/profiles/\xff\xfe",
+        b"profile",
+        b"ops",
+        ops,
+        b"unresolved",
+        b"shut",
+        // A profile whose home is at a path that cannot be written here:
+        // it is there and cannot be asked.
+        b"profile",
+        b"reports",
+        b"/Users/far/caf\xe9/reports",
+        b"python",
+        b"yes",
+        b"end",
+    ])
+    .unwrap();
+    assert_eq!(
+        found.homes,
+        vec![far_home(None, ROOT), far_home(Some("ops"), OPS)]
+    );
+    let unresolved = ["reports", "shut"].map(|name| Profile::folder(name).unwrap());
+    assert_eq!(found.unresolved, unresolved);
+    // A root that cannot be written here is not one to follow, and says so.
+    let far = b"/Users/caf\xe9/.hermes";
+    assert_eq!(
+        said(&[b"root", far, b"python", b"yes", b"end"]),
+        Err(NoHomes::RootNotCanonical)
+    );
+    // The command's own words are read as exactly themselves.
+    for word in [&b"profil\xe9"[..], b"unresolved\xff", b"\xff"] {
+        let answer = said(&[b"root", root, word, b"ops", ops, b"python", b"yes", b"end"]);
+        assert_eq!(answer, Err(NoHomes::Garbled), "{word:?}");
+    }
+    assert_eq!(
+        said(&[b"root", root, b"python", b"yes", b"end\xff"]),
+        Err(NoHomes::Garbled)
+    );
+}
+
 #[test]
 fn only_identify_and_session_ticket_can_be_asked() {
     // The two requests are all the type has, and each is the line Hermes's

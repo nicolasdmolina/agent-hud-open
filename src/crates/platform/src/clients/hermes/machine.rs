@@ -23,7 +23,10 @@
 //! neither: it is opened again, for as long as it takes.
 use super::{log::Log, route::ssh::Ssh, Pace};
 use crate::ssh_link::{Failure as LinkFailure, Folder, Lost, Settings, Target};
-use agent_hud_agents::hermes::{gateway::MachineKey, FAR_ROUTE};
+use agent_hud_agents::hermes::{
+    gateway::{MachineKey, Profile},
+    FAR_ROUTE,
+};
 use std::{
     path::Path,
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak},
@@ -111,6 +114,8 @@ struct State {
     /// The gateways found without the live connection: each by its
     /// profile, with Hermes's reason. None of them is followed.
     not_followed: Vec<(String, &'static str)>,
+    /// The profiles the last look could not resolve.
+    unresolved: Vec<Profile>,
 }
 
 impl Inner {
@@ -135,6 +140,7 @@ impl Inner {
             standing: Standing::Connecting,
             stirred: false,
             not_followed: Vec::new(),
+            unresolved: Vec::new(),
         };
         let inner = Arc::new(Inner {
             route,
@@ -242,6 +248,20 @@ impl Inner {
         drop(state);
         for (profile, why) in found {
             let line = format!("gateway not followed profile={profile} why={why}");
+            self.log.line(&line);
+        }
+    }
+
+    /// The profiles a look could not resolve. Each is said once, when a
+    /// look first finds it so, and not again at the looks that find it the
+    /// same: such a folder may stay closed for good, and the log is one
+    /// small file that every machine shares.
+    pub(super) fn note_unresolved(&self, found: &[Profile]) {
+        let mut state = self.state();
+        let before = std::mem::replace(&mut state.unresolved, found.to_vec());
+        drop(state);
+        for profile in found.iter().filter(|profile| !before.contains(profile)) {
+            let line = format!("profile not resolved profile={}", profile.name());
             self.log.line(&line);
         }
     }

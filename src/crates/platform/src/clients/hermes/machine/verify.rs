@@ -49,10 +49,7 @@ impl Inner {
         let none_live = !lacking.is_empty();
         self.note_unfollowed(lacking);
         // A profile whose home could not be resolved there was not asked.
-        for profile in &picture.unresolved {
-            let line = format!("profile not resolved profile={}", profile.name());
-            self.log.line(&line);
-        }
+        self.note_unresolved(&picture.unresolved);
         // With one of them, finding no gateway is not word that none
         // runs: the look is taken again.
         if reported.is_empty() && !none_live && !picture.unresolved.is_empty() {
