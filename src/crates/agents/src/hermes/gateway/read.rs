@@ -45,20 +45,20 @@ const MAX_GUESSES: u8 = 3;
 #[derive(Debug, Default)]
 pub(super) struct Search {
     /// The `session.events.since` calls answered so far.
-    reads: u8,
+    pub(super) reads: u8,
     guesses: u8,
     /// The latest place Hermes refused a read from: it has dropped the
     /// event after it.
-    refused: Option<u64>,
+    pub(super) refused: Option<u64>,
     /// The earliest place Hermes answered a read from, and what the events
     /// after it say waits.
-    best: Option<(u64, Reading)>,
+    pub(super) best: Option<(u64, Reading)>,
     /// What the events read showed to be over, kept for a snapshot.
     pub(super) over: BTreeMap<String, Closed>,
 }
 
 /// What the search does next.
-enum Next {
+pub(super) enum Next {
     /// Read from here.
     Read(u64),
     /// The oldest event kept is found, or nothing is kept: what was read
@@ -71,7 +71,7 @@ enum Next {
 
 impl Search {
     /// Where to read from next, in a stream whose latest event is `latest`.
-    fn next(&mut self, latest: u64) -> Next {
+    pub(super) fn next(&mut self, latest: u64) -> Next {
         // Where the oldest event kept is if only the count of events made
         // Hermes drop any, and the earliest it can be by what was refused.
         let counted = latest.saturating_sub(RING);
@@ -115,6 +115,11 @@ impl Poll {
             return self.set(at, Read::Failed);
         };
         search.reads += 1;
+        // The turns of a far session are told from this same answer
+        // (`turns.rs`); nothing below reads what that keeps.
+        if let Some(watch) = &mut self.turns {
+            watch.read(at, from, result);
+        }
         let cut = result["snapshot_required"] == true || result["truncated"] == true;
         match from.filter(|from| from.epoch == epoch) {
             Some(from) if !cut => {

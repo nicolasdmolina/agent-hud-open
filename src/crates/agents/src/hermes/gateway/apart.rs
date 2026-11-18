@@ -103,6 +103,7 @@ impl Gateway {
             shown: BTreeMap::from([(session.clone(), shown)]),
             recent: recent.then(|| session.clone()).into_iter().collect(),
             apart: Some(Box::new(apart)),
+            turns: self.turns.watch(),
         })
     }
 
@@ -138,6 +139,7 @@ impl Gateway {
         if !self.counts(&poll) {
             return;
         }
+        self.watched(&poll);
         let at = &apart.session;
         let its: Vec<_> = self
             .cards

@@ -54,7 +54,7 @@ fn poll_beside(gateway: &mut Gateway, hermes: &mut Hermes, now_ms: i64) -> Vec<E
         for step in steps {
             let apart = match &step {
                 Step::Since { session, .. } | Step::Snapshot(session) => session.id() == SLOW,
-                Step::List(_) => false,
+                Step::List(_) | Step::Watch { .. } => false,
             };
             match hermes.answer(&step).filter(|_| !apart) {
                 Some(result) => poll.answer(&step, &result),

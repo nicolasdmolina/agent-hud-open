@@ -163,6 +163,9 @@ pub struct World {
     /// One session whose events are slow to read: each read of them is
     /// held back this long.
     pub slow_replay: Option<(String, Duration)>,
+    /// One session whose looks (a read of its stream that names no
+    /// epoch) are never answered, while everything else is.
+    pub mute: Option<String>,
     /// When each `session.active_list` arrived: when each poll began.
     pub listed: Vec<Instant>,
     /// Sessions the gateway holds and leaves out of its live list.
@@ -357,6 +360,21 @@ impl Fake {
         let stream = world.stream_in(profile, session);
         let event = json!({"type": kind, "session_id": session, "replay_epoch": "epoch-1",
             "seq": stream.latest + 1, "execution_generation": 1, "payload": payload});
+        stream.publish(&event);
+    }
+
+    /// The same, in the turn Hermes counts as `turn` of the session: a
+    /// turn that starts, or ends, or a step of one.
+    pub fn tells_of_turn(&self, profile: &str, session: &str, kind: &str, turn: u64) {
+        let profile = &self.named(profile);
+        let mut world = self.world();
+        let stream = world.stream_in(profile, session);
+        let payload = match kind {
+            "message.complete" => json!({"status": "complete", "outcome": "completed"}),
+            _ => json!({}),
+        };
+        let event = json!({"type": kind, "session_id": session, "replay_epoch": "epoch-1",
+            "seq": stream.latest + 1, "execution_generation": turn, "payload": payload});
         stream.publish(&event);
     }
 
@@ -721,7 +739,13 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
             let hint = json!({"jsonrpc":"2.0", "method":"event", "params":{"type":"sessions.changed", "payload":{}}});
             let _ = ws.send(Message::Text(hint.to_string().into()));
         }
-        if let Some(reply) = reply {
+        let look = frame["method"] == "session.events.since"
+            && frame["params"].get("replay_epoch").is_none();
+        let muted = look && {
+            let world = world.lock().unwrap();
+            world.mute.as_deref() == frame["params"]["session_id"].as_str()
+        };
+        if let Some(reply) = reply.filter(|_| !muted) {
             let _ = ws.send(Message::Text(reply.to_string().into()));
         }
         if frame["method"] == "session.resume" {

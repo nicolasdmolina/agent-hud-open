@@ -30,6 +30,7 @@ mod reconcile;
 mod served;
 mod state;
 mod ticket;
+mod turns;
 
 pub use ask::{Approval, Ask, Batch, BatchQuestion, Choice, Locked, Pending, Prompt, Question};
 pub use card::out_of_reach;
@@ -55,6 +56,7 @@ pub use ticket::{
     granted, identify_line, pointed_socket, ticket_line, Scope, Ticket, CONTROL_POINTER,
     CONTROL_SOCKET, SOCKET_PATH, SUBPROTOCOL,
 };
+pub use turns::Turn;
 
 #[cfg(test)]
 mod tests;

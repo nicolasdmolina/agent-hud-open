@@ -138,11 +138,16 @@ pub(super) fn rounds(
             }
             // Read apart: nothing is known of it by this poll, which
             // leaves its cards as they are.
+            // A look for the turns is no reading of a session's cards:
+            // it goes to no lane, and keeps none going.
             let session = match &step {
                 Step::Since { session, .. } | Step::Snapshot(session) => Some(session),
-                Step::List(_) => None,
+                Step::List(_) | Step::Watch { .. } => None,
             };
             if beside && session.is_some_and(|session| shared.apart.reads(session)) {
+                poll.failed(&step);
+            } else if shared.rests.holds(&step) {
+                // Its look was slow a moment ago (`turns.rs`).
                 poll.failed(&step);
             } else if matches!(step, Step::Snapshot(_)) {
                 alone.push(step);
@@ -184,6 +189,9 @@ pub(super) fn rounds(
                                 slow.push(session.clone());
                             }
                         }
+                        if took >= shared.pace.apart {
+                            shared.rests.rest(&step, shared.pace.answer);
+                        }
                         match result(&value) {
                             Ok(told) => poll.answer(&step, told),
                             Err(refused) => {
@@ -210,6 +218,7 @@ pub(super) fn rounds(
                     slow.push(session.clone());
                 }
             }
+            shared.rests.rest(&step, shared.pace.answer);
             poll.failed(&step);
         }
         for step in alone {

@@ -54,6 +54,9 @@ impl Gateway {
         }
         self.rows.retain(|at, _| self.listed.contains_key(at));
         self.keep_apart();
+        // The turns of a far session, which no card below reads.
+        self.keep_watched();
+        self.watched(&poll);
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {
             if let Some(why) = self.over(&poll, &key, now_ms, effects) {
                 self.close(&key, why, effects);

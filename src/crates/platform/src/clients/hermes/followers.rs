@@ -21,7 +21,7 @@ use super::{
     signal::Signal,
     Pace,
 };
-use crate::hooks::Wake;
+use crate::hooks::{Told, Wake};
 use agent_hud_agents::hermes::gateway::{GatewayId, Input, Machine, Profile};
 use agent_hud_core::requests::Requests;
 use serde_json::Value;
@@ -49,6 +49,8 @@ pub(super) struct Followers {
     label: Label,
     /// The one writer of a far machine's mirrors (`mirror.rs`).
     pub(super) mirror: Option<Arc<Writer>>,
+    /// Who is told the turns of a far machine's sessions (`turns.rs`).
+    turns: Option<Told>,
     requests: Requests,
     wake: Wake,
     pub(super) log: log::Log,
@@ -76,7 +78,7 @@ impl Followers {
         requests: Requests,
         wake: Wake,
         pace: Pace,
-        mirror: Option<Arc<Writer>>,
+        (mirror, turns): (Option<Arc<Writer>>, Option<Told>),
     ) -> Result<Arc<Self>, String> {
         // The lines of a far machine's followers begin with its key.
         let who = match &machine {
@@ -88,6 +90,7 @@ impl Followers {
             machine,
             label: Arc::new(Mutex::new(label)),
             mirror,
+            turns,
             requests,
             wake,
             log: log::Log::new(data).of(who.as_deref()),
@@ -198,6 +201,8 @@ impl Followers {
             stopping: (Mutex::new(()), Condvar::new()),
             reader,
             mirror: self.mirror.clone(),
+            turns: self.turns.clone(),
+            rests: Default::default(),
             under: AtomicU64::new(0),
             label: self.label.clone(),
             asked: Mutex::new(asked),

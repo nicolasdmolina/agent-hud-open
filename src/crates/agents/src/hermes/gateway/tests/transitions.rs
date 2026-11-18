@@ -131,7 +131,10 @@ fn what_already_waits_is_found_without_subscribing() {
     ends(&mut h, 1, "complete");
     assert_eq!(closed(&poll(&mut g, &mut h, 1)), [("p1", &Closed::Settled)]);
     poll(&mut g, &mut h, 2);
-    assert_eq!(h.asked, [Step::List(Profile::Default), Step::List(work())]);
+    assert_eq!(
+        h.for_cards(),
+        [Step::List(Profile::Default), Step::List(work())]
+    );
 }
 
 #[test]
@@ -671,6 +674,6 @@ fn many_sessions_cost_a_read_only_where_something_may_wait() {
     h.stream(&work(), "local-0042").status = None;
     assert_eq!(opened(&poll(&mut g, &mut h, 0)), ["p1"]);
     // Two lists, and two reads of the one session that waits.
-    assert_eq!(h.asked.len(), 4);
+    assert_eq!(h.for_cards().len(), 4);
     assert_eq!(g.statuses().len(), 80);
 }

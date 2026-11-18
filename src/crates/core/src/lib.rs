@@ -216,7 +216,10 @@ impl AgentHudCore {
             requests,
             hook_events: hook_events::HookEvidence::default(),
             island_events: island_events::Tracker::new(),
-            sound_alerts: sound_alerts::Tracker::new(),
+            sound_alerts: sound_alerts::Tracker::kept(
+                app_data.join("sound-alerts.json"),
+                Utc::now().timestamp_millis(),
+            ),
             source_notice: None,
             provider_roots: roots
                 .into_iter()

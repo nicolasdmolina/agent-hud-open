@@ -88,11 +88,15 @@ pub struct Gateway {
     /// The poll that last listed each live session anew, or as something
     /// else than the poll before it and not as waiting (`apart.rs`).
     pub(super) listing: BTreeMap<SessionRef, u64>,
+    /// Where each stream of a far machine was last seen, for telling the
+    /// turns that end there (`turns.rs`). No card reads it.
+    pub(super) turns: super::turns::Turns,
 }
 
 impl Gateway {
     pub fn new(id: GatewayId) -> Self {
         Self {
+            turns: super::turns::Turns::of(&id),
             id,
             connection: Connection::Disconnected,
             instance: None,
@@ -176,13 +180,9 @@ impl Gateway {
             .filter(|(_, at)| self.now_ms - **at < SNAPSHOT_EVERY_MS)
             .map(|(session, _)| session.clone())
             .collect();
-        Some(Poll::new(
-            self.id.clone(),
-            self.polls,
-            served,
-            shown,
-            recent,
-        ))
+        let mut poll = Poll::new(self.id.clone(), self.polls, served, shown, recent);
+        poll.turns = self.turns.watch();
+        Some(poll)
     }
 
     /// Takes what happened at `now_ms` and returns what to do, in order.
@@ -247,6 +247,7 @@ impl Gateway {
         self.changed();
         // What happened while nothing was read is not known.
         self.snapshotted.clear();
+        self.turns.forget();
         for card in self.cards.values_mut() {
             if card.sent_ms.take().is_some() {
                 effects.push(Effect::Unanswered {
@@ -266,6 +267,7 @@ impl Gateway {
         self.changed();
         self.listed.clear();
         self.snapshotted.clear();
+        self.turns.forget();
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {
             self.close(&key, why.clone(), effects);
         }

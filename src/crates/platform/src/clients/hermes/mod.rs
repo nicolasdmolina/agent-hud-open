@@ -50,6 +50,7 @@ mod signal;
 mod socket;
 #[cfg(test)]
 mod tap;
+mod turns;
 mod visit;
 mod wire;
 
@@ -83,7 +84,9 @@ impl Observer {
         let this = (Machine::This, None);
         // This machine's sessions are read from its own Hermes home: it
         // has no mirror.
-        let all = followers::Followers::start(route, this, data, requests, wake, pace, None)?;
+        // Nor is it told its turns by the followers: its hooks tell them.
+        let none = (None, None);
+        let all = followers::Followers::start(route, this, data, requests, wake, pace, none)?;
         Ok(Self { all })
     }
 
