@@ -3,7 +3,7 @@
 //! every wait has an end. The ticket rides the subprotocol header and is
 //! never written anywhere.
 use super::{
-    route::Route,
+    route::{Epoch, Route},
     wire::{Line, Wire},
 };
 use agent_hud_agents::hermes::gateway::{
@@ -39,6 +39,8 @@ pub(super) struct Socket {
     /// How long one frame may take to write, all of it.
     budget: Duration,
     calls: u64,
+    /// The link its stream was dialled over (`Route::epoch`).
+    on: Epoch,
 }
 
 /// What a call came back with.
@@ -54,6 +56,7 @@ pub(super) struct Dialled {
     line: Arc<Line>,
     /// The instance's own name for itself, which the upgrade asks for.
     authority: String,
+    on: Epoch,
 }
 
 impl Socket {
@@ -71,13 +74,21 @@ impl Socket {
                 "the gateway's origin is not plain HTTP".into(),
             ));
         }
+        // The link the stream runs over: the one that stood before the
+        // dial and still stands after it. A stream dialled while the
+        // link changed is of no one link, and is dropped unspoken on.
+        let on = route.epoch().ok_or(Failure::Unreachable)?;
         let tcp = route.dial(instance)?;
+        if route.epoch() != Some(on) {
+            return Err(Failure::Unreachable);
+        }
         let _ = tcp.set_nodelay(true);
         let _ = tcp.set_read_timeout(Some(HANDSHAKE));
         let _ = tcp.set_write_timeout(Some(WRITE));
         Ok(Dialled {
             line: Line::new(tcp),
             authority: authority.to_owned(),
+            on,
         })
     }
 
@@ -100,7 +111,11 @@ impl Dialled {
 
     /// Upgrades the stream with the ticket. No `Origin` header.
     pub(super) fn upgrade(self, ticket: Ticket) -> Result<Socket, Failure> {
-        let Self { line, authority } = self;
+        let Self {
+            line,
+            authority,
+            on,
+        } = self;
         let mut request = format!("ws://{authority}{SOCKET_PATH}")
             .into_client_request()
             .map_err(|_| Failure::Invalid("invalid_api_origin"))?;
@@ -141,6 +156,7 @@ impl Dialled {
             line,
             budget: WRITE,
             calls: 0,
+            on,
         })
     }
 }
@@ -149,6 +165,12 @@ impl Socket {
     /// The stream under the socket, for whoever may have to cut it.
     pub(super) fn line(&self) -> Arc<Line> {
         self.line.clone()
+    }
+
+    /// The link the socket runs over, which everything read on it was
+    /// read over.
+    pub(super) fn on(&self) -> Epoch {
+        self.on
     }
 
     /// Sets how long one frame may take to write.

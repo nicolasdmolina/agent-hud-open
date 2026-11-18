@@ -250,6 +250,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         ends: Arc::default(),
         shows: Default::default(),
         deaf: AtomicBool::new(false),
+        late: Default::default(),
     };
     let wait = Duration::from_secs(2);
     let always = (&|| true, &|_: &_| true);

@@ -17,7 +17,12 @@
 //! (it went idle, or left the list), or when its reads are quick again,
 //! and the polls take the session back. A lane that ended is not a lost
 //! session: the next poll reads it, and finds it slow again or not.
-use super::{opening::opened, polls::rounds, socket::Socket, Shared};
+use super::{
+    opening::opened,
+    polls::{rounds, stands},
+    socket::Socket,
+    Shared,
+};
 use agent_hud_agents::hermes::gateway::{Connection, Input, SessionRef};
 use std::{
     collections::HashMap,
@@ -134,9 +139,21 @@ fn work(shared: &Arc<Shared>, session: &SessionRef) {
         };
         match rounds(shared, open, &instance, &mut reading, false) {
             Ok(Some(asked)) => {
+                #[cfg(test)]
+                shared.late.pass_apart();
                 let mut model = shared.model();
                 if model.stopped {
                     break "ended";
+                }
+                // Read over a link that is gone by now (`polls.rs`):
+                // dropped, and the lane's socket is opened again.
+                if !stands(shared, open) {
+                    drop(model);
+                    if let Some(mut lost) = socket.take() {
+                        lost.close();
+                    }
+                    shared.pause(pace.retry);
+                    continue;
                 }
                 shared.take(&mut model, Input::Polled(reading));
                 drop(model);

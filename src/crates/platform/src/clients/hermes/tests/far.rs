@@ -33,6 +33,8 @@ use std::{
 mod cards;
 #[path = "far/identity.rs"]
 mod identity;
+#[path = "far/late.rs"]
+mod late;
 #[path = "far/links.rs"]
 pub(super) mod links;
 #[path = "far/looks.rs"]

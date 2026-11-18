@@ -97,6 +97,10 @@ pub(super) struct Shared {
     /// tests of a decision that waits there while its card is marked.
     #[cfg(test)]
     pub(super) deaf: AtomicBool,
+    /// Holds one poll back before the model takes it, for the tests of a
+    /// poll that comes back late (`tap.rs`).
+    #[cfg(test)]
+    pub(super) late: super::tap::Late,
 }
 
 /// Why a follower ends.
