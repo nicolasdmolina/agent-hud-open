@@ -9,12 +9,22 @@ pub const HOMES_SECONDS: u32 = 15;
 /// `root` and the Hermes root home, `${HERMES_HOME:-$HOME/.hermes}` as the
 /// login shell has it, with its links resolved there; `profile`, a name and
 /// its resolved home for each folder under `profiles/`; `unresolved` and
-/// the name of each folder there that is still there and whose home could
-/// not be resolved (it cannot be entered, say), so that none is left out
-/// without a word; `python` and whether a `python3` can run the relay;
-/// `end`. With no root home it prints `none`. It reads and writes nothing
-/// else, and it carries its own deadline: it is killed [`HOMES_SECONDS`]
-/// after it starts.
+/// the name of each entry there whose home could not be resolved and is
+/// not known to be gone: a folder that cannot be entered, and a link, or
+/// anything else, that leads to no folder for a reason other than that
+/// nothing is there (a folder on the way cannot be searched, say);
+/// `python` and whether a `python3` can run the relay; `end`. With no root
+/// home it prints `none`. It reads and writes nothing else, and it carries
+/// its own deadline: it is killed [`HOMES_SECONDS`] after it starts.
+///
+/// `sh` cannot say why an entry leads nowhere, so `ls` is asked, in the
+/// `C` locale, and only its "No such file or directory" is word that the
+/// entry is gone, as the local route takes only "not found" for it. A
+/// file, and a link to one, is no profile's home and prints nothing. A
+/// `profiles` folder that cannot be listed still names no profile.
+///
+/// A name is printed as the bytes it is. A file name holds no NUL, so the
+/// words stay apart whatever a folder is called.
 ///
 /// `/usr/bin/python3` on a Mac without the developer tools is a stub that
 /// asks to install them in a window, so it is not run where
@@ -24,12 +34,16 @@ watch=$!
 real() { ( CDPATH= cd -P -- "$1" 2>/dev/null && pwd -P ); }
 if root=$(real "${HERMES_HOME:-$HOME/.hermes}"); then
   printf 'root\0%s\0' "$root"
-  for home in "$root"/profiles/*/; do
-    name=${home%/}
-    if at=$(real "$home"); then
-      printf 'profile\0%s\0%s\0' "${name##*/}" "$at"
+  for home in "$root"/profiles/*; do
+    if [ -d "$home" ] && at=$(real "$home"); then
+      printf 'profile\0%s\0%s\0' "${home##*/}" "$at"
     elif [ -d "$home" ]; then
-      printf 'unresolved\0%s\0' "${name##*/}"
+      printf 'unresolved\0%s\0' "${home##*/}"
+    elif [ ! -e "$home" ]; then
+      case $(LC_ALL=C ls -d "$home/." 2>&1 >/dev/null) in
+        *': No such file or directory') ;;
+        *) printf 'unresolved\0%s\0' "${home##*/}" ;;
+      esac
     fi
   done
   python=no
@@ -95,42 +109,52 @@ pub enum NoHomes {
 /// no profile's (Hermes allows a profile a name of `a-z`, `0-9`, `_`, `-`)
 /// names no home, and neither does one whose home is not a canonical path.
 /// Every home that is left is in the answer, or there is no answer. A
-/// profile's folder that could not be resolved is in it by name
-/// ([`Homes::unresolved`]): it is never left out as if it were not there.
+/// profile whose home could not be resolved is in it by name
+/// ([`Homes::unresolved`]).
+///
+/// The words are read as bytes, ended by NULs. A name or a path that is
+/// not UTF-8 is no word of the command's, no profile's name and no path
+/// that can be written here, and it makes nothing else unreadable. A
+/// profile whose home is at such a path is there and cannot be asked: it
+/// is among the unresolved.
 pub fn homes(output: &[u8]) -> Result<Homes, NoHomes> {
-    let text = std::str::from_utf8(output).map_err(|_| NoHomes::Garbled)?;
-    let mut words = text.split('\0');
+    let mut words = output.split(|byte| *byte == 0);
     let mut next = || words.next().ok_or(NoHomes::Garbled);
+    let text = |word| std::str::from_utf8(word).ok();
     let root = match next()? {
-        "none" => return Err(NoHomes::NoHermes),
-        "root" => next()?.to_owned(),
+        b"none" => return Err(NoHomes::NoHermes),
+        b"root" => text(next()?),
         _ => return Err(NoHomes::Garbled),
     };
     let (mut named, mut unresolved) = (Vec::new(), Vec::new());
     let python = loop {
         match next()? {
-            "profile" => {
+            b"profile" => {
                 let (name, path) = (next()?, next()?);
-                if let Some(profile) = Profile::folder(name).filter(|_| canonical(path)) {
-                    named.push(FarHome {
+                let Some(profile) = text(name).and_then(Profile::folder) else {
+                    continue;
+                };
+                match text(path) {
+                    Some(path) if canonical(path) => named.push(FarHome {
                         profile,
                         path: path.to_owned(),
-                    });
+                    }),
+                    Some(_) => {}
+                    None => unresolved.push(profile),
                 }
             }
-            "unresolved" => unresolved.extend(Profile::folder(next()?)),
-            "python" => break next()? == "yes",
+            b"unresolved" => unresolved.extend(text(next()?).and_then(Profile::folder)),
+            b"python" => break next()? == b"yes",
             _ => return Err(NoHomes::Garbled),
         }
     };
     // The end is said, and nothing after it.
     let end = (next()?, next()?);
-    if end != ("end", "") || next().is_ok() {
+    if end != (&b"end"[..], &b""[..]) || next().is_ok() {
         return Err(NoHomes::Garbled);
     }
-    if !canonical(&root) {
-        return Err(NoHomes::RootNotCanonical);
-    }
+    let root = root.filter(|root| canonical(root));
+    let root = root.ok_or(NoHomes::RootNotCanonical)?.to_owned();
     if !python {
         return Err(NoHomes::NoPython);
     }
