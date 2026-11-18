@@ -192,6 +192,7 @@ pub(super) fn read(
             title: None,
             client: None,
             machine: None,
+            live_total: None,
             title_fallback: None,
             cwd: None,
             model: model.unwrap_or_else(|| "Unknown".into()),

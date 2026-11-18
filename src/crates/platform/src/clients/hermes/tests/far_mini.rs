@@ -14,6 +14,9 @@
 //! visit begins (`tap.rs`), so no session is subscribed for a snapshot
 //! or an answer, and nothing answers a card: the cards go to requests of
 //! this test's own, which nobody answers.
+//!
+//! With `AGENT_HUD_FAR_COUNTS` set it also measures what each source of
+//! a session's count costs there (`far_mini_counts.rs`): reads again.
 use super::super::{tap, FarEntry, FarObserver, Pace, Standing};
 use crate::ssh_link::{
     unix::tests::{lab, transcript},
@@ -124,6 +127,31 @@ pub(super) fn read(link: &Link, script: &str) -> Option<String> {
     }
 }
 
+/// A link of this test's own, for its reading commands. A sign-in over
+/// the user's own proxy does not always come up in time, so it is tried
+/// three times, and each try that failed is said.
+fn opened(
+    receipt: &mut Receipt,
+    folder: &Folder,
+    target: &Target,
+    settings: &Settings,
+) -> Result<Link, String> {
+    let mut last = String::new();
+    for attempt in 1..=3 {
+        match Link::open(folder, target, settings) {
+            Ok(link) => return Ok(link),
+            Err(failure) => {
+                last = failure.to_string();
+                receipt.say(format!(
+                    "a link of the test's own did not open (try {attempt}): {last}"
+                ));
+                receipt.note_paths(folder);
+            }
+        }
+    }
+    Err(last)
+}
+
 /// The sockets in the control folder: one for each master that is up.
 fn sockets(folder: &Folder) -> Vec<String> {
     let plain = |name: &String| !name.ends_with(".pid") && !name.ends_with(".log");
@@ -208,7 +236,7 @@ fn run(
 
     // Before anything else: free disk, the config hashes, the install id.
     let began = Instant::now();
-    let link = Link::open(folder, &target, &settings)
+    let link = opened(receipt, folder, &target, &settings)
         .map_err(|failure| format!("STOP: the link did not open: {failure}"))?;
     receipt.say(format!(
         "first link up after {} ms",
@@ -348,6 +376,13 @@ fn run(
                 follower.reader
             ));
         }
+        // What each source of a session's count costs here (ticket 35).
+        if std::env::var_os("AGENT_HUD_FAR_COUNTS").is_some() {
+            let set = followers.set().clone();
+            for follower in set.iter() {
+                super::far_mini_counts::measure(&mut |line| receipt.say(line), follower);
+            }
+        }
         for (reader, polled) in polls(&log()) {
             let times: Vec<u64> = polled.iter().map(|poll| poll.0).collect();
             let calls: Vec<u64> = polled.iter().map(|poll| poll.1).collect();
@@ -382,7 +417,7 @@ fn run(
     ));
 
     // After: the same hashes, over a link of its own.
-    let link = Link::open(folder, &target, &settings)
+    let link = opened(receipt, folder, &target, &settings)
         .map_err(|failure| format!("the last link did not open: {failure}"))?;
     receipt.note_paths(folder);
     let after = config_hashes(&link).unwrap_or_default();

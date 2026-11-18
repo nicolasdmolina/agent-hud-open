@@ -16,6 +16,11 @@ pub struct Record {
     /// the machine Agent HUD runs on, which is every client's but a mirror
     /// of a far machine's sessions.
     pub machine: Option<String>,
+    /// What the session has used so far as its machine last said, where
+    /// that is known apart from its counted usage: a far session's, read
+    /// from its gateway while it runs. It is shown (`Log::live_total`)
+    /// and never metered; `usage` is all that counts.
+    pub live_total: Option<u64>,
     pub cwd: Option<String>,
     pub model: String,
     pub key: String,

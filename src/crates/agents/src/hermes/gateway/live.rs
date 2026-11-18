@@ -12,10 +12,11 @@
 //! stops believing it once that is too long ago, so a channel that hangs
 //! without a word gives the sessions back to the hooks all the same.
 use super::poll::Poll;
+use super::sample::Sample;
 use super::state::Gateway;
 use super::{Connection, Profile};
 use crate::LiveStates;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What the HUD can be told rests on: the profiles the newest poll that
 /// counted listed since the gateway was last ready, whose sessions in
@@ -24,6 +25,8 @@ use std::collections::BTreeSet;
 pub(super) struct Told {
     fresh: BTreeSet<Profile>,
     read_ms: i64,
+    /// What that poll's samples said the sessions have used (`sample.rs`).
+    samples: BTreeMap<Profile, Vec<(String, Sample)>>,
 }
 
 impl Told {
@@ -40,12 +43,17 @@ impl Told {
     pub(super) fn read_ms(&self) -> i64 {
         self.read_ms
     }
+    /// The samples the newest poll that counted took.
+    pub(super) fn samples(&self) -> &BTreeMap<Profile, Vec<(String, Sample)>> {
+        &self.samples
+    }
     /// A poll that counted came back at `now_ms`: the profiles it listed
     /// are current, and no others.
     pub(super) fn read(&mut self, poll: &Poll, now_ms: i64) {
         let listed = poll.profiles.iter().filter(|(_, l)| **l == Some(true));
         self.fresh = listed.map(|(profile, _)| profile.clone()).collect();
         self.read_ms = now_ms;
+        self.samples = poll.samples();
     }
 }
 

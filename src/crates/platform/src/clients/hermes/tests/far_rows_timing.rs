@@ -13,6 +13,13 @@
 //! which file it wrote. The measured time is the wait for a poll, the
 //! poll, the mirror write and the pass.
 //!
+//! The same for a far session's count (ticket 35): from Hermes saying
+//! a session has used more to its row showing that, held to the busy
+//! row's bound, with the mirrors' writer spacing its commits of counts
+//! as it does in the app. And the busy row's case once more while the
+//! counts of four sessions move all the time, so the rows are measured
+//! with the count writes going on beside them.
+//!
 //! Twenty runs of each, and a miss fails the test. Each prints its
 //! numbers as one line that begins with `TIMING`. They wait on the
 //! clock, the second for minutes, so they are run by hand:
@@ -37,14 +44,17 @@ use super::{
     super::Pace,
     fake::Fake,
     machines::{
+        counts::uses,
         fleet, here,
         mirrors::{far, works},
         ssh, until, Fleet, INSTALL,
     },
 };
 use agent_hud_agents::hermes::gateway::{Listed, Listing, Profile};
+use serde_json::json;
 use std::{
     collections::{BTreeMap, HashSet},
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 
@@ -164,6 +174,7 @@ fn grown(fleet: &mut Fleet, key: &str, rows: usize) {
     let listing = Listing {
         read_ms: crate::hooks::now_ms(),
         profiles: BTreeMap::from([(Profile::Default, sessions.collect())]),
+        samples: BTreeMap::new(),
     };
     let (writer, path) = (fleet.writer("a"), fleet.mirror(key, "default"));
     writer.listed(listing, fleet.number());
@@ -399,4 +410,127 @@ fn row_when_it_was_idle() {
         took.push(started(&mut fleet, &gateway, &key, &session, IDLE * 2));
     }
     held("row_when_it_was_idle", took, IDLE);
+}
+
+/// Hermes says `session` has used `total` by now; how long until its
+/// row shows that. The collector takes its turn as soon as a writer
+/// asks.
+fn counted(
+    fleet: &mut Fleet,
+    gateway: &Fake,
+    (key, session): (&str, &str),
+    total: u64,
+    limit: Duration,
+) -> Duration {
+    let id = far(key, session);
+    let began = Instant::now();
+    uses(gateway, session, total - total / 5, total / 5);
+    loop {
+        if fleet.turn() > 0 {
+            let row = fleet.far_rows().into_iter().find(|row| row.id == id);
+            if row.is_some_and(|row| row.tokens == json!(total)) {
+                return began.elapsed();
+            }
+        }
+        let took = began.elapsed();
+        assert!(
+            took <= limit,
+            "{session} does not show {total} after {took:?}"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// A count that moved, in a session that works.
+#[test]
+#[ignore = "waits on the clock: run by hand"]
+fn count_when_the_gateway_was_busy() {
+    let Some((mut fleet, gateway, key)) = following() else {
+        return;
+    };
+    works(&gateway, "s-busy", "Busy throughout");
+    fleet.listed(&far(&key, "s-busy"));
+    let mut took = Vec::new();
+    for run in 0..RUNS {
+        // From the start of a poll, a twentieth of the second between
+        // two polls later each time. The runs come a few seconds apart,
+        // so the writer's spacing has mostly passed for each: what a
+        // count waits when it moves again at once is in the lab test of
+        // one turn (`machines/counts.rs`).
+        let seen = polls(&gateway);
+        until("the next poll begins", || polls(&gateway) > seen);
+        std::thread::sleep(Duration::from_secs(1) * run / RUNS);
+        let total = 1_000 * (u64::from(run) + 1);
+        took.push(counted(
+            &mut fleet,
+            &gateway,
+            (&key, "s-busy"),
+            total,
+            BUSY * 2,
+        ));
+    }
+    held("count_when_the_gateway_was_busy", took, BUSY);
+    // The gateway was asked for the count at every poll, and no more.
+    let (stats, lists) = {
+        let world = gateway.world();
+        let lists = world.calls("session.active_list");
+        let own =
+            |(_, frame): &&(usize, serde_json::Value)| frame["params"]["profile"] == "default";
+        (
+            world.calls("session.stats").len(),
+            lists.iter().filter(own).count(),
+        )
+    };
+    println!("COUNT CALLS session.stats={stats} polls={lists}");
+    assert!(stats <= lists, "{stats} stats calls in {lists} polls");
+    assert!(stats + 4 >= lists, "{stats} stats calls in {lists} polls");
+}
+
+/// A session's row, when the gateway had busy sessions whose counts
+/// move at every poll: the row's bound with the count writes on.
+#[test]
+#[ignore = "waits on the clock: run by hand"]
+fn row_when_the_gateway_was_busy_and_counts_move() {
+    let Some((mut fleet, gateway, key)) = following() else {
+        return;
+    };
+    let busy = ["s-busy-0", "s-busy-1", "s-busy-2", "s-busy-3"];
+    for session in busy {
+        works(&gateway, session, "Busy throughout");
+        fleet.listed(&far(&key, session));
+    }
+    let over = AtomicBool::new(false);
+    let took = std::thread::scope(|scope| {
+        // Every session's count grows every 150 ms, for as long as the
+        // rows are measured.
+        scope.spawn(|| {
+            let mut total = 100;
+            while !over.load(Ordering::Acquire) {
+                total += 7;
+                for session in busy {
+                    uses(&gateway, session, total, total / 10);
+                }
+                std::thread::sleep(Duration::from_millis(150));
+            }
+        });
+        let mut took = Vec::new();
+        for run in 0..RUNS {
+            let seen = polls(&gateway);
+            until("the next poll begins", || polls(&gateway) > seen);
+            std::thread::sleep(Duration::from_secs(1) * run / RUNS);
+            let session = format!("s-turn-{run}");
+            took.push(started(&mut fleet, &gateway, &key, &session, BUSY * 2));
+        }
+        over.store(true, Ordering::Release);
+        took
+    });
+    held("row_when_the_gateway_was_busy_and_counts_move", took, BUSY);
+    // The counts were written beside the rows, and reached them.
+    let rows = fleet.far_rows();
+    let counted = |row: &&super::machines::mirrors::Row| row.tokens.as_u64() > Some(100);
+    assert_eq!(rows.iter().filter(counted).count(), busy.len(), "{rows:?}");
+    let log = fleet.log();
+    let commits = log.matches("counts=").count();
+    let stats = gateway.world().calls("session.stats").len();
+    println!("COUNT WRITES lines={commits} session.stats={stats}");
 }

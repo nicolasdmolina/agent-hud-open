@@ -36,6 +36,10 @@ pub(crate) struct LogHead {
     /// The far machine the session runs on (`Log::machine`).
     #[serde(default)]
     pub machine: Option<String>,
+    /// The most the session's machine has said it used so far
+    /// (`Log::live_total`): shown by `shown_tokens`, counted nowhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_total: Option<u64>,
     /// The session's first and latest prompts (`Log::prompts`).
     #[serde(default)]
     pub prompts: crate::naming::surfaces::PromptStamps,
@@ -109,6 +113,7 @@ impl LogHead {
             cwd: log.cwd.clone(),
             client: log.client.clone(),
             machine: log.machine.clone(),
+            live_total: log.live_total,
             prompts: log.prompts.clone(),
             updated: log.updated.clone(),
             usage: log.usage,
@@ -167,6 +172,7 @@ impl LogHead {
         self.model.hash(&mut hash);
         self.cwd.hash(&mut hash);
         self.machine.hash(&mut hash);
+        self.live_total.hash(&mut hash);
         self.activity_at(None).hash(&mut hash);
         self.usage.total().hash(&mut hash);
         self.list_cost.hash(&mut hash);
@@ -184,6 +190,15 @@ impl LogHead {
         if self.live.keep_words(&earlier.live) {
             self.prepare();
         }
+    }
+
+    /// The tokens the session's row and page show, where the ledger's
+    /// total for it is `counted`: that, or what its machine last said it
+    /// had used where that is more (`session_totals`). Nothing else
+    /// shows it: every total, statistic, cost and quota is the ledger's
+    /// alone, and so is the session as statistics name it (`session`).
+    pub fn shown_tokens(&self, counted: u64) -> u64 {
+        counted.max(self.live_total.unwrap_or(0))
     }
 
     pub fn activity_at(&self, child: Option<i64>) -> Option<i64> {

@@ -199,6 +199,7 @@ fn listing(session: &str, read_ms: i64) -> Listing {
     Listing {
         read_ms,
         profiles: BTreeMap::from([(Profile::Default, rows)]),
+        samples: BTreeMap::new(),
     }
 }
 
@@ -275,10 +276,13 @@ fn a_far_session_gets_its_row_from_the_live_list() {
     let asked: std::collections::BTreeSet<String> = (gateway.world().received.iter())
         .filter_map(|(_, frame)| frame["method"].as_str().map(str::to_owned))
         .collect();
+    // A session that works is also asked what it has used so far
+    // (ticket 35): one more read, which subscribes to nothing.
     let known = [
         "profiles.list",
         "session.active_list",
         "session.events.since",
+        "session.stats",
     ];
     assert!(
         asked.iter().all(|method| known.contains(&method.as_str())),

@@ -53,8 +53,10 @@ pub struct Gateway {
     /// cannot know of: an answer Hermes took, a restart, a dropped socket.
     pub(super) polls: u64,
     pub(super) cards: BTreeMap<Key, Card>,
-    /// What the last poll listed each live session as doing. It is only
-    /// reported (`statuses`, `poll_ms`); no poll reads it.
+    /// What the last poll listed each live session as doing. It is
+    /// reported (`statuses`, `poll_ms`), and says which sessions a far
+    /// poll asks for their count once more (`sample.rs`); no card is
+    /// decided by it.
     pub(super) listed: BTreeMap<SessionRef, Status>,
     /// What else that poll's list said of each (`listing.rs`).
     pub(super) rows: BTreeMap<SessionRef, super::listing::Listed>,
@@ -182,7 +184,7 @@ impl Gateway {
             .collect();
         let mut poll = Poll::new(self.id.clone(), self.polls, served, shown, recent);
         poll.turns = self.turns.watch();
-        Some(poll)
+        Some(self.sampling(poll))
     }
 
     /// Takes what happened at `now_ms` and returns what to do, in order.

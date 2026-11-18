@@ -722,3 +722,100 @@ fn a_page_looks_at_ten_thousand_of_a_mirrors_old_sessions_at_most() {
     assert_eq!(ids, far_named([10_020]));
     assert!(second.cursor.is_none());
 }
+
+/// What `hud_live` holds reaches every record of its session as
+/// `live_total`, which counts nothing; and a sample that changed reads
+/// its session again, and no other.
+#[test]
+fn a_mirrors_live_total_is_on_the_record_and_a_new_one_reads_the_session_again() {
+    use super::super::gateway::{Listed, Sample};
+    use super::super::mirror::{list, live};
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join(format!("profiles/{KEY}-default/state.db"));
+    // `s1` as the far database gave it, and `live1` from the live list.
+    let db = far_db(&path, Made::Written, "Mac mini", "default");
+    let said = Listed {
+        title: Some("Listed live".into()),
+        started_at: Some(1_760_000_100.0),
+        ..Listed::default()
+    };
+    assert_eq!(list(&db, &[("live1".to_owned(), said)], 1_000).unwrap(), 1);
+    let first = read(&db, &path, &Value::Null).unwrap();
+    assert_eq!(first.records.len(), 2);
+    assert!(first.records.iter().all(|r| r.live_total.is_none()));
+    let durable = counted(&first.records[0]);
+    let far = |id: &str| format!("hermes:{KEY}/default:{id}");
+    let sample = |input, output| Sample {
+        input,
+        output,
+        cache_read: 30,
+        cache_write: 5,
+    };
+    let shown = |page: &Page| {
+        let of = |r: &Record| (r.id.clone(), r.live_total, r.usage.total());
+        page.records.iter().map(of).collect::<Vec<_>>()
+    };
+
+    // A sample: its session is read again, with nothing more counted.
+    assert_eq!(
+        live(&db, &[("live1".to_owned(), sample(100, 20), 2_000)]).unwrap(),
+        1
+    );
+    let page = read(&db, &path, &first.watermark.unwrap()).unwrap();
+    assert_eq!(shown(&page), [(far("live1"), Some(155), 0)]);
+    // Nothing changed: nothing is read.
+    let watermark = page.watermark.unwrap();
+    assert!(read(&db, &path, &watermark).unwrap().records.is_empty());
+    // It grew: read again.
+    assert_eq!(
+        live(&db, &[("live1".to_owned(), sample(200, 40), 3_000)]).unwrap(),
+        1
+    );
+    let page = read(&db, &path, &watermark).unwrap();
+    assert_eq!(shown(&page), [(far("live1"), Some(275), 0)]);
+    // A session the far database gave has its sample on its records too,
+    // and they count what they counted without it.
+    assert_eq!(
+        live(&db, &[("s1".to_owned(), sample(1, 1), 3_000)]).unwrap(),
+        1
+    );
+    let page = read(&db, &path, &page.watermark.unwrap()).unwrap();
+    assert_eq!(shown(&page), [(far("s1"), Some(37), 180)]);
+    assert_eq!(counted(&page.records[0]), durable);
+    // The whole mirror read anew says the same.
+    let whole = read(&db, &path, &Value::Null).unwrap();
+    assert_eq!(
+        shown(&whole),
+        [(far("s1"), Some(37), 180), (far("live1"), Some(275), 0)]
+    );
+}
+
+/// `hud_live` means something in a mirror alone, and a mirror without
+/// the table reads as it did.
+#[test]
+fn a_database_that_is_no_mirror_gives_no_live_total() {
+    let home = tempfile::tempdir().unwrap();
+    let live = "CREATE TABLE hud_live (session_id TEXT PRIMARY KEY, input_tokens INTEGER,
+        output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER, read_ms INTEGER);
+        INSERT INTO hud_live VALUES ('s1', 5, 5, 5, 5, 1);";
+    // This machine's own database, with a table of that name in it.
+    let path = home.path().join("own/state.db");
+    let db = state_db(&path, None);
+    db.execute_batch(live).unwrap();
+    let page = read(&db, &path, &Value::Null).unwrap();
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].live_total, None);
+    // A mirror made by hand, without the table and then with it.
+    let path = home.path().join(format!("profiles/{KEY}-default/state.db"));
+    let db = far_db(&path, Made::ByHand, "Mac mini", "default");
+    let page = read(&db, &path, &Value::Null).unwrap();
+    assert_eq!(page.records[0].live_total, None);
+    db.execute_batch(live).unwrap();
+    let page = read(&db, &path, &page.watermark.unwrap()).unwrap();
+    assert_eq!(page.records[0].live_total, Some(20));
+    // A count past what a number holds is read as the most there is.
+    db.execute("UPDATE hud_live SET input_tokens=9223372036854775807", [])
+        .unwrap();
+    let page = read(&db, &path, &Value::Null).unwrap();
+    assert_eq!(page.records[0].live_total, Some(i64::MAX as u64));
+}

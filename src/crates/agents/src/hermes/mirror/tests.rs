@@ -339,3 +339,6 @@ fn the_mirrors_of_a_machine_are_found_whatever_profile_each_is_of() {
         [file(home.path(), &other, &Profile::Default)]
     );
 }
+
+#[path = "live_tests.rs"]
+mod live;

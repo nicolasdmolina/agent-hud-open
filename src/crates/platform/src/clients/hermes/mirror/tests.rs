@@ -75,6 +75,11 @@ fn reports() -> Profile {
 }
 
 fn bench(label: &str) -> Bench {
+    bench_spaced(label, super::SPACE)
+}
+
+/// A bench whose writer commits counts no more often than `space`.
+fn bench_spaced(label: &str, space: Duration) -> Bench {
     let temp = tempfile::tempdir().unwrap();
     let data = temp.path().canonicalize().unwrap().join("data");
     crate::os::private_directory(&data).unwrap();
@@ -94,7 +99,7 @@ fn bench(label: &str) -> Bench {
     let told = Arc::new(Told::default());
     let number = Arc::new(Number::default());
     number.now.store(1, Ordering::Release);
-    let writer = writer(&data, label, &told, &number);
+    let writer = writer_spaced(&data, label, &told, &number, space);
     Bench {
         data,
         core,
@@ -107,13 +112,23 @@ fn bench(label: &str) -> Bench {
 }
 
 fn writer(data: &Path, label: &str, told: &Arc<Told>, number: &Arc<Number>) -> Arc<Writer> {
+    writer_spaced(data, label, told, number, super::SPACE)
+}
+
+fn writer_spaced(
+    data: &Path,
+    label: &str,
+    told: &Arc<Told>,
+    number: &Arc<Number>,
+    space: Duration,
+) -> Arc<Writer> {
     let kept = told.clone();
     let changed: Changed = Arc::new(move |paths: &[PathBuf]| {
         kept.paths.lock().unwrap().extend(paths.iter().cloned());
         kept.at.lock().unwrap().push(Instant::now());
     });
     let log = Log::new(data).of(Some("mirror"));
-    let writer = Writer::start(data, (&key(), label), number.clone(), changed, log);
+    let writer = Writer::spaced(data, (&key(), label), number.clone(), changed, log, space);
     writer.unwrap()
 }
 
@@ -135,6 +150,7 @@ fn listing(profile: &Profile, sessions: &[(&str, &str)], read_ms: i64) -> Listin
     Listing {
         read_ms,
         profiles: BTreeMap::from([(profile.clone(), rows)]),
+        samples: BTreeMap::new(),
     }
 }
 
@@ -220,6 +236,8 @@ impl Bench {
 }
 
 /// The main file's size and time of change, and the write-ahead log's.
+mod live;
+
 fn stamps(path: &Path) -> [(u64, SystemTime); 2] {
     let wal = PathBuf::from(format!("{}-wal", path.display()));
     [path, wal.as_path()].map(|path| {

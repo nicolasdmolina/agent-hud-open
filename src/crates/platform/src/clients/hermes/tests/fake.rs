@@ -49,6 +49,9 @@ pub struct Stream {
     /// What else the live list says of the session (`title`, `model`,
     /// `source`, `started_at`); nothing where it is no object.
     pub row: Value,
+    /// What `session.stats` says of it; where it is no object, the zeros
+    /// Hermes answers for a session it holds no agent for.
+    pub stats: Value,
 }
 
 impl Stream {
@@ -816,6 +819,17 @@ fn answer(world: &mut World, frame: &Value, subscribed: &mut Vec<String>) -> Opt
                 params["replay_epoch"].as_str(),
                 params["last_sequence"].as_u64().unwrap_or(0),
             )
+        }
+        // The counters of the session's agent (`gateway/session_usage.py`).
+        "session.stats" => {
+            let Some(stream) = world.streams.get(&key) else {
+                return Some(refused(id, "not_found"));
+            };
+            match stream.stats.is_object() {
+                true => stream.stats.clone(),
+                false => json!({"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+                    "cache_write_tokens": 0, "total_tokens": 0, "model": ""}),
+            }
         }
         "session.resume" => {
             let Some(stream) = world.streams.get(&key) else {

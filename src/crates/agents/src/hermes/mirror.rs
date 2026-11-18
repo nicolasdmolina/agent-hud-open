@@ -5,8 +5,10 @@
 //! one that writes it.
 use super::gateway::{Profile, StoredKey};
 mod history;
+mod live;
 mod write;
 pub use history::{durable, held, note, reads, stored, Reads};
+pub use live::live;
 pub use write::{claim, file, files, list, relabel, ROOT};
 
 use crate::transcript::sql_columns;
@@ -70,5 +72,29 @@ fn text(value: &Sql) -> Option<&str> {
     match value {
         Sql::Text(text) => Some(text),
         _ => None,
+    }
+}
+
+/// The SQL for what `hud_live` says the session `s` has used so far, as
+/// one whole number; `NULL` for a database that is no mirror, or has no
+/// such table.
+pub(super) fn live_sql(db: &Connection, mirror: Option<&Mirror>) -> rusqlite::Result<&'static str> {
+    if mirror.is_none() || sql_columns(db, "hud_live")?.is_empty() {
+        return Ok("NULL");
+    }
+    Ok(
+        "(SELECT CAST(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens AS INTEGER) \
+        FROM hud_live WHERE session_id=s.id)",
+    )
+}
+
+/// A session's change fingerprint: its `counts`, and in a mirror also
+/// the `label` its machine shows and what `hud_live` says it has used,
+/// so a new label reads every session again and a new sample its own.
+pub(super) fn print(label: Option<&str>, counts: String, live: Option<u64>) -> String {
+    match (label, live) {
+        (None, _) => counts,
+        (Some(label), None) => format!("{label}\n{counts}"),
+        (Some(label), Some(live)) => format!("{label}\n{counts}\n{live}"),
     }
 }

@@ -26,6 +26,9 @@ pub struct Stream {
     /// What else the list says of the session (`title`, `model`, `source`,
     /// `started_at`); nothing where it is not an object.
     pub row: Value,
+    /// What `session.stats` says of it; where it is no object, the zeros
+    /// Hermes answers for a session it holds no agent for.
+    pub stats: Value,
 }
 
 impl Stream {
@@ -165,6 +168,15 @@ impl Hermes {
                 let stream = self.held(session)?;
                 let epoch = cursor.as_ref().map(|cursor| cursor.epoch.as_str());
                 Some(stream.since(epoch, cursor.as_ref().map_or(0, |cursor| cursor.seq)))
+            }
+            Step::Stats(session) => {
+                let stream = self.held(session)?;
+                let zeros = json!({"input_tokens": 0, "output_tokens": 0,
+                    "cache_read_tokens": 0, "cache_write_tokens": 0, "model": ""});
+                Some(match stream.stats.is_object() {
+                    true => stream.stats.clone(),
+                    false => zeros,
+                })
             }
             Step::Snapshot(session) => {
                 let stream = self.held(session)?;

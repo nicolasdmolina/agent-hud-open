@@ -3,7 +3,7 @@
 //! (`super::read`). A session's usage rows are read only once the page
 //! wants the session.
 use crate::hermes::gateway::{hud_session_id, stored_session_id, Machine, Profile};
-use crate::hermes::mirror::Mirror;
+use crate::hermes::mirror::{self, Mirror};
 use crate::hermes::session_counts;
 use crate::transcript::records::Record;
 use crate::transcript::{sql_column, sql_columns, sql_text, sql_time};
@@ -73,6 +73,7 @@ impl<'a> Sessions<'a> {
             "NULL"
         };
         let print = session_counts::sql(&s, &u);
+        let live = mirror::live_sql(db, mirror.as_ref())?;
         // A `state.db` under a Hermes home is this machine's, and its folder
         // says whose: a named profile's in `profiles/<name>`, else the default
         // profile's of whatever root holds it. A mirror's own table says whose
@@ -84,7 +85,7 @@ impl<'a> Sessions<'a> {
         Ok(Self {
             db,
             select: format!(
-                "SELECT s.rowid,s.id,s.started_at,{},{last_seen},{print} FROM sessions s",
+                "SELECT s.rowid,s.id,s.started_at,{},{last_seen},{print},{live} FROM sessions s",
                 fields.join(",")
             ),
             usage: u,
@@ -165,11 +166,7 @@ impl<'a> Sessions<'a> {
                 .max()
                 .unwrap_or(started);
             let counts = sql_text(row, 18).unwrap_or_default();
-            // A mirror's label is part of each session's print, so a machine
-            // shown under a new label reads every session again.
-            let print = label
-                .as_ref()
-                .map_or(counts.clone(), |label| format!("{label}\n{counts}"));
+            let print = mirror::print(label.as_deref(), counts, live_total(row)?);
             if !wanted(rowid, updated, &print) {
                 continue;
             }
@@ -180,4 +177,11 @@ impl<'a> Sessions<'a> {
         span.more = span.seen == looked || taken == read;
         Ok(span)
     }
+}
+
+/// What a mirror's `hud_live` says the session `row` holds has used so
+/// far (`mirror::live_sql`); None where it says nothing.
+pub(super) fn live_total(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<u64>> {
+    let total = row.get::<_, Option<i64>>(19)?;
+    Ok(total.map(|total| total.max(0) as u64))
 }

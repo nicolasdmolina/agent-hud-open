@@ -8,6 +8,7 @@ mod forks;
 mod hermes_custom_roots;
 mod hermes_history;
 mod hermes_identity;
+mod hermes_live;
 mod hermes_mirror;
 mod hermes_questions;
 mod ingestion;

@@ -76,6 +76,7 @@ pub fn read(path: &Path) -> rusqlite::Result<Page> {
         title: None,
         client: None,
         machine: None,
+        live_total: None,
         title_fallback: None,
         cwd,
         model: format!("{model}#{provider}"),

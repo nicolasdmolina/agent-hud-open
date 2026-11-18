@@ -38,6 +38,7 @@ Three more changes were made when the recordings were copied here:
 | `ticket-lifetime.json` | single use, 30 s expiry, HTTP 403 otherwise |
 | `session-list.json` | `session.list`, `session.active_list`, `session.info`, two profiles, a host's socket, `profiles.list` |
 | `session-list-scheduled-job.json` | a cron run appearing as `source: cron` |
+| `session-stats.json` | `session.stats` on a socket that subscribed to nothing: the counts of a session mid-turn, and the zeros Hermes answers for a session it holds no agent for (a scheduled job's). Recorded for ticket 35 on 2026-11-16 |
 | `real-gateway-readonly-aggregate.json` | a live gateway, counts only |
 | `question-answered-here.json` | `clarify.request`, `clarify.respond`, `clarify.settled` |
 | `question-answered-elsewhere.json` | another client answers; late answer `already_resolved` |
