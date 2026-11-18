@@ -81,3 +81,34 @@ impl Book {
         (state.far.values().find(owned)).map(|far| far.followers.clone())
     }
 }
+
+impl super::Machines {
+    /// Hermes followed in a lab: this machine's gateway is looked for in
+    /// `folder` alone, and there is no connection list and no far route.
+    /// Nothing of the user's own is read.
+    pub(crate) fn in_a_lab(
+        folder: &std::path::Path,
+        requests: agent_hud_core::requests::Requests,
+    ) -> Self {
+        let sources = super::Sources {
+            local: Arc::new(crate::clients::hermes::route::local::Local::at(
+                folder.join("hermes"),
+            )),
+            here: None,
+            list: None,
+            ways: Err("no far machine in a lab"),
+            look: std::time::Duration::from_millis(40),
+            pace: crate::clients::hermes::Pace::default(),
+            changed: Arc::new(|_| {}),
+            told: Arc::new(|_| {}),
+        };
+        let data = folder.join("data");
+        crate::os::private_directory(&data).expect("the lab's data folder");
+        Self::start_with(sources, &data, requests, Arc::new(|| {})).expect("the machines")
+    }
+
+    /// How often Hermes's own gateways were asked to be polled now.
+    pub(crate) fn nudges(&self) -> u64 {
+        (self.nudged).load(std::sync::atomic::Ordering::Acquire)
+    }
+}

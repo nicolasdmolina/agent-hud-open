@@ -19,6 +19,11 @@
 //!   at what a pass costs. So what changes in a mirror shows after one
 //!   pass, whether it is one session's count or the label of them all.
 //!
+//! A page of Hermes's own database therefore reads two hundred sessions
+//! at most: a hundred new ones, and a hundred old ones whose counts grew
+//! or that were active since. A page of a mirror reads a hundred new ones
+//! and up to ten thousand old ones.
+//!
 //! So a session that begins is read on the first page after it, however
 //! many the database holds and wherever a pass has got to. Read at the
 //! end of the pass, as it was, it waited one page for every hundred
@@ -37,8 +42,8 @@ mod rows;
 mod usage;
 use rows::Sessions;
 
-/// How many new sessions one page reads; and how many old ones it looks
-/// at, and reads at most.
+/// How many new sessions one page reads at most; and how many old ones
+/// of Hermes's own database it looks at, and reads at most beside them.
 const PAGE: i64 = 100;
 /// How many old sessions of a mirror one page looks at, and reads at
 /// most.

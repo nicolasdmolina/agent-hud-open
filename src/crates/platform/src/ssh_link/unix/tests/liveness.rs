@@ -77,13 +77,15 @@ fn a_long_log_is_emptied_and_the_masters_last_words_are_still_read() {
         .find(|name| name.ends_with(".log"))
         .map(|name| folder.path().join(name))
         .unwrap();
-    // A forward with no far listener makes the master write a line.
+    // A forward with no far listener makes the master write a line for
+    // each connection. One is made, and its line waited for: a line of a
+    // connection made on and on until one line showed could come after
+    // the log was emptied, and start it (ticket 59).
     let nobody = SocketAddr::from((Ipv4Addr::LOCALHOST, super::lab::closed_port()));
     let forward = link.forward(nobody).unwrap();
-    assert!(until(Duration::from_secs(10), || {
-        let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, forward.local));
-        fs::metadata(&log).is_ok_and(|node| node.len() > 0)
-    }));
+    let _one = TcpStream::connect((Ipv4Addr::LOCALHOST, forward.local)).unwrap();
+    assert!(until(Duration::from_secs(30), || fs::read_to_string(&log)
+        .is_ok_and(|said| said.contains("open failed"))));
     let mut filler = fs::OpenOptions::new().append(true).open(&log).unwrap();
     filler.write_all(&vec![b'x'; 300 * 1024]).unwrap();
     assert_eq!(link.alive(), Ok(()));

@@ -170,9 +170,12 @@ pub(crate) trait Route: Send + Sync {
     /// The link the machine is reached over now, or None while there is
     /// none: it was lost, or is not open yet. Another link has another
     /// epoch, and so has another way to the machine. Asked with a
-    /// follower's model locked, so it waits on nothing. A route that
-    /// needs no link, as the one to this machine, is of one epoch for its
-    /// whole life.
+    /// follower's model locked, so it waits on no other thread and on
+    /// nothing far: the route over SSH looks at its master's process, and
+    /// reads one small file of this machine (the master's last words) once
+    /// for each link, the first time it finds the master gone. A route
+    /// that needs no link, as the one to this machine, is of one epoch for
+    /// its whole life.
     fn epoch(&self) -> Option<Epoch> {
         Some(Epoch::default())
     }

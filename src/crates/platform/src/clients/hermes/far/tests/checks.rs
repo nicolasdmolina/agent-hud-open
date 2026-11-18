@@ -1,8 +1,12 @@
 //! What the relay checks before it sends anything: each refusal by its
 //! name, and what the check on the listener does and does not prove.
+//!
+//! A relay with a stub has the app's own deadline, as one without has:
+//! with a short one, a loaded machine cut the relay off before its check
+//! said anything (tickets 56 and 59).
 use super::{
     super::{Far, Silent},
-    fixture::{chmod, far_with, private_folder, text, write_pointer, FarLab, Manner, SHORT},
+    fixture::{chmod, far_with, private_folder, text, write_pointer, FarLab, Manner},
 };
 use agent_hud_agents::hermes::gateway::{
     far::{Quiet, Request, Unchecked, RELAY_SECONDS},
@@ -251,7 +255,7 @@ fn where_peer_credentials_cannot_be_read_the_relay_refuses() {
     let gate = lab.gate(&home, Manner::gateway("one", &[&home]));
     // Stubbed: this machine can say who listens, so the relay is told it
     // cannot.
-    let far = far_with(SHORT, "def peer_uid(listener):\n    return None\n");
+    let far = far_with(RELAY_SECONDS, "def peer_uid(listener):\n    return None\n");
     assert_eq!(
         refused(&far, &lab, &home),
         Some(Unchecked::NoPeerCredentials)
@@ -362,7 +366,7 @@ fn a_path_swapped_after_it_was_opened_does_not_change_what_was_checked() {
         moved = text(&moved),
         other = text(&other),
     );
-    let far = far_with(SHORT, &swap);
+    let far = far_with(RELAY_SECONDS, &swap);
     let told = far.exchange(&lab.link, text(&home), Request::Identify);
     assert_eq!(
         told.said.expect("an answer").value()["who"],

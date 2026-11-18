@@ -4,7 +4,7 @@
 use super::super::{Failure, Settings, Slots};
 use super::world::{most, open, raw, readers, sessions, settings, Watch, World, PYTHON};
 use crate::ssh_link::unix::tests::lab::until;
-use crate::ssh_link::End;
+use crate::ssh_link::{End, FarCommand};
 use agent_hud_agents::hermes::far_history::{self as far, Reply, Request};
 use rusqlite::Connection;
 use std::{
@@ -336,4 +336,64 @@ fn the_reader_never_ends_through_pythons_own_shutdown() {
     assert_eq!(refused, Err(Failure::Refused(far::No::Request)));
     assert!(!ran.exists(), "a reader ended through Python's shutdown");
     link.close();
+}
+
+/// The far Python with the exit hook of the test above in it, its
+/// standard error closed where `closed`, and `more` run before the reader:
+/// how the reader ended, and whether Python's own shutdown ran.
+fn run_hooked(world: &World, request: &str, closed: bool, more: &str) -> (End, String, bool) {
+    let ran = world.lab.at("shutdown-ran");
+    let _ = fs::remove_file(&ran);
+    let hook = format!("import atexit, sys; atexit.register(open, {ran:?}, \"w\")");
+    let close = if closed { "exec 2>&-\n" } else { "" };
+    world.stand_in(&format!(
+        "shift 3\n{close}exec {PYTHON} -I -c '{hook}; {more}exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
+    ));
+    let link = world.link();
+    let ran_far = link
+        .run(&FarCommand {
+            script: far::SCRIPT,
+            args: &[&world.mark(), "5.000", &world.home, request],
+            stdin: Some(far::PROGRAM.as_bytes()),
+            limit: Duration::from_secs(30),
+            most_output: 64 * 1024,
+        })
+        .unwrap();
+    link.close();
+    (ran_far.end, ran_far.stderr, ran.exists())
+}
+
+/// A crash whose line cannot be written, its channel gone, still ends at
+/// once: as a failed write does, never through Python's own shutdown
+/// (ticket 55's verifier, finding 1).
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_crash_with_its_error_channel_closed_never_ends_through_pythons_own_shutdown() {
+    let Some(world) = World::start() else { return };
+    // A request the caller cannot build, which the reader crashes on.
+    let crash = "{\"k\":\"prints\",\"after\":0,\"n\":\"x\"}";
+    let (end, said, shutdown) = run_hooked(&world, crash, false, "");
+    assert_eq!(end, End::Ended(1));
+    assert_eq!(said, "far-history: crash ValueError\n");
+    assert!(!shutdown);
+    let (end, said, shutdown) = run_hooked(&world, crash, true, "");
+    assert_eq!((end, said.as_str()), (End::Ended(4), ""));
+    assert!(!shutdown, "a crash ended through Python's shutdown");
+}
+
+/// An interrupt in the main thread is a crash like any other: one line
+/// and status 1, never a traceback and Python's own shutdown (ticket 55's
+/// `BaseException`; its verifier, finding 2).
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn an_interrupt_is_a_crash_line_and_never_pythons_own_shutdown() {
+    let Some(world) = World::start() else { return };
+    world.add_session(&world.db(), "s1", 2);
+    // The reader names its home by a digest first thing: the interrupt
+    // comes there, in the main thread.
+    let interrupt = "import hashlib, signal; real = hashlib.sha256; hashlib.sha256 = lambda *a: (signal.raise_signal(signal.SIGINT), real(*a))[1]; ";
+    let (end, said, shutdown) = run_hooked(&world, "{\"k\":\"probe\"}", false, interrupt);
+    assert_eq!(end, End::Ended(1), "{said}");
+    assert_eq!(said, "far-history: crash KeyboardInterrupt\n");
+    assert!(!shutdown, "an interrupt ended through Python's shutdown");
 }

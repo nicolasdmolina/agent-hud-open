@@ -115,8 +115,13 @@ fn the_program_is_one_short_file_of_the_standard_library_that_only_reads() {
     }
     assert_eq!(PROGRAM.matches("open(").count(), 1);
     assert!(PROGRAM.contains("os.open(path, os.O_RDONLY | os.O_NONBLOCK"));
-    assert_eq!(PROGRAM.matches("write(").count(), 2);
-    assert!(PROGRAM.contains("os.write(1, view)") && PROGRAM.contains("os.write(2, ("));
+    // One write, by `say`, to standard output; and to standard error for
+    // the crash line alone (ticket 59: its failure ends the reader as any
+    // failed write does).
+    assert_eq!(PROGRAM.matches("write(").count(), 1);
+    assert!(PROGRAM.contains("def say(data, to=1):") && PROGRAM.contains("os.write(to, view)"));
+    assert_eq!(PROGRAM.matches(", 2)").count(), 1);
+    assert!(PROGRAM.contains("type(error).__name__).encode(), 2)"));
 }
 
 #[test]
