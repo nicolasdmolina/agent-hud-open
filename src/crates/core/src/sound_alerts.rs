@@ -8,6 +8,7 @@
 //! them is decided then, so none sounds on its own later.
 use super::*;
 
+mod kept;
 mod requests;
 pub(crate) use requests::Heard;
 use requests::Request;
@@ -24,6 +25,10 @@ pub(crate) struct Tracker {
     /// Every identity already decided, sounded or not, and when it was
     /// last among the inputs; one gone for a day is forgotten.
     decided: HashMap<String, i64>,
+    /// Whether an identity was decided or forgotten since the file that
+    /// keeps them across a relaunch was last told (`kept.rs`).
+    changed: bool,
+    kept: Option<kept::Kept>,
     revision: u64,
     items: VecDeque<Value>,
 }
@@ -52,13 +57,29 @@ impl Tracker {
             primed: false,
             waits: HashMap::new(),
             decided: HashMap::new(),
+            changed: false,
+            kept: None,
             revision: 0,
             items: VecDeque::new(),
         }
     }
+    /// A tracker that starts with what the one before it decided and
+    /// saved in `file`, less what is older than a day at `now`, and saves
+    /// there what it decides. A request decided before a relaunch does
+    /// not sound after it, whenever its card comes back.
+    pub fn kept(file: std::path::PathBuf, now: i64) -> Self {
+        let (kept, decided) = kept::Kept::load(file, now, KEPT_MS);
+        Self {
+            decided,
+            kept: Some(kept),
+            ..Self::new()
+        }
+    }
     /// Whether `id` is new, noting it as seen now either way.
     fn first(&mut self, id: &str, now: i64) -> bool {
-        self.decided.insert(id.into(), now).is_none()
+        let new = self.decided.insert(id.into(), now).is_none();
+        self.changed |= new;
+        new
     }
     /// The alerts this look adds, from the island's completions and the
     /// sessions' waits; with `sound` off in `settings` it still notes what it
@@ -165,7 +186,12 @@ impl Tracker {
             );
         }
         self.waits = waits;
+        let decided = self.decided.len();
         self.decided.retain(|_, at| now - *at < KEPT_MS);
+        self.changed |= self.decided.len() != decided;
+        if let Some(kept) = &mut self.kept {
+            kept.keep(&self.decided, std::mem::take(&mut self.changed), now);
+        }
         // What waits at the first look was there before the app: noted only.
         let primed = std::mem::replace(&mut self.primed, true);
         if settings["sound"] != true {

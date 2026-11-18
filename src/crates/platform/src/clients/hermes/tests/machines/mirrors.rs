@@ -55,6 +55,7 @@ impl Fleet {
     /// One turn of the collector at a channel's wake: how many files the
     /// writers had told of.
     pub(in crate::clients::hermes) fn turn(&mut self) -> usize {
+        self.hear();
         let told = std::mem::take(&mut *self.told.lock().unwrap());
         let count = told.len();
         if count == 0 {

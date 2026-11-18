@@ -1,6 +1,9 @@
 use super::*;
 
+mod relaunch;
+
 const T: i64 = 1_800_000_000_000;
+const DAY: i64 = 86_400_000;
 
 fn on() -> Value {
     json!({"sound":true,"soundNeedsYou":"Glass","soundFinished":"Hero"})

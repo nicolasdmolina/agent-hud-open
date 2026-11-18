@@ -382,3 +382,50 @@ fn poll_time_over_the_link() {
     let name = "poll_time_over_the_link_beside_a_slow_replay";
     held(name, twenty_more(&far), POLL, POLL, 0);
 }
+
+/// Ten sessions that are listed and idle beside one that works: every
+/// poll looks at each of the ten (ticket 33), and a card of the busy one
+/// is held to the bound of any busy session, and the poll to its own.
+#[test]
+#[ignore = "waits on the clock: run by hand"]
+fn card_and_poll_time_with_ten_idle_sessions() {
+    let pace = Pace {
+        trace: true,
+        ..Pace::default()
+    };
+    let Some((far, gateway)) = following(pace) else {
+        return;
+    };
+    for index in 0..10 {
+        let session = format!("s-idle-{index}");
+        works(&gateway, &session);
+        gateway.tells_quietly(PROFILE, &session, "message.complete", json!({}));
+    }
+    works(&gateway, "s-busy");
+    let seen = polls(&gateway);
+    until("polls list them", || polls(&gateway) > seen + 2);
+    // The looks are on: each poll asks where each idle stream is.
+    let looks = |gateway: &Fake| {
+        let calls = gateway.world().calls("session.events.since");
+        let idle = |(_, frame): &&(usize, Value)| {
+            let session = frame["params"]["session_id"].as_str().unwrap_or("");
+            session.starts_with("s-idle-") && frame["params"].get("replay_epoch").is_none()
+        };
+        calls.iter().filter(idle).count()
+    };
+    let (from, looked) = (polls(&gateway), looks(&gateway));
+    let took = twenty(&far, &gateway, &["s-busy"], Duration::from_secs(1), "ten");
+    let (polled, looked) = (polls(&gateway) - from, looks(&gateway) - looked);
+    println!("TIMING card_and_poll_time_with_ten_idle_sessions polls={polled} looks={looked}");
+    assert!(looked >= polled * 9, "{looked} looks in {polled} polls");
+    held("card_with_ten_idle_sessions", took, BUSY, BUSY_MOST, 1);
+    let times = poll_times(&far);
+    let last = times[times.len() - 20..].to_vec();
+    held("poll_time_with_ten_idle_sessions", last, POLL, POLL * 3, 1);
+    // One of the ten runs a turn between two polls: it is told.
+    gateway.tells_quietly(PROFILE, "s-idle-3", "message.start", json!({}));
+    gateway.tells_quietly(PROFILE, "s-idle-3", "message.complete", json!({}));
+    until("the turn's end is told", || {
+        far.log().contains("turn ended session=")
+    });
+}

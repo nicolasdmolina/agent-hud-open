@@ -207,6 +207,14 @@ engine code that decides by client name. It goes in five slices:
    and reads them, with no file event needed, and also where the last
    read of one failed and its pause still runs. A channel never reads a
    source itself: collection reads stay in the collector's passes.
+
+   A third callback, `hooks::Told`, takes what a hook of the client would
+   have reported where no hook of this machine runs: a channel that
+   follows the client on another machine (Hermes's far gateways) reads
+   that a turn started or ended and says it as the hook event the
+   client's own hook makes, built beside the client's descriptor
+   (`agents/src/hermes/gateway/turns.rs`). Core takes it in with the
+   hooks' events and cannot tell the two apart.
 4. **Telling a client's process**.
    - `Agent::program` names the command-line program.
    - `agents::process` holds the caller types: `Ancestor` and `Caller` (the kernel-reported parents and the callback's own environment) and `Origin`.

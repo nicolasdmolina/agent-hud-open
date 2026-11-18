@@ -23,12 +23,12 @@ use super::{
     fake::Fake,
     marked, quick,
 };
-use crate::hooks::Changed;
+use crate::hooks::{Changed, Told};
 use crate::ssh_link::{
     unix::tests::lab::{self, short_base, Lab},
     Folder, Settings,
 };
-use agent_hud_agents::hermes::AGENT;
+use agent_hud_agents::{hermes::AGENT, HookEvent};
 use agent_hud_core::{requests::Requests, AgentHudCore};
 use serde_json::{json, Value};
 use std::{
@@ -38,6 +38,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "machines/alerts.rs"]
+mod alerts;
 #[path = "machines/answers.rs"]
 mod answers;
 #[path = "machines/guards.rs"]
@@ -94,6 +96,11 @@ pub(super) struct Fleet {
     /// When a writer first said so since a test last asked
     /// (`far_rows_timing.rs`): the moment after its commit.
     pub told_at: Arc<Mutex<Option<Instant>>>,
+    /// The turns the far followers said started or ended, which a turn
+    /// of the collector hands to core as hook events
+    /// (`machines/alerts.rs`); and every one handed over so far.
+    pub heard: Arc<Mutex<Vec<HookEvent>>>,
+    pub facts: Vec<HookEvent>,
     /// Core reads the mirrors, and its file watcher has nothing to say:
     /// it hears that no file changed before every pass.
     pub silent: bool,
@@ -206,6 +213,8 @@ pub(super) fn fleet(hosts: usize) -> Option<Fleet> {
         core,
         told: Arc::default(),
         told_at: Arc::default(),
+        heard: Arc::default(),
+        facts: Vec::new(),
         silent: false,
         data,
         local,
@@ -257,6 +266,7 @@ impl Fleet {
             look: Duration::from_millis(40),
             pace,
             changed: self.changed(),
+            told: self.hears(),
         };
         let (requests, wake) = (self.requests.clone(), Arc::new(|| {}));
         let machines = Machines::start_with(sources, &self.data, requests, wake);
@@ -271,6 +281,23 @@ impl Fleet {
             at.lock().unwrap().get_or_insert_with(Instant::now);
             kept.lock().unwrap().extend(paths.iter().cloned());
         })
+    }
+
+    /// What a far follower is given to say a turn started or ended: the
+    /// facts are kept, as the hooks keep them.
+    pub(super) fn hears(&self) -> Told {
+        let kept = self.heard.clone();
+        Arc::new(move |event: HookEvent| kept.lock().unwrap().push(event))
+    }
+
+    /// Hands core what the far followers said since the last call, as
+    /// the collector does at a channel's wake.
+    pub(super) fn hear(&mut self) {
+        let events = std::mem::take(&mut *self.heard.lock().unwrap());
+        if !events.is_empty() {
+            self.facts.extend(events.iter().cloned());
+            self.core.ingest_hook_events(events);
+        }
     }
 
     /// Stops following, as turning client hooks off does.
@@ -297,6 +324,7 @@ impl Fleet {
     }
 
     pub(super) fn snapshot(&mut self) -> Value {
+        self.hear();
         if self.silent {
             self.core.file_changes(Some(HashSet::new()));
         }

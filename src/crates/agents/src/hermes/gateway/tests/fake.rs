@@ -63,6 +63,9 @@ pub struct Hermes {
     pub failing: Vec<Step>,
     /// Every step the last poll asked, in order.
     pub asked: Vec<Step>,
+    /// The turns the last whole poll told, which the connection takes
+    /// after everything it gives the model (`turns.rs`).
+    pub told: Vec<Turn>,
 }
 
 impl Hermes {
@@ -158,7 +161,7 @@ impl Hermes {
                     .collect();
                 Some(json!({ "sessions": rows }))
             }
-            Step::Since { session, cursor } => {
+            Step::Since { session, cursor } | Step::Watch { session, cursor } => {
                 let stream = self.held(session)?;
                 let epoch = cursor.as_ref().map(|cursor| cursor.epoch.as_str());
                 Some(stream.since(epoch, cursor.as_ref().map_or(0, |cursor| cursor.seq)))
@@ -187,6 +190,12 @@ impl Hermes {
             _ => None,
         };
         self.asked.iter().filter_map(from).collect()
+    }
+    /// What the last poll asked for the cards: everything but the looks
+    /// at the streams of a far machine's idle sessions (`turns.rs`).
+    pub fn for_cards(&self) -> Vec<Step> {
+        let card = |step: &&Step| !matches!(step, Step::Watch { .. });
+        self.asked.iter().filter(card).cloned().collect()
     }
     /// How many snapshots the last poll took.
     pub fn snapshots(&self) -> usize {
@@ -220,7 +229,9 @@ pub fn poll(gateway: &mut Gateway, hermes: &mut Hermes, now_ms: i64) -> Vec<Effe
         return Vec::new();
     };
     ask(&mut poll, hermes);
-    gateway.apply(Input::Polled(poll), now_ms)
+    let effects = gateway.apply(Input::Polled(poll), now_ms);
+    hermes.told = gateway.take_turns();
+    effects
 }
 
 /// An `identify` answer for a gateway that is ready, serving `profiles`.

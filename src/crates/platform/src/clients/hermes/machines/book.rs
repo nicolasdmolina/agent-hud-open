@@ -26,7 +26,7 @@ use crate::{
         route::{switch::Switch, Route},
         Pace,
     },
-    hooks::{Changed, Wake},
+    hooks::{Changed, Told, Wake},
     ssh_link::{Folder, Settings},
 };
 use agent_hud_agents::hermes::{
@@ -56,6 +56,8 @@ pub(crate) struct Book {
     wake: Wake,
     /// Tells core which files of a machine's mirrors changed.
     changed: Changed,
+    /// Tells core the turns that start and end on a far machine.
+    told: Told,
     pub(super) pace: Pace,
     pub(super) log: Log,
     /// None where no route can be made, with the word for why.
@@ -121,7 +123,7 @@ impl Book {
     pub(crate) fn start(
         (data, pace): (&Path, Pace),
         requests: Requests,
-        (wake, changed): (Wake, Changed),
+        (wake, changed, told): (Wake, Changed, Told),
         ways: Result<Ways, &'static str>,
         here: Option<Here>,
         bindings: Bindings,
@@ -139,6 +141,7 @@ impl Book {
             requests,
             wake,
             changed,
+            told,
             pace,
             log: Log::new(data).of(Some("machines")),
             ways,
@@ -225,7 +228,7 @@ impl Book {
                     requests,
                     wake,
                     self.pace,
-                    mirror.ok(),
+                    (mirror.ok(), Some(self.told.clone())),
                 ) else {
                     return Role::Alias;
                 };

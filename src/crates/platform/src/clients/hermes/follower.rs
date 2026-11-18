@@ -47,6 +47,12 @@ pub(super) struct Shared {
     /// The writer of its machine's mirrors, which is told what each poll
     /// listed; none for a gateway of this machine (`mirror.rs`).
     pub(super) mirror: Option<Arc<super::mirror::Writer>>,
+    /// Who is told the turns that start and end in a far machine's
+    /// sessions; none for a gateway of this machine, whose hooks tell
+    /// them (`turns.rs`).
+    pub(super) turns: Option<crate::hooks::Told>,
+    /// The sessions whose streams are not looked at for a while.
+    pub(super) rests: super::turns::Rests,
     /// The route number the polls' socket was opened under (`link.rs`).
     pub(super) under: AtomicU64,
     /// The label of the machine its gateway runs on, which its cards
@@ -162,6 +168,7 @@ impl Shared {
         let now = crate::hooks::now_ms();
         let effects = model.gateway.apply(input, now);
         self.carry(model, effects, now);
+        self.turned(model, now);
         self.tell(&model.gateway, now);
     }
 

@@ -153,7 +153,7 @@ fn a_poll_is_written_under_the_route_number_its_socket_was_opened_under() {
         requests,
         wake,
         quick(),
-        mirror,
+        (mirror, None),
     )
     .unwrap();
     let rows = || {

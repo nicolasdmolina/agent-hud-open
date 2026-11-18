@@ -22,7 +22,7 @@ use super::{
     Observer, Pace,
 };
 use crate::{
-    hooks::{Changed, Wake},
+    hooks::{Changed, Told, Wake},
     ssh_link::{Folder, Settings},
 };
 use agent_hud_agents::hermes::{connections::CONNECTIONS, FAR_ROUTE};
@@ -76,6 +76,8 @@ pub(crate) struct Sources {
     pub(crate) pace: Pace,
     /// Tells core which files of the far machines' mirrors changed.
     pub(crate) changed: Changed,
+    /// Tells core the turns that start and end on the far machines.
+    pub(crate) told: Told,
 }
 
 /// The thread that looks at the list, and what ends it.
@@ -91,12 +93,13 @@ impl Machines {
     /// Follows this machine's Hermes and every far machine the connection
     /// list leads to, logging into `data`. The far machines' sessions
     /// are kept in mirrors under `data`, and `changed` is told of each
-    /// write to one.
+    /// write to one. `told` is given each turn that is read to start or
+    /// end on a far machine, as the fact a hook gives of this one.
     pub fn start(
         data: &Path,
         requests: Requests,
         wake: Wake,
-        changed: Changed,
+        (changed, told): (Changed, Told),
     ) -> Result<Self, String> {
         let local = Arc::new(Local::new()?);
         let home = crate::os::home_dir()?;
@@ -125,6 +128,7 @@ impl Machines {
             look: LOOK,
             pace: Pace::default(),
             changed,
+            told,
         };
         Self::start_with(sources, data, requests, wake)
     }
@@ -142,7 +146,7 @@ impl Machines {
         let book = Book::start(
             (data, pace),
             far,
-            (woken, sources.changed),
+            (woken, sources.changed, sources.told),
             sources.ways,
             sources.here,
             bindings,

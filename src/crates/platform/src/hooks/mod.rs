@@ -27,6 +27,7 @@ mod reminders;
 mod reviewer;
 pub(crate) mod rewake;
 mod statusline;
+mod told;
 mod transcript;
 mod turn_log;
 // The callback channel: a Unix socket, or a named pipe on Windows.
@@ -44,6 +45,7 @@ pub use inbox::{record_delivery, record_event};
 pub use install::{apply_plan, install_plans, InstallContext, InstallPlan};
 pub(crate) use install::{target as settings_target, write_contents as write_settings};
 pub use statusline::account_reports;
+pub use told::Told;
 
 pub const PAYLOAD_LIMIT: usize = 1024 * 1024;
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -58,6 +60,7 @@ pub struct Hooks {
     requests: Requests,
     reminders: reminders::Reminders,
     written: changed::Written,
+    heard: told::Heard,
     inbox: inbox::Inbox,
     wake: Wake,
     waker: Arc<Mutex<Wake>>,
@@ -90,6 +93,7 @@ impl Hooks {
             requests,
             reminders: reminders::Reminders::default(),
             written: changed::Written::default(),
+            heard: told::Heard::default(),
             inbox,
             wake,
             waker,
@@ -189,7 +193,7 @@ impl Hooks {
         )?;
         // Each client's native channel starts only where its descriptor
         // says it runs.
-        use crate::clients::{self, antigravity, codex, deepseek, hermes};
+        use crate::clients::{self, antigravity, codex, deepseek};
         use agent_hud_agents as agents;
         let desktop = clients::runs(&agents::codex::DESKTOP)
             .then(|| {
@@ -220,11 +224,7 @@ impl Hooks {
             )?);
         }
         if clients::runs(&agents::hermes::GATEWAY) {
-            let (requests, wake) = (self.requests.clone(), self.wake.clone());
-            let changed = self.written.teller(wake.clone());
-            self.hermes = Some(hermes::Machines::start(
-                &self.data, requests, wake, changed,
-            )?);
+            self.follow_hermes()?;
         }
         self.server = Some(server);
         self.desktop = desktop;
@@ -260,14 +260,7 @@ impl Hooks {
                 );
             }
         }
-        // A turn that started, waits or ended is a reason to ask its
-        // client's native channel what waits now.
-        if let Some(hermes) = &self.hermes {
-            let its = agent_hud_agents::hermes::AGENT.id;
-            if events.iter().any(|event| event.source == its) {
-                hermes.nudge();
-            }
-        }
+        self.with_told(&mut events);
         events.sort_by_key(|event| event.at_ms);
         events
     }

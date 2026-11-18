@@ -169,3 +169,35 @@ fn completed_observation_keeps_its_recorded_outcome_after_heartbeat_age() {
     assert_eq!(rows[0]["liveFacts"]["outcome"], "completed");
     assert_eq!(rows[0]["liveFacts"]["endedAt"], iso(at));
 }
+
+/// A session only a native channel's word tells of (a turn that ended on
+/// another machine, before any file of the session was read) has a row
+/// that says which machine it runs on. A hook of this machine names none.
+#[test]
+fn a_row_only_hooks_made_says_the_machine_its_fact_names() {
+    let at = 1_792_470_000_000i64;
+    let completion = |session: &str, machine: Option<&str>| {
+        let mut data = json!({"turnId":"epoch-1:4","workspace":null,"model":null});
+        if let Some(machine) = machine {
+            data["machine"] = json!(machine);
+        }
+        HookEvent {
+            source: "cursor".into(),
+            session_id: session.into(),
+            kind: "completion".into(),
+            at_ms: at,
+            data,
+        }
+    };
+    let mut evidence = HookEvidence::default();
+    let events = [
+        completion("far", Some("Mac mini")),
+        completion("near", None),
+    ];
+    assert!(evidence.ingest(&events, at));
+    let rows = evidence.extra_sessions(at + 1, 1, &HashSet::new());
+    let row = |id: &str| rows.iter().find(|row| row["id"] == id).unwrap();
+    assert_eq!(row("far")["machine"], "Mac mini");
+    assert_eq!(row("far")["liveFacts"]["outcome"], "completed");
+    assert!(row("near").get("machine").is_none());
+}

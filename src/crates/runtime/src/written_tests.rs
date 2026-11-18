@@ -1,5 +1,6 @@
 //! Files a native channel says it wrote (`hooks::Changed`) are read at
-//! the request turn its wake asks for, whatever the file watcher saw.
+//! the request turn its wake asks for, whatever the file watcher saw. And
+//! what it says in a hook's place (`hooks::Told`) is core's at that turn.
 use super::*;
 use agent_hud_core::SourceRoot;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -120,4 +121,52 @@ fn a_file_a_native_channel_says_it_wrote_is_read_though_its_last_read_failed() {
     let changed = runtime.hooks_handle().lock().unwrap().files_changed();
     changed(std::slice::from_ref(&path));
     assert_eq!(turn(&mut runtime, "request_snapshot"), 30);
+}
+
+#[test]
+fn a_turn_a_native_channel_told_is_cores_at_the_turn_its_wake_asks_for() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut runtime = Runtime::with_sources(vec![], temp.path().join("app-data")).unwrap();
+    let woken = Arc::new(AtomicUsize::new(0));
+    let counted = woken.clone();
+    runtime.set_request_waker(Arc::new(move || {
+        counted.fetch_add(1, Ordering::AcqRel);
+    }));
+    let sound = json!({"key": "sound", "value": true});
+    runtime.request("set_setting", sound).unwrap();
+    let first = runtime.request("snapshot", json!({})).unwrap();
+    assert_eq!(first["soundAlerts"]["items"], json!([]));
+
+    // A channel that follows a client on another machine read a turn to
+    // start and to end, and says each as that client's hook would.
+    let session = "hermes:0123456789abcdef/default:far-1";
+    let seen = chrono::Utc::now().timestamp_millis();
+    // As a hook event is written (this crate names no client's types).
+    let fact = |kind: &str, data: Value| json!({"source": "hermes", "sessionId": session, "atMs": seen, "kind": kind, "data": data});
+    let told = runtime.hooks_handle().lock().unwrap().told();
+    let started = json!({"turnId": "epoch-1:2", "state": "running", "startedAtMs": null,
+        "observedAtMs": seen, "workspace": null, "outcome": null,
+        "navigationTarget": null, "machine": "Mac mini"});
+    let ended = json!({"turnId": "epoch-1:2", "workspace": null, "model": null,
+        "machine": "Mac mini"});
+    told(serde_json::from_value(fact("session-observation", started)).unwrap());
+    told(serde_json::from_value(fact("completion", ended)).unwrap());
+    assert_eq!(woken.load(Ordering::Acquire), 2);
+
+    // The request turn that wake asks for hands both to core: the
+    // session has a row that names its machine, and its turn's end is
+    // an alert, once.
+    for _ in 0..3 {
+        let snapshot = runtime.request("request_snapshot", json!({})).unwrap();
+        let rows = snapshot["sessions"].as_array().unwrap();
+        let row = rows.iter().find(|row| row["id"] == session).expect("a row");
+        assert_eq!(row["machine"], "Mac mini");
+        assert_eq!(row["liveFacts"]["outcome"], "completed");
+        let alerts = snapshot["soundAlerts"]["items"].as_array().unwrap();
+        assert_eq!(alerts.len(), 1, "{alerts:?}");
+        assert_eq!(alerts[0]["kind"], "finished");
+        assert_eq!(alerts[0]["sessionId"], session);
+        let id = format!("finished:hermes:{session}:epoch-1:2");
+        assert_eq!(alerts[0]["id"], id.as_str());
+    }
 }

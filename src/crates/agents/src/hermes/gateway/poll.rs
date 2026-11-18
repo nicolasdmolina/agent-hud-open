@@ -31,6 +31,13 @@ pub enum Step {
     /// Everything that waits in a session (`session.resume`), on a socket
     /// of its own, closed once the reply is in.
     Snapshot(SessionRef),
+    /// The same call as `Since`, for the turns of a far session alone
+    /// (`turns.rs`): with no cursor, a look at where the stream of a
+    /// session the poll does not read is. No card rests on its answer.
+    Watch {
+        session: SessionRef,
+        cursor: Option<Cursor>,
+    },
 }
 
 impl Step {
@@ -38,7 +45,9 @@ impl Step {
     pub fn command(&self, scope: Scope) -> Command {
         match self {
             Self::List(profile) => active_list(profile, scope),
-            Self::Since { session, cursor } => events_since(session, cursor.as_ref(), scope),
+            Self::Since { session, cursor } | Self::Watch { session, cursor } => {
+                events_since(session, cursor.as_ref(), scope)
+            }
             Self::Snapshot(session) => resume(session, scope),
         }
     }
@@ -92,6 +101,9 @@ pub struct Poll {
     /// Set where this is no poll but a reading of one session apart from
     /// the polls (`apart.rs`).
     pub(super) apart: Option<Box<super::apart::Apart>>,
+    /// What it learns of the streams, where the gateway's turns are
+    /// watched (`turns.rs`).
+    pub(super) turns: Option<super::turns::Watch>,
 }
 
 impl Poll {
@@ -110,6 +122,7 @@ impl Poll {
             shown,
             recent,
             apart: None,
+            turns: None,
         }
     }
 
@@ -131,7 +144,9 @@ impl Poll {
             Read::Wanted { step, .. } => Some(step.clone()),
             _ => None,
         });
-        lists.chain(reads).collect()
+        // After the reads the cards wait on, which so go out first.
+        let looks = self.turns.iter().flat_map(|watch| watch.steps());
+        lists.chain(reads).chain(looks).collect()
     }
 
     /// The `result` of the reply to `step`.
@@ -164,6 +179,11 @@ impl Poll {
                     look.read = Read::Done(reading);
                 }
             }
+            Step::Watch { .. } => {
+                if let Some(watch) = &mut self.turns {
+                    watch.answer(step, result);
+                }
+            }
         }
     }
 
@@ -179,6 +199,12 @@ impl Poll {
             Step::Since { session, .. } | Step::Snapshot(session) => {
                 if self.wanted(session, step).is_some() {
                     self.set(session, Read::Failed);
+                }
+            }
+            // Its place stays where it was, and it is looked at again.
+            Step::Watch { .. } => {
+                if let Some(watch) = &mut self.turns {
+                    watch.failed(step);
                 }
             }
         }
@@ -214,6 +240,9 @@ impl Poll {
                 let search = Search::default();
                 Read::Wanted { step, search }
             } else {
+                if let Some(watch) = &mut self.turns {
+                    watch.look(&session);
+                }
                 Read::Skipped
             };
             let (snapshot, listed) = (false, Listed::of(row));
