@@ -27,7 +27,10 @@
 //! did not open is tried again no sooner than a gateway that stays
 //! away is dialled again. It ends when its follower does, and when no
 //! poll has wanted a round for a while, which closes its socket; the
-//! next poll that wants one starts it anew.
+//! next poll that wants one starts it anew. Its socket is closed too
+//! once the route number is no longer the one it was opened under,
+//! whether or not a round is wanted (ticket 64): the next round opens
+//! one over the route that is the machine's now.
 use super::{opening::opened, polls::stands, socket::result, socket::Socket, Shared};
 use agent_hud_agents::hermes::gateway::{
     frame, Connection, Counting, Failure, Frame, Input, Scope, Step,
@@ -86,27 +89,45 @@ impl Lane {
         self.wake.notify_all();
     }
 
-    /// Waits for a round to be wanted. False once none was for
-    /// `linger`, or the follower ended: the lane then runs no more, said
-    /// in the step that found so, so that a poll that wants a round
-    /// after it starts the lane anew.
-    fn wanted(&self, shared: &Shared, linger: Duration) -> bool {
+    /// Waits for a round to be wanted, or for the route number to be
+    /// other than `opened`, the one the lane's socket was opened under.
+    /// `Over` once no round was wanted for `linger`, or the follower
+    /// ended: the lane then runs no more, said in the step that found
+    /// so, so that a poll that wants a round after it starts the lane
+    /// anew.
+    fn wanted(&self, shared: &Shared, linger: Duration, opened: Option<u64>) -> Wake {
         let until = Instant::now() + linger;
-        let mut state = self.state();
         loop {
+            // Asked with the lane unlocked: the route holds its number
+            // while a mirror commits, and a poll that wants a round
+            // must not wait on the disk.
+            let moved = opened.is_some_and(|number| shared.route.number() != number);
+            let mut state = self.state();
             let left = until.saturating_duration_since(Instant::now());
             if !shared.active() || (!state.wanted && left.is_zero()) {
                 state.running = false;
-                return false;
+                return Wake::Over;
+            }
+            if moved {
+                return Wake::Moved;
             }
             if state.wanted {
                 state.wanted = false;
-                return true;
+                return Wake::Round;
             }
-            let waited = self.wake.wait_timeout(state, left.min(GLANCE));
-            state = waited.unwrap_or_else(PoisonError::into_inner).0;
+            drop(self.wake.wait_timeout(state, left.min(GLANCE)));
         }
     }
+}
+
+/// What the lane does next.
+enum Wake {
+    /// A round is wanted.
+    Round,
+    /// The route number is not the one its socket was opened under.
+    Moved,
+    /// The lane ends.
+    Over,
 }
 
 /// Asks every call of `counting` on `socket` and gives it each answer.
@@ -147,7 +168,20 @@ fn work(shared: &Arc<Shared>) {
     let mut socket: Option<(Socket, u64)> = None;
     // No round begins before this.
     let mut rest = Instant::now();
-    while shared.counts.wanted(shared, pace.answer * LINGER) {
+    loop {
+        let under = socket.as_ref().map(|(_, number)| *number);
+        match shared.counts.wanted(shared, pace.answer * LINGER, under) {
+            Wake::Round => {}
+            // Closed with no lock held: a poll that wants a round does
+            // not wait on the network for it.
+            Wake::Moved => {
+                if let Some((mut old, _)) = socket.take() {
+                    old.close();
+                }
+                continue;
+            }
+            Wake::Over => break,
+        }
         shared.pause(rest.saturating_duration_since(Instant::now()));
         let begun = {
             let model = shared.model();

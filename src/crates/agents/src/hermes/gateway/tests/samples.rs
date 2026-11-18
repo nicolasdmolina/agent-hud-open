@@ -551,3 +551,47 @@ fn the_recorded_stats_replies_are_read() {
         json!({"session_id": "local-a"})
     );
 }
+
+/// A session owed a last count that leaves the live list is asked no
+/// more (ticket 64, the verifier's x02 of ticket 60): Hermes holds no
+/// agent for it, and would only answer zeros.
+#[test]
+fn a_session_owed_a_count_that_left_the_list_is_asked_no_more() {
+    let (mut g, mut h) = start();
+    does(&mut h, "local-turn", "working", stats(100, 20, 0, 0));
+    does(&mut h, "local-stays", "idle", stats(10, 1, 0, 0));
+    poll(&mut g, &mut h, 1_000);
+    does(&mut h, "local-turn", "idle", stats(300, 60, 0, 0));
+    let at = g.session(&Profile::Default, "local-turn").unwrap();
+    h.failing.push(Step::Stats(at));
+    poll(&mut g, &mut h, 2_000);
+    assert_eq!(asked(&h), ["local-turn"], "owed, and its call failed");
+    // It is gone from the list before the round that would ask again.
+    h.streams
+        .remove(&(Profile::Default, "local-turn".to_owned()));
+    for now in [3_000, 4_000] {
+        poll(&mut g, &mut h, now);
+        assert_eq!(asked(&h), [] as [&str; 0], "at {now}");
+    }
+}
+
+/// A gateway that came back as another instance owes nothing of the
+/// one before it (ticket 64, the verifier's x03 of ticket 60): a
+/// session it lists idle is not asked, though the old one's call for
+/// it had failed.
+#[test]
+fn a_gateway_that_is_another_one_owes_no_count_of_the_one_before() {
+    let (mut g, mut h) = start();
+    does(&mut h, "local-turn", "working", stats(100, 20, 0, 0));
+    poll(&mut g, &mut h, 1_000);
+    does(&mut h, "local-turn", "idle", stats(300, 60, 0, 0));
+    let at = g.session(&Profile::Default, "local-turn").unwrap();
+    h.failing.push(Step::Stats(at));
+    poll(&mut g, &mut h, 2_000);
+    assert_eq!(asked(&h), ["local-turn"], "owed, and its call failed");
+    identified(&mut g, "two");
+    for now in [3_000, 4_000] {
+        poll(&mut g, &mut h, now);
+        assert_eq!(asked(&h), [] as [&str; 0], "at {now}");
+    }
+}

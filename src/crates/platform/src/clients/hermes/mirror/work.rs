@@ -155,9 +155,13 @@ impl Writer {
             return;
         }
         let path = mirror::file(&self.root, &self.key, profile);
+        let ids: Vec<String> = sessions.iter().map(|(id, _)| id.clone()).collect();
         let lacking = files.lacking(profile, &path, sessions);
-        // Counts that waited under another route number wait no more.
+        // Counts that waited under another route number wait no more,
+        // and those taken before their row wait now that it is listed.
         files.counts.sample(profile, Vec::new(), read_ms, route);
+        let listed: Vec<&str> = ids.iter().map(String::as_str).collect();
+        files.counts.replay(profile, &listed, read_ms, route);
         if !lacking.is_empty() {
             self.commit(files, Some((profile, (lacking, read_ms, route))), label);
         }
@@ -217,9 +221,13 @@ impl Writer {
         let (samples_route, samples) = waited.unzip();
         let samples = samples.unwrap_or_default();
         let (lacking, read_ms, rows_route) = rows.unwrap_or_default();
-        // A count alone is for a mirror that is there: it makes none.
+        // A count alone is for a mirror that is there: it makes none,
+        // and is held until a list gives its session a row.
         if lacking.is_empty() && !path.is_file() {
             files.forget(profile);
+            if let Some(route) = samples_route {
+                files.counts.rowless(profile, route, samples);
+            }
             return None;
         }
         // Samples that wait were read under the route number of the
@@ -235,9 +243,14 @@ impl Writer {
         match wrote {
             Ok(Some(changed)) => {
                 // Each has its row, and the mirror says at least this
-                // much of each, whether or not this write was the one.
+                // much of each that has one, whether or not this write
+                // was the one. One without a row is held for when it
+                // has.
                 files.hold(profile, lacking);
-                files.counts.said(profile, &samples);
+                let (rowed, rowless) = (samples.into_iter())
+                    .partition::<Vec<_>, _>(|(id, _, _)| files.has(profile, id));
+                files.counts.said(profile, &rowed);
+                files.counts.rowless(profile, route, rowless);
                 (changed > 0).then(|| {
                     let line = format!("mirror wrote profile={name} rows={made} counts={kept}");
                     self.log.line(&line);
