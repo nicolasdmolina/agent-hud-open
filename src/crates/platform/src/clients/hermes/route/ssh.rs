@@ -4,9 +4,10 @@
 //! machine.
 //!
 //! - **Homes.** The far login shell's Hermes root and its profile folders,
-//!   resolved there (`far.rs`). The list is never taken for whole: the
-//!   listing leaves out a folder it could not enter and does not say so,
-//!   so a home that is missing from it is not known to be gone.
+//!   resolved there (`far.rs`). The list is never taken for whole: a
+//!   folder the listing could not resolve is named apart from the homes
+//!   (`Homes::unresolved`), and one it could not list at all is not
+//!   named, so a home that is missing from it is not known to be gone.
 //! - **The control socket.** One relay for each exchange, which asks as
 //!   the login user and only where the home, the socket and its listener
 //!   are that user's own (`far/relay.py`). No far socket is forwarded.
