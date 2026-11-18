@@ -24,11 +24,16 @@
 //! - each process this program starts for a lab (`sshd`, the agent, `ssh`
 //!   clients and masters) comes over the pipe at once, with its birth, so
 //!   one started just before the program dies is not missed;
-//! - each lab folder comes over the pipe with its device and inode, as
-//!   this program found them when it made the folder; the watchdog holds
-//!   it open where it is that folder and not a link, and answers `held`;
-//!   the lab does not go on before it has. A watchdog that cannot start,
-//!   or be told, or does not answer, fails the lab.
+//! - each lab folder is made by the watchdog itself, asked for over the
+//!   pipe (`make BASE`): it makes the folder, holds it open where it is
+//!   that folder and not a link, and only then answers with its path
+//!   (`made PATH`). So no lab folder is ever there that the watchdog does
+//!   not hold: one whose program died before the watchdog said `ready`
+//!   was never made (ticket 56; the folder used to be made first, and was
+//!   left empty by a program killed in that moment). A folder a test made
+//!   itself comes over the pipe with its device and inode (`dir`), and is
+//!   answered `held`. A watchdog that cannot start, or be told, or does
+//!   not answer, fails the lab.
 //!
 //! When this program ends, by whatever death, the pipe closes (and the
 //! watchdog also sees the program's birth go). Then it stops and kills
@@ -38,11 +43,20 @@
 //! descriptor, removing the path only where it is still that folder. A process that
 //! only names a lab folder, or writes into one, or whose id a lab process
 //! had, is not touched. Folders of other runs are never looked at.
+//!
+//! Folders left before ticket 49, or by its earlier versions, no watchdog
+//! knows of, and nothing removes them (ticket 56). They are `ahl*` folders
+//! in the temporary folder (`$TMPDIR`, or `/tmp` where that path is
+//! long); the oldest have no `owner` file, those of 49's first versions
+//! have `owner` and `roots`. A person may remove one by hand, once
+//! `ps -axww | grep agent_hud_` shows no test program running, and
+//! `lsof +D FOLDER` and `ps -axww | grep FOLDER` show nothing that has the
+//! folder open or names it.
 use super::watchdog;
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::process::CommandExt,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{mpsc, Mutex, OnceLock},
     time::Duration,
@@ -67,11 +81,20 @@ pub(crate) struct Watchdog {
 
 static WATCHDOG_OF_THIS: OnceLock<Mutex<Watchdog>> = OnceLock::new();
 
+/// Given to a lab program whose watchdog is to stop itself before it
+/// says `ready`: the moment a program can die in before any folder is
+/// held (`reaping.rs`).
+pub(crate) const AS_A_LATE_WATCHDOG: &str = "AGENT_HUD_LAB_WATCHDOG_STOPS_FIRST";
+
 /// Not a test of its own: the watchdog, when this test program is started
 /// as one. Run without its variable it does nothing.
 #[test]
 fn watchdog() {
     if std::env::var_os(AS_A_WATCHDOG).is_some() {
+        if std::env::var_os(AS_A_LATE_WATCHDOG).is_some() {
+            // SAFETY: this process stops itself, until a SIGCONT.
+            unsafe { libc::raise(libc::SIGSTOP) };
+        }
         watchdog::run(std::io::stdin(), std::io::stdout());
     }
 }
@@ -108,6 +131,20 @@ pub(crate) fn watch(dir: &Path) {
     );
 }
 
+/// A new lab folder in `base`, which this program's watchdog (started with
+/// the first) made and holds before this program learns its name.
+pub(crate) fn made(base: &Path) -> PathBuf {
+    let mut watchdog = WATCHDOG_OF_THIS
+        .get_or_init(|| Mutex::new(start()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    written(&mut watchdog, &format!("make {}", base.display()));
+    let said = answer(&watchdog, "a new lab folder");
+    let made = said.strip_prefix("made ");
+    let made = made.unwrap_or_else(|| panic!("the lab's watchdog made no folder in {base:?}"));
+    PathBuf::from(made)
+}
+
 /// Hands a process this program has just started to its watchdog, by its
 /// id and birth, where a lab has started in this program: the lab's `sshd`
 /// and agent, and every `ssh` client and master (`opening.rs`,
@@ -142,7 +179,8 @@ pub(crate) fn begin(owner: (u32, watchdog::Birth)) -> Watchdog {
     // libtest's own lines are not the watchdog's answers.
     std::thread::spawn(move || {
         for line in BufReader::new(out).lines().map_while(Result::ok) {
-            if matches!(line.as_str(), "ready" | "held" | "refused") && tell.send(line).is_err() {
+            let answer = matches!(line.as_str(), "ready" | "held" | "refused");
+            if (answer || line.starts_with("made ")) && tell.send(line).is_err() {
                 return;
             }
         }

@@ -202,7 +202,7 @@ fn review30_an_accepted_answer_never_survives_a_lost_link_epoch() {
     until("answer visit held before its write", || {
         held.entered.load(Ordering::Acquire)
     });
-    let (link, _) = far.inner().route.link().unwrap();
+    let (link, lost) = far.inner().route.link().unwrap();
     unsafe {
         libc::kill(link.master_pid().unwrap() as libc::pid_t, libc::SIGKILL);
     }
@@ -212,8 +212,14 @@ fn review30_an_accepted_answer_never_survives_a_lost_link_epoch() {
     held.released.store(true, Ordering::Release);
     let failed = far.delivery(id);
     assert_eq!(failed["state"], "failed");
+    // On a new link: the old one's poll socket can still look ready for
+    // a moment after the answer's visit failed, and the card shows
+    // unmarked meanwhile (ticket 56). An answer then goes on the old link.
     until("link returns and reconciles", || {
-        far.cards().len() == 1 && !far.cards().iter().any(marked)
+        let again = far.inner().route.link();
+        again.is_some_and(|(_, number)| number > lost)
+            && far.cards().len() == 1
+            && !far.cards().iter().any(marked)
     });
     assert!(
         gateway.world().calls("clarify.respond").is_empty(),

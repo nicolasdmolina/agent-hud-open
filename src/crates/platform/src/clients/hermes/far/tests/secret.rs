@@ -2,10 +2,10 @@
 //! nothing a test prints holds one.
 use super::{
     super::{Far, Silent},
-    fixture::{far_with, text, FarLab, Manner, SHORT},
+    fixture::{far_with, text, FarLab, Manner},
 };
 use agent_hud_agents::hermes::gateway::{
-    far::{Quiet, Request},
+    far::{Quiet, Request, RELAY_SECONDS},
     granted, identify, Identified, Scope,
 };
 use std::{fs, process::Command};
@@ -53,8 +53,10 @@ fn a_granted_ticket_and_everything_around_it() {
     assert!(held.subprotocols()[1].ends_with(&ticket));
     // Granted and then lost on the way: a relay that fails after it has
     // the answer, and one that is refused, say nothing of what they held.
+    // With the app's own deadline: the short one cut this off on a
+    // loaded machine before the relay could fail (ticket 56).
     let failing = far_with(
-        SHORT,
+        RELAY_SECONDS,
         "_real_exchange = exchange\ndef exchange(path, line):\n    \
          raise RuntimeError(_real_exchange(path, line).decode())\n",
     );

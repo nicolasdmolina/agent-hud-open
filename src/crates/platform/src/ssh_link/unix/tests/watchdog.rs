@@ -337,8 +337,9 @@ pub(crate) fn owner(line: &str) -> Option<(u32, Birth)> {
 /// private pipe, as the program found itself before it started this
 /// watchdog (never this process's parent, which can already be the system
 /// by now); `ready` goes back on `output`. Then come the processes the lab
-/// program starts (`pid PID SECONDS MICROS`) and its lab folders (`dir DEV
-/// INO PATH`, answered `held` or `refused`). Every ~200 ms it adds the
+/// program starts (`pid PID SECONDS MICROS`), the lab folders it asks for
+/// (`make BASE`, made here and answered `made PATH` or `refused`) and those
+/// a test made itself (`dir DEV INO PATH`, answered `held` or `refused`). Every ~200 ms it adds the
 /// processes below the registry's, until the pipe closes or the owner is
 /// gone; then it ends the lab's processes and removes its folders, all
 /// that was sent, also where the owner was gone before it began.
@@ -372,6 +373,15 @@ pub(crate) fn run(input: impl Read + Send + 'static, mut output: impl Write) -> 
         } else if line.starts_with("dir ") {
             let folder = folder(&line);
             let said = if folder.is_some() { "held" } else { "refused" };
+            held.extend(folder);
+            let _ = writeln!(output, "{said}");
+            let _ = output.flush();
+        } else if let Some(base) = line.strip_prefix("make ") {
+            let folder = make(Path::new(base));
+            let said = folder.as_ref().map_or_else(
+                || "refused".to_owned(),
+                |folder| format!("made {}", folder.path.display()),
+            );
             held.extend(folder);
             let _ = writeln!(output, "{said}");
             let _ = output.flush();
@@ -420,6 +430,27 @@ fn seed(line: &str) -> Option<(u32, Birth)> {
     let pid = parts.next()?.parse().ok()?;
     let birth = Birth(parts.next()?.parse().ok()?, parts.next()?.parse().ok()?);
     (process(pid)?.2 == birth).then_some((pid, birth))
+}
+
+/// A new lab folder in `base`, made here and held before anyone is told
+/// its name (`make BASE`). One that cannot be held is removed again where
+/// it is still the empty folder made.
+pub(crate) fn make(base: &Path) -> Option<Held> {
+    let template = base.join(format!("{}XXXXXX", super::reaper::PREFIX));
+    let mut name = CString::new(template.as_os_str().as_bytes())
+        .ok()?
+        .into_bytes_with_nul();
+    // SAFETY: a writable template ending in its nul, filled in place.
+    if unsafe { libc::mkdtemp(name.as_mut_ptr().cast()) }.is_null() {
+        return None;
+    }
+    name.pop();
+    let path = PathBuf::from(std::ffi::OsStr::from_bytes(&name));
+    let held = identity(&path).and_then(|made| Held::open(&path, made));
+    if held.is_none() {
+        let _ = std::fs::remove_dir(&path);
+    }
+    held
 }
 
 /// A `dir DEV INO PATH` line, held.
