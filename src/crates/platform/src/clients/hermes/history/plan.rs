@@ -15,6 +15,9 @@ pub(crate) struct Plan {
     pub live: Duration,
     /// Between two ticks otherwise, however many sessions are listed.
     pub idle: Duration,
+    /// How long a turn a poll found keeps the quick pace: the tick after
+    /// a turn's end still comes at it, and the ones after that do not.
+    pub worked: Duration,
     /// The most reads of one home in one tick, four at least.
     pub reads: u32,
     /// The rows one page of fingerprints looks at.
@@ -36,6 +39,7 @@ impl Default for Plan {
             first: Duration::from_secs(10),
             live: Duration::from_secs(60),
             idle: Duration::from_secs(300),
+            worked: FRESH,
             reads: 8,
             page: 500,
             batch: 25,
@@ -61,9 +65,9 @@ impl Plan {
     }
 }
 
-/// A live list older than this says nothing of what is live now, and a
-/// session found in a turn longer ago than this is not taken to be in
-/// one: the tick after a turn's end still comes at the quick pace.
+/// A live list older than this says nothing of what is live now; and,
+/// as the plan's own `worked`, a session found in a turn longer ago than
+/// this is not taken to be in one.
 pub(super) const FRESH: Duration = Duration::from_secs(120);
 
 /// What the machines list says of a machine's history.
@@ -76,6 +80,9 @@ pub(crate) struct Ages {
     pub checked_ms: Option<i64>,
     /// Why the machine has no history reader, where it has none.
     pub without: Option<Without>,
+    /// How many of its sessions the mirror would not take, which are not
+    /// counted until it does (ticket 61). Known since this launch.
+    pub refused: usize,
 }
 
 impl Ages {
@@ -94,6 +101,7 @@ impl Ages {
                 false => None,
             },
             without,
+            refused: 0,
         }
     }
 }
@@ -126,6 +134,9 @@ mod tests {
         let plan = Plan::default();
         let (quick, slow) = (Duration::from_secs(60), Duration::from_secs(300));
         assert_eq!((plan.live, plan.idle), (quick, slow));
+        // A turn keeps the quick pace for two minutes past the last poll
+        // that found it.
+        assert_eq!(plan.worked, Duration::from_secs(120));
         let read = Ticked {
             overdue: false,
             reads: 3,

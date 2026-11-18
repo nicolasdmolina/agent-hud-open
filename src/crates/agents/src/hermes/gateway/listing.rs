@@ -91,14 +91,16 @@ impl Gateway {
     /// Whether a session of that listing is in a turn: starting or
     /// working. One that is idle is not, however many are listed, and
     /// neither is one that waits for an answer, whose counts stand still
-    /// until it is given. A far machine's history is read at its quick
-    /// pace only while this holds (ticket 61).
+    /// until it is given: also where Hermes lists it as working and no
+    /// card shows here (ticket 63). A far machine's history is read at its
+    /// quick pace only while this holds (ticket 61).
     pub fn working(&self) -> bool {
         let ready = matches!(self.connection, Connection::Ready(_));
         let fresh = self.told.fresh();
         let at_work = |at: &SessionRef| {
             let turn = matches!(self.status(at), Some(Status::Starting | Status::Working));
-            turn && fresh.iter().any(|profile| *profile == at.profile)
+            let waits = self.asking.contains(at);
+            turn && !waits && fresh.iter().any(|profile| *profile == at.profile)
         };
         ready && self.listed.keys().any(at_work)
     }

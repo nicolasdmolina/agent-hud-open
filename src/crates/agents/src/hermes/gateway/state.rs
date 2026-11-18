@@ -90,6 +90,9 @@ pub struct Gateway {
     /// The poll that last listed each live session anew, or as something
     /// else than the poll before it and not as waiting (`apart.rs`).
     pub(super) listing: BTreeMap<SessionRef, u64>,
+    /// The live sessions whose newest reading found a request open to
+    /// Hermes's viewers, card or none: their turn waits (`listing.rs`).
+    pub(super) asking: BTreeSet<SessionRef>,
     /// Where each stream of a far machine was last seen, for telling the
     /// turns that end there (`turns.rs`). No card reads it.
     pub(super) turns: super::turns::Turns,
@@ -115,6 +118,7 @@ impl Gateway {
             readings: 0,
             apart: BTreeMap::new(),
             listing: BTreeMap::new(),
+            asking: BTreeSet::new(),
         }
     }
     pub fn id(&self) -> &GatewayId {

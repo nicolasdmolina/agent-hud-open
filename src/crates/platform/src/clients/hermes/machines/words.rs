@@ -148,6 +148,21 @@ pub(in crate::clients::hermes) fn no_history(why: Without) -> String {
     }
 }
 
+/// Sessions of a followed machine that its mirror would not take: their
+/// usage is not counted until their far rows change (ticket 63).
+pub(in crate::clients::hermes) fn set_aside(count: usize) -> String {
+    match count {
+        1 => text(
+            "有 1 个会话的用量未计入：其记录无法保存。",
+            "1 session's usage is not counted: its records could not be stored.",
+        ),
+        _ => text(
+            &format!("有 {count} 个会话的用量未计入：其记录无法保存。"),
+            &format!("{count} sessions' usage is not counted: their records could not be stored."),
+        ),
+    }
+}
+
 /// Whether a route that verified as no machine was reached and refused:
 /// it is then not the machine that waits on it. A route that cannot be
 /// reached, whose gateways are stopped, or whose Hermes cannot say who

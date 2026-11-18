@@ -386,6 +386,32 @@ fn a_session_the_mirror_refuses_is_named_and_logged_and_the_others_of_its_batch_
 }
 
 #[test]
+fn a_session_refused_before_it_had_a_row_gets_its_live_row_once_listed() {
+    let mut bench = bench("Mac mini");
+    // Refused at its first write: the mirror holds no row of it, and the
+    // writer must not take it for one it holds.
+    let mut bad = far_session("s-bad", 900, &["", ""], "print-1");
+    for row in &mut bad.usage {
+        row[0] = Cell::Null;
+    }
+    let sessions = vec![bad, far_session("s-good", 100, &[""], "print-2")];
+    assert_eq!(
+        bench.writer.history(batch(sessions, 1_000, 1)),
+        Wrote::Refused(1, vec!["s-bad".to_owned()])
+    );
+    bench.turn();
+    let ids =
+        |bench: &mut Bench| -> Vec<String> { bench.rows().into_iter().map(|row| row.0).collect() };
+    assert_eq!(ids(&mut bench), ["default:s-good"]);
+    // A later poll lists it live: it has its live row, as any session
+    // the mirror holds nothing of. Taken for held, it would have none
+    // until a relaunch.
+    bench.lists(&Profile::Default, &[("s-bad", "Still going")], 2_000, 1);
+    bench.turn();
+    assert_eq!(ids(&mut bench), ["default:s-bad", "default:s-good"]);
+}
+
+#[test]
 fn only_a_session_in_a_turn_makes_the_machine_one_that_works() {
     let bench = bench("Mac mini");
     assert!(!bench.writer.working(0));

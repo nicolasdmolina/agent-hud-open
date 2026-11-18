@@ -22,7 +22,7 @@
 //! short while ago (`SNAPSHOT_EVERY_MS`); until the next, the cards the
 //! events do not speak for stay as they are.
 use super::effect::{Closed, Status};
-use super::fold::{batches, fold, Reading};
+use super::fold::{batches, fold, requested, Reading};
 use super::frame::Cursor;
 use super::identity::SessionRef;
 use super::poll::{Poll, Read, Shown, Step};
@@ -126,6 +126,7 @@ impl Poll {
                 let events = result["events"].as_array().map_or(&[][..], Vec::as_slice);
                 let mut reading = fold(events);
                 reading.asks.extend(batches(&result["open_requests"]));
+                reading.open = requested(&result["open_requests"]);
                 if search
                     .best
                     .as_ref()
@@ -164,6 +165,7 @@ impl Poll {
                 let asks = batches(&result["open_requests"]);
                 let reading = Reading {
                     asks,
+                    open: requested(&result["open_requests"]),
                     ..Reading::default()
                 };
                 (true, reading)

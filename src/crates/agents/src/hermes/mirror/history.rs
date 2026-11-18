@@ -129,6 +129,18 @@ fn refusal(error: &rusqlite::Error) -> bool {
     }
 }
 
+/// What the log says of a refusal. A session of the wrong shape is told
+/// as such: SQLite's own text for it says "Query is not read-only".
+fn reason(error: &rusqlite::Error) -> String {
+    match error {
+        rusqlite::Error::InvalidQuery => SHAPE.to_owned(),
+        error => error.to_string(),
+    }
+}
+
+/// Why a session of the wrong shape was refused (ticket 63).
+const SHAPE: &str = "not in the shape of the mirror's columns";
+
 /// Writes `sessions` as [`durable`] does, each one whole or not at all.
 /// A session the mirror refuses is left exactly as the mirror held it and
 /// is named in the answer; the rest of the batch is written. An error
@@ -145,7 +157,7 @@ pub fn taken(db: &Connection, sessions: &[Session], read_ms: i64) -> rusqlite::R
                 if !refusal(&error) {
                     return Err(error);
                 }
-                taken.refused.push((session.id.clone(), error.to_string()));
+                taken.refused.push((session.id.clone(), reason(&error)));
                 continue;
             }
         }

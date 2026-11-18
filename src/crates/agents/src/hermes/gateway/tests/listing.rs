@@ -182,3 +182,37 @@ fn only_a_session_in_a_turn_counts_as_working_however_many_are_listed() {
     g.apply(Input::Lost(Failure::Unreachable), 9_500);
     assert!(!g.working());
 }
+
+#[test]
+fn a_session_that_waits_on_a_request_with_no_card_is_not_at_work() {
+    let (mut g, mut h) = start();
+    // Hermes lists a session in a turn that waits on a request of its
+    // viewers as working: a set of questions does that, and so does a
+    // request Agent HUD never shows. Neither shows a card here.
+    for (n, open) in [
+        json!({"id": "srq-1", "method": "secret", "params": {"prompt": "A key"}}),
+        json!({"id": "srq-2", "method": "clarify", "params": {"questions": []}}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let stream = h.stream(&Profile::Default, "asking");
+        stream.status = Some("working".into());
+        stream.open = vec![open];
+        poll(&mut g, &mut h, 1_000 * (n as i64 + 1));
+        assert_eq!(g.waiting().count(), 0, "no card");
+        assert!(!g.working(), "it waits, and writes nothing meanwhile");
+    }
+    // A read of it that fails says nothing new: it still waits.
+    let asking = g.session(&Profile::Default, "asking").unwrap();
+    h.failing.push(Step::Since {
+        session: asking,
+        cursor: None,
+    });
+    poll(&mut g, &mut h, 3_000);
+    assert!(!g.working());
+    // Answered elsewhere: its turn goes on.
+    h.stream(&Profile::Default, "asking").open.clear();
+    poll(&mut g, &mut h, 4_000);
+    assert!(g.working());
+}

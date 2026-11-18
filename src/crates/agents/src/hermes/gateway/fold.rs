@@ -32,6 +32,9 @@ pub(super) struct Reading {
     /// Cards showing that this reading cannot speak for: they are left as
     /// they are.
     pub(super) kept: Vec<String>,
+    /// Hermes lists a request open to its viewers, shown here or not: the
+    /// turn waits on it, though Hermes lists the session as working.
+    pub(super) open: bool,
 }
 
 impl Reading {
@@ -147,6 +150,12 @@ pub(super) fn batches(open: &Value) -> Vec<Asked> {
             Some((Ask::batch(id, method, &entry["params"])?, None))
         })
         .collect()
+}
+
+/// Whether Hermes lists any request open to its viewers (`open_requests`),
+/// of a kind Agent HUD shows or not.
+pub(super) fn requested(open: &Value) -> bool {
+    open.as_array().is_some_and(|open| !open.is_empty())
 }
 
 /// The questions and approvals a snapshot lists (`prompts`); None for a
