@@ -430,3 +430,59 @@ fn a_mirror_whose_log_was_not_folded_in_is_not_given_its_name() {
     assert_eq!(stored(&path), ["s1"]);
     writer.stop();
 }
+
+/// Counts that wait in the queue are one write for a profile under one
+/// route number, never across two (ticket 64, the verifier's x09 of
+/// ticket 60): what a round read under the old number is not carried
+/// into a write of the new one, where it would be committed as read
+/// under it.
+#[test]
+fn counts_that_wait_for_the_disk_are_kept_apart_by_route_number() {
+    use agent_hud_agents::hermes::gateway::Sample;
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().canonicalize().unwrap().join("data");
+    crate::os::private_directory(&data).unwrap();
+    let disk = Arc::new(Stalled {
+        shut: Mutex::new(false),
+        moved: Condvar::new(),
+    });
+    let untold: Changed = Arc::new(|_| {});
+    let log = Log::new(&data).of(Some("mirror"));
+    let named = (&key(), "Mini");
+    let space = Duration::from_millis(1);
+    let writer = Writer::spaced(&data, named, disk.clone(), untold, log, space).unwrap();
+    writer.listed(listing(&Profile::Default, &[("s1", "First")], 1_000), 1);
+    writer.settle();
+    // The disk stalls: the thread takes one write and waits in it.
+    *disk.shut.lock().unwrap() = true;
+    writer.listed(listing(&Profile::Default, &[("s2", "Second")], 2_000), 1);
+    let limit = Instant::now() + Duration::from_secs(30);
+    while !writer.state().busy {
+        assert!(Instant::now() < limit, "the write was never taken");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let said = |id: &str, total: u64| {
+        let sample = Sample {
+            input: total,
+            ..Sample::default()
+        };
+        BTreeMap::from([(Profile::Default, vec![(id.to_owned(), sample)])])
+    };
+    writer.counted(said("s1", 10), 3_000, 1);
+    writer.counted(said("s2", 20), 4_000, 2);
+    let waiting: Vec<(u64, Vec<String>)> = (writer.state().queue.iter())
+        .filter_map(|write| match write {
+            Write::Counted { samples, route, .. } => {
+                Some((*route, samples.iter().map(|(id, _)| id.clone()).collect()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        waiting,
+        [(1, vec!["s1".to_owned()]), (2, vec!["s2".to_owned()])]
+    );
+    *disk.shut.lock().unwrap() = false;
+    disk.moved.notify_all();
+    writer.stop();
+}

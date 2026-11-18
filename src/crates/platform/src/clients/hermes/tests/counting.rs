@@ -30,7 +30,7 @@ use std::{
     collections::HashSet,
     net::TcpStream,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::{Duration, Instant},
@@ -41,6 +41,9 @@ struct Routed {
     way: Arc<Way>,
     number: AtomicU64,
     link: AtomicU64,
+    /// The next socket the count lane dials raises the number while it
+    /// is dialled: the route changes while the lane opens its socket.
+    raise_in_lane_dial: AtomicBool,
 }
 
 impl Route for Routed {
@@ -60,7 +63,12 @@ impl Route for Routed {
         self.way.prepare(instance, stop)
     }
     fn dial(&self, instance: &Instance) -> Result<TcpStream, Failure> {
-        self.way.dial(instance)
+        let dialled = self.way.dial(instance);
+        let lane = std::thread::current().name() == Some("Hermes counts");
+        if lane && self.raise_in_lane_dial.swap(false, Ordering::AcqRel) {
+            self.number.fetch_add(1, Ordering::AcqRel);
+        }
+        dialled
     }
     fn number(&self) -> u64 {
         self.number.load(Ordering::Acquire)
@@ -115,6 +123,7 @@ fn following(pace: Pace) -> Counted {
         way: lab.route.clone(),
         number: AtomicU64::new(1),
         link: AtomicU64::new(1),
+        raise_in_lane_dial: AtomicBool::new(false),
     });
     let key = machine_key(Some("0123456789abcdef0123456789abcdef"), "/far/.hermes").unwrap();
     let untold: Changed = Arc::new(|_| {});
@@ -336,28 +345,153 @@ fn a_last_count_that_was_never_answered_is_asked_again_on_another_socket() {
 }
 
 /// What a round read is written under the route number the lane's
-/// socket was opened under. The number goes up and nothing else
-/// happens: the count read on that socket is kept out of the mirror.
+/// socket was opened under. The number goes up while a call of a round
+/// is out on that socket: what it says is kept out of the mirror. The
+/// lane gives that socket up before its next round (ticket 64), and the
+/// count is kept from one opened under the new number.
 #[test]
 fn a_count_read_on_a_socket_of_an_old_route_number_is_not_written() {
     let far = following(pace());
     works(&far.gateway, "s-turn", "One turn");
     uses(&far.gateway, "s-turn", 100, 20);
     until("its count is kept", || far.kept("s-turn") == 120);
+    far.gateway.world().slow_stats = HELD;
+    let asked = far.sockets("session.stats", None).len();
+    until("a held call is out", || {
+        far.sockets("session.stats", None).len() > asked
+    });
+    let old = *far.sockets("session.stats", None).last().unwrap();
+    let rounds = || {
+        let lane = &far.followers.set()[0].counts;
+        lane.rounds.load(Ordering::Acquire)
+    };
+    let before = rounds();
     far.route.number.store(2, Ordering::Release);
     uses(&far.gateway, "s-turn", 700, 70);
-    let asked = far.sockets("session.stats", None).len();
-    until("three more rounds", || {
-        far.sockets("session.stats", None).len() >= asked + 3
-    });
+    far.gateway.world().slow_stats = Duration::ZERO;
+    // The held round ends, and what it read under the old number is
+    // not written. The lane rests about as long as that round took
+    // before it begins another.
+    until("the held round ends", || rounds() > before);
+    std::thread::sleep(WATCH);
     far.writer.settle();
-    std::thread::sleep(Duration::from_millis(200));
-    assert_eq!(far.kept("s-turn"), 120);
+    assert_eq!(far.kept("s-turn"), 120, "written under the old number");
+    let on_old = |far: &Counted| {
+        let calls = far.sockets("session.stats", None);
+        calls.iter().filter(|socket| **socket == old).count()
+    };
+    let asked_on_old = on_old(&far);
+    until("the count is kept from a new socket", || {
+        far.kept("s-turn") == 770
+    });
+    assert!(far.gateway.world().ended.contains(&old));
+    assert_eq!(on_old(&far), asked_on_old, "asked again on the old socket");
     let log = far.log();
     assert!(
         log.contains("mirror dropped profile=default why=route"),
         "{log}"
     );
+}
+
+/// The route changes while the lane has nobody to ask (ticket 64): its
+/// socket is closed then, not at its next round or when it would have
+/// lingered out.
+#[test]
+fn the_lanes_socket_is_closed_when_the_route_number_moves_while_it_is_idle() {
+    let far = following(lingering());
+    let socket = idle_lane(&far);
+    far.route.number.store(2, Ordering::Release);
+    within(
+        Duration::from_secs(2),
+        "the lane's socket is closed",
+        || far.gateway.world().ended.contains(&socket),
+    );
+}
+
+/// The lane's socket is closed soon after its follower stops (ticket
+/// 64, the verifier's x12 of ticket 60), not when it would have
+/// lingered out.
+#[test]
+fn the_lanes_socket_is_closed_soon_after_its_follower_stops() {
+    let far = following(lingering());
+    let socket = idle_lane(&far);
+    far.followers.stop();
+    within(
+        Duration::from_secs(2),
+        "the lane's socket is closed",
+        || far.gateway.world().ended.contains(&socket),
+    );
+}
+
+/// The route changes while the lane dials its socket (ticket 64, the
+/// verifier's x05 of ticket 60): that socket is of no one route, and is
+/// closed with nothing asked on it. The count is asked on one opened
+/// under the number that stands.
+#[test]
+fn a_socket_the_lane_opened_while_the_route_changed_carries_no_count() {
+    let far = following(lingering());
+    let socket = idle_lane(&far);
+    far.route.number.store(2, Ordering::Release);
+    until("the lane's socket is closed", || {
+        far.gateway.world().ended.contains(&socket)
+    });
+    let asked = far.sockets("session.stats", None).len();
+    far.route.raise_in_lane_dial.store(true, Ordering::Release);
+    works(&far.gateway, "s-turn", "Another turn");
+    uses(&far.gateway, "s-turn", 500, 50);
+    until("the count is kept", || far.kept("s-turn") == 550);
+    assert_eq!(
+        far.route.number.load(Ordering::Acquire),
+        3,
+        "raised in a dial"
+    );
+    let calls = far.sockets("session.stats", None);
+    let sockets: HashSet<usize> = calls[asked..].iter().copied().collect();
+    assert_eq!(sockets.len(), 1, "counts asked on the sockets {sockets:?}");
+}
+
+/// A pace whose lane lingers twelve seconds with nobody to ask.
+fn lingering() -> Pace {
+    Pace {
+        answer: Duration::from_secs(2),
+        ..pace()
+    }
+}
+
+/// A session works, is counted, and its turn ends: once its last count
+/// is kept, the lane has nobody to ask and keeps its socket. That
+/// socket.
+fn idle_lane(far: &Counted) -> usize {
+    works(&far.gateway, "s-turn", "One turn");
+    uses(&far.gateway, "s-turn", 100, 20);
+    until("its count is kept", || far.kept("s-turn") == 120);
+    far.gateway.world().stream_in("default", "s-turn").running = false;
+    uses(&far.gateway, "s-turn", 300, 60);
+    until("its last count is kept", || far.kept("s-turn") == 360);
+    // Quiet: no call for as long as five polls take.
+    let mut asked = far.sockets("session.stats", None);
+    let began = Instant::now();
+    loop {
+        std::thread::sleep(WATCH * 5);
+        let now = far.sockets("session.stats", None);
+        if now == asked {
+            break;
+        }
+        assert!(began.elapsed() < Duration::from_secs(20), "never quiet");
+        asked = now;
+    }
+    let socket = *asked.last().unwrap();
+    assert!(!far.gateway.world().ended.contains(&socket), "closed early");
+    socket
+}
+
+/// Waits for `what` to hold, `limit` at most.
+fn within(limit: Duration, what: &str, done: impl Fn() -> bool) {
+    let began = Instant::now();
+    while !done() {
+        assert!(began.elapsed() < limit, "{what}: not in {limit:?}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// The lane ends with its follower: nothing is asked once it stopped,

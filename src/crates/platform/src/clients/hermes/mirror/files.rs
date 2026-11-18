@@ -79,6 +79,11 @@ impl Files {
         held.extend(sessions.into_iter().map(|(id, _)| id));
     }
 
+    /// Whether the mirror of `profile` is known to hold a row for `id`.
+    pub(super) fn has(&self, profile: &Profile, id: &str) -> bool {
+        self.held.get(profile).is_some_and(|held| held.contains(id))
+    }
+
     /// The mirror of `profile` holds a row for each of `ids` now.
     pub(super) fn holds(&mut self, profile: &Profile, ids: impl Iterator<Item = String>) {
         self.failed.remove(profile);

@@ -394,3 +394,120 @@ fn a_count_the_mirror_already_holds_is_not_written_again_after_a_relaunch() {
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 100)]);
     again.stop();
 }
+
+/// The verifier's probe of ticket 60 as a test (ticket 64): a count
+/// that reaches the writer before the list that gives its session a
+/// row. `hud_live` keeps no count of a session without a row, so the
+/// count is held, and it is written once the list names the session,
+/// with no further round: 300 was the session's last count. The rounds
+/// that say it again write nothing more.
+#[test]
+fn a_count_taken_before_its_row_shows_once_the_row_is_listed() {
+    let mut bench = bench_spaced("Mac mini", SPACE);
+    // The mirror is there, with another session's row and count.
+    bench.counts(&Profile::Default, &[("s0", 50)], 1_000, 1);
+    std::thread::sleep(SPACE * 2);
+    // s1's count is taken before its row is written.
+    bench
+        .writer
+        .counted(tallied(&Profile::Default, &[("s1", 300)]), 2_000, 1);
+    bench.writer.settle();
+    std::thread::sleep(SPACE * 2);
+    assert_eq!(bench.kept(&Profile::Default), [("s0".to_owned(), 50)]);
+    let tells = bench.tells();
+    // Its row, and no round after it.
+    let rows = [("s0", "Counted"), ("s1", "Counted")];
+    bench.lists(&Profile::Default, &rows, 3_000, 1);
+    // The row and the count are one commit: the count's time has come.
+    bench.told(tells + 1);
+    assert_eq!(
+        bench.kept(&Profile::Default),
+        [("s0".to_owned(), 50), ("s1".to_owned(), 300)]
+    );
+    bench.turn();
+    assert_eq!(
+        bench.tokens(),
+        [
+            ("default:s0".to_owned(), json!(50)),
+            ("default:s1".to_owned(), json!(300))
+        ]
+    );
+    // Three more rounds saying the same: nothing more is written.
+    let tells = bench.tells();
+    for round in 0..3 {
+        bench.counts(
+            &Profile::Default,
+            &[("s0", 50), ("s1", 300)],
+            4_000 + round,
+            1,
+        );
+    }
+    std::thread::sleep(SPACE * 2);
+    assert_eq!(bench.tells(), tells);
+}
+
+/// The same where the profile has no mirror yet: a count alone makes
+/// none, and is written with the first row the list gives.
+#[test]
+fn a_count_taken_before_its_mirror_is_made_shows_once_the_row_is_listed() {
+    let mut bench = bench_spaced("Mac mini", SPACE);
+    bench
+        .writer
+        .counted(tallied(&reports(), &[("r1", 70)]), 1_000, 1);
+    bench.writer.settle();
+    assert!(!bench.file(&reports()).exists(), "a count made a mirror");
+    bench.lists(&reports(), &[("r1", "Counted")], 2_000, 1);
+    bench.told(2);
+    assert_eq!(bench.kept(&reports()), [("r1".to_owned(), 70)]);
+    bench.turn();
+    assert_eq!(bench.tokens(), [("reports:r1".to_owned(), json!(70))]);
+}
+
+/// A count held for want of its row is not held for ever: a list read
+/// after it that does not name its session drops it, and so does a
+/// list read under another route number.
+#[test]
+fn a_count_held_for_its_row_is_dropped_by_a_newer_list_that_leaves_it_out() {
+    let bench = bench_spaced("Mac mini", SPACE);
+    bench.counts(&Profile::Default, &[("s0", 50)], 1_000, 1);
+    std::thread::sleep(SPACE * 2);
+    let held = |bench: &Bench, id: &str, read_ms| {
+        let counted = tallied(&Profile::Default, &[(id, 300)]);
+        bench.writer.counted(counted, read_ms, 1);
+        bench.writer.settle();
+    };
+    // Left out by a list read after it.
+    held(&bench, "s1", 2_000);
+    bench.lists(&Profile::Default, &[("s0", "Counted")], 3_000, 1);
+    bench.lists(
+        &Profile::Default,
+        &[("s0", "Counted"), ("s1", "Back")],
+        4_000,
+        1,
+    );
+    // Held, then the route number goes up.
+    held(&bench, "s2", 5_000);
+    // Its time comes, and it is held for want of its row.
+    std::thread::sleep(SPACE * 2);
+    bench.number.now.store(2, Ordering::Release);
+    let rows = [("s0", "Counted"), ("s1", "Back"), ("s2", "New")];
+    bench.lists(&Profile::Default, &rows, 6_000, 2);
+    std::thread::sleep(SPACE * 2);
+    assert_eq!(bench.kept(&Profile::Default), [("s0".to_owned(), 50)]);
+}
+
+/// Counts that waited under the old route number wait no more once a
+/// list read under the new one is taken (ticket 64, the verifier's x07
+/// of ticket 60): no commit of them is tried when their time comes.
+#[test]
+fn a_list_under_a_new_route_number_ends_the_wait_of_old_counts() {
+    let bench = bench_spaced("Mac mini", SPACE);
+    bench.counts(&Profile::Default, &[("s1", 100)], 1_000, 1);
+    bench.counts(&Profile::Default, &[("s1", 150)], 2_000, 1);
+    bench.number.now.store(2, Ordering::Release);
+    bench.lists(&Profile::Default, &[("s1", "Counted")], 3_000, 2);
+    std::thread::sleep(SPACE * 3);
+    let log = bench.log();
+    assert!(!log.contains("why=route"), "{log}");
+    assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 100)]);
+}
