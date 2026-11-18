@@ -35,7 +35,7 @@ fn stand_in(site: &Site, script: &str) {
     let bin = site.fleet.hosts[0].lab.at("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let text = format!(
-        "#!/bin/sh\ncase \"$3\" in {MARK}*)\n{script}\n;; esac\nexec /usr/bin/python3 \"$@\"\n"
+        "#!/bin/sh\ncase \"$4\" in {MARK}*)\n{script}\n;; esac\nexec /usr/bin/python3 \"$@\"\n"
     );
     std::fs::write(bin.join("python3"), text).unwrap();
     let mode = std::fs::Permissions::from_mode(0o755);
@@ -49,7 +49,7 @@ fn no_stand_in(site: &Site) {
 /// A stand-in that runs the real reader from a process that does not
 /// carry its mark, so the reader still finds itself alone: its arguments
 /// go through a file. `then` is shell that runs there, with the reader's
-/// arguments as its own (`$6` is the request).
+/// arguments as its own (`$7` is the request).
 fn wrapped(site: &Site, then: &str) {
     let lab = &site.fleet.hosts[0].lab;
     let (args, wrapper) = (lab.at("reader-args"), lab.at("reader.sh"));
@@ -102,7 +102,7 @@ fn a_rejected_or_skipped_batch_writes_nothing_and_the_session_keeps_its_old_rows
     wrapped(
         &site,
         &format!(
-            "case \"$6\" in *'\"k\":\"sessions\"'*) if [ -e '{}' ]; then /usr/bin/python3 \"$@\" | sed '$d'; exit 0; fi;; esac",
+            "case \"$7\" in *'\"k\":\"sessions\"'*) if [ -e '{}' ]; then /usr/bin/python3 \"$@\" | sed '$d'; exit 0; fi;; esac",
             cut.display()
         ),
     );
@@ -232,7 +232,7 @@ fn a_page_that_takes_the_far_side_too_long_is_asked_for_again_smaller() {
     let Some(mut site) = Site::with(plan, thirty) else {
         return;
     };
-    wrapped(&site, "case \"$6\" in *'\"n\":20'*) sleep 8;; esac");
+    wrapped(&site, "case \"$7\" in *'\"n\":20'*) sleep 8;; esac");
     let ticked = site.history.tick();
     assert_eq!(ticked.reads, 1, "{:?}", site.reads());
     assert!(site
@@ -535,7 +535,7 @@ fn a_machine_with_no_history_reader_says_so_in_its_status() {
     // runs as it did: the machine is followed, and has its cards.
     stand_in(
         &site,
-        "shift 2\nexec /usr/bin/python3 -I -c 'import sys; sys.modules[\"sqlite3\"] = None; exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\"",
+        "shift 3\nexec /usr/bin/python3 -I -c 'import sys; sys.modules[\"sqlite3\"] = None; exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\"",
     );
     assert!(site.history.tick().reads > 0);
     let said = words::no_history(Without::Python);
@@ -580,7 +580,7 @@ fn what_was_read_under_an_old_route_number_is_not_written() {
     // comes back whole, under a number that is the machine's no more.
     wrapped(
         &site,
-        "case \"$6\" in *'\"k\":\"sessions\"'*) sleep 2;; esac",
+        "case \"$7\" in *'\"k\":\"sessions\"'*) sleep 2;; esac",
     );
     let ticking = site.history.clone();
     let out = std::thread::spawn(move || ticking.tick());

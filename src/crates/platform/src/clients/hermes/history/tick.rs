@@ -9,13 +9,15 @@
 //!   fingerprint each session was last written with; then the sessions
 //!   that differ, by id, before the next page. Only those are fetched.
 //! - **Nothing is taken for done before it is written.** A session leaves
-//!   its queue once the writer has committed it, or the far side said it
-//!   cannot be read. A read that failed and a write that was dropped
-//!   leave it waiting, and the sweep's place where it was.
+//!   its queue once the writer has committed it, the far side said it
+//!   cannot be read, or the mirror would not take it. A read that failed
+//!   and a write that was dropped leave it waiting, and the sweep's
+//!   place where it was.
 //!
-//! A session that cannot be read (too large, too many usage rows) is
-//! remembered with the fingerprint it had, and asked for again only when
-//! that changes.
+//! A session that cannot be read (too large, too many usage rows), and
+//! one the mirror refuses (ticket 61), is remembered with the fingerprint
+//! it had, and asked for again only when that changes. Neither stops the
+//! sweep, the home, or the machine's other homes.
 use super::{History, FRESH};
 use crate::clients::hermes::{far_history::Failure, mirror::Batch, mirror::Wrote};
 use crate::ssh_link::Link;
@@ -257,7 +259,7 @@ impl Run<'_> {
             route: self.route,
         };
         match history.writer.history(batch) {
-            Wrote::Written(_) => Ok(()),
+            Wrote::Written(_) | Wrote::Refused(..) => Ok(()),
             Wrote::Dropped(_) | Wrote::Failed(_) => Err(Stop::Write),
         }
     }

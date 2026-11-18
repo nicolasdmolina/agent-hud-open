@@ -74,8 +74,14 @@ pub(super) fn run(shared: &Arc<Shared>, socket: &mut Socket) -> Result<Option<Ra
     // rows: copied here, and queued for the mirrors' writer once the
     // model is unlocked. The writer drops a list it has taken already.
     let listing = (shared.mirror.as_ref()).and_then(|_| model.gateway.listing());
+    let working = model.gateway.working();
     drop(model);
     if let (Some(mirror), Some(listing)) = (&shared.mirror, listing) {
+        // One of them is in a turn: the machine's history is read at
+        // its quick pace for as long as a poll says so.
+        if working {
+            mirror.worked(listing.read_ms);
+        }
         mirror.listed(listing, shared.under.load(Ordering::Acquire));
     }
     // A session whose read held this poll up is read apart from the next.

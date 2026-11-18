@@ -45,8 +45,11 @@ pub const OLDEST_SQLITE: &str = "3.43";
 pub const PROGRAM: &str = include_str!("far_history/reader.py");
 /// What the far shell runs. The program arrives on standard input, and
 /// `-I` keeps Python from importing anything from the folder it is in or
-/// from the user's own packages.
-pub const SCRIPT: &str = "exec python3 -I - \"$@\"";
+/// from the user's own packages. `-B` keeps it from writing a cache file
+/// beside a module it imports, as the relay's Python is kept: with `-I`
+/// no word of the environment could, and a far Python whose own library
+/// the user may write would otherwise be written to (ticket 61).
+pub const SCRIPT: &str = "exec python3 -I -B - \"$@\"";
 /// The exit status of a shell that found no `python3`.
 pub const NO_PYTHON: i32 = 127;
 /// The exit status of a reader that ended itself because what it read

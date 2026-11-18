@@ -318,7 +318,7 @@ fn the_reader_never_ends_through_pythons_own_shutdown() {
     assert!(usual.expect("the far Python").success() && ran.exists());
     fs::remove_file(&ran).unwrap();
     world.stand_in(&format!(
-        "shift 2\nexec {PYTHON} -I -c '{hook}; exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
+        "shift 3\nexec {PYTHON} -I -c '{hook}; exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
     ));
     let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
     let slot = slots.of(&world.machine());

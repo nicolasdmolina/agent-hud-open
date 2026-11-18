@@ -154,10 +154,22 @@ impl Run<'_> {
             route: self.route,
         };
         match history.writer.history(batch) {
-            Wrote::Written(_) => {
+            wrote @ (Wrote::Written(_) | Wrote::Refused(..)) => {
+                let refused = match wrote {
+                    Wrote::Refused(_, refused) => refused,
+                    _ => Vec::new(),
+                };
                 for (id, print) in prints {
-                    self.at.skipped.remove(&id);
-                    self.stored.insert(id, print);
+                    // One the mirror would not take is set aside as it
+                    // is now, like one the far side cannot give: the
+                    // writer logged it, and nothing waits on it.
+                    match refused.contains(&id) {
+                        true => self.at.skipped.insert(id, print),
+                        false => {
+                            self.at.skipped.remove(&id);
+                            self.stored.insert(id, print)
+                        }
+                    };
                 }
             }
             Wrote::Dropped(_) | Wrote::Failed(_) => {

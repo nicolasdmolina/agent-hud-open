@@ -239,10 +239,11 @@ fn the_refresh_is_given_the_live_sessions_and_once_the_ones_that_left_the_list()
     let bench = bench("Mac mini");
     let default = Profile::Default;
     assert!(bench.writer.first(&default, 0).is_empty());
-    assert!(!bench.writer.live(0));
+    assert!(!bench.writer.working(0));
     bench.lists(&default, &[("a", "A"), ("b", "B")], 1_000, 1);
     assert_eq!(bench.writer.first(&default, 0), ["a", "b"]);
-    assert!(bench.writer.live(0));
+    // Listed is not at work (ticket 61): no poll found a turn.
+    assert!(!bench.writer.working(0));
     // `a` left the list: it is given once more, as ended, and then not.
     bench.lists(&default, &[("b", "B"), ("c", "C")], 2_000, 1);
     assert_eq!(bench.writer.first(&default, 0), ["a", "b", "c"]);
@@ -251,7 +252,6 @@ fn the_refresh_is_given_the_live_sessions_and_once_the_ones_that_left_the_list()
     bench.lists(&default, &[("z", "Z")], 1_500, 1);
     assert_eq!(bench.writer.first(&default, 0), ["b", "c"]);
     // A list too old to say what is live: its sessions once, as ended.
-    assert!(!bench.writer.live(2_001));
     assert_eq!(bench.writer.first(&default, 2_001), ["b", "c"]);
     assert!(bench.writer.first(&default, 2_001).is_empty());
     // Another profile's sessions are its own.
@@ -305,4 +305,109 @@ fn a_new_row_is_listed_at_the_first_pass_of_a_mirror_that_holds_a_whole_history(
     );
     assert_eq!(after, 0);
     assert_eq!(bench.count(), 2_001);
+}
+
+#[test]
+fn a_session_the_mirror_refuses_is_named_and_logged_and_the_others_of_its_batch_are_written() {
+    let mut bench = bench("Mac mini");
+    let before = vec![
+        far_session("s-good", 100, &[""], "print-1"),
+        far_session("s-bad", 50, &[""], "print-2"),
+    ];
+    assert_eq!(
+        bench.writer.history(batch(before, 1_000, 1)),
+        Wrote::Written(2)
+    );
+    assert_eq!(bench.turn(), 1);
+    // Two usage rows of one session that name no model, as two far rows
+    // whose model is a blob come: one name in the mirror, twice.
+    let mut bad = far_session("s-bad", 900, &["", ""], "print-4");
+    for row in &mut bad.usage {
+        row[0] = Cell::Null;
+    }
+    let batch_of = |bad: &Session, read_ms| {
+        let sessions = vec![
+            far_session("s-good", 400, &[""], "print-3"),
+            bad.clone(),
+            far_session("s-new", 30, &[""], "print-5"),
+        ];
+        batch(sessions, read_ms, 1)
+    };
+    let tells = bench.tells();
+    assert_eq!(
+        bench.writer.history(batch_of(&bad, 2_000)),
+        Wrote::Refused(2, vec!["s-bad".to_owned()])
+    );
+    // The two beside it are committed and core is told of them; the one
+    // refused is as it was, counts and fingerprint.
+    assert_eq!(bench.tells(), tells + 1);
+    assert_eq!(bench.turn(), 1);
+    let shown: Vec<(String, Value)> = (bench.rows().into_iter())
+        .map(|row| (row.0, row.3))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("default:s-bad".to_owned(), json!(70)),
+            ("default:s-good".to_owned(), json!(420)),
+            ("default:s-new".to_owned(), json!(50))
+        ]
+    );
+    let dump = bench.dump(&Profile::Default);
+    assert!(
+        dump.contains(
+            "hud_rows [Text(\"s-bad\"), Integer(1), Integer(1000), Text(\"print-2\"), Integer(0)]"
+        ),
+        "{dump}"
+    );
+    // Said once in the log, with the session and SQLite's reason, and
+    // not as a write of the mirror that failed.
+    let log = bench.log();
+    let refused: Vec<&str> = (log.lines())
+        .filter(|line| line.contains("mirror refused"))
+        .collect();
+    assert_eq!(refused.len(), 1, "{log}");
+    assert!(
+        refused[0].contains("mirror refused profile=default session=s-bad why=UNIQUE"),
+        "{log}"
+    );
+    assert!(!log.contains("mirror failed"), "{log}");
+    // The same again is refused again and changes nothing; once the far
+    // rows can be told apart it is written like any other.
+    assert_eq!(
+        bench.writer.history(batch_of(&bad, 3_000)),
+        Wrote::Refused(2, vec!["s-bad".to_owned()])
+    );
+    bad.usage[1][0] = Cell::Text("another-model".into());
+    assert_eq!(
+        bench.writer.history(batch_of(&bad, 4_000)),
+        Wrote::Written(3)
+    );
+}
+
+#[test]
+fn only_a_session_in_a_turn_makes_the_machine_one_that_works() {
+    let bench = bench("Mac mini");
+    assert!(!bench.writer.working(0));
+    // Listed, and many: nothing of that says a session works.
+    let many: Vec<(String, &str)> = (0..25).map(|n| (format!("idle-{n:02}"), "Idle")).collect();
+    let many: Vec<(&str, &str)> = many
+        .iter()
+        .map(|(id, title)| (id.as_str(), *title))
+        .collect();
+    bench.lists(&Profile::Default, &many, 1_000, 1);
+    assert_eq!(bench.writer.first(&Profile::Default, 0).len(), 25);
+    assert!(!bench.writer.working(0));
+    // A poll found one in a turn at 2,000: the machine works for as long
+    // as that is fresh, and not after.
+    bench.writer.worked(2_000);
+    bench.lists(&Profile::Default, &many, 2_000, 1);
+    assert!(bench.writer.working(2_000));
+    assert!(!bench.writer.working(2_001));
+    // An older poll that comes back late does not take it back.
+    bench.writer.worked(1_500);
+    assert!(bench.writer.working(2_000));
+    // Later polls list the same sessions, idle again: still not working.
+    bench.lists(&Profile::Default, &many, 9_000, 1);
+    assert!(!bench.writer.working(2_001));
 }
