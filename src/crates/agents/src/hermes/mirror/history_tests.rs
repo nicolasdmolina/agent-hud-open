@@ -415,6 +415,8 @@ fn a_session_the_mirror_refuses_is_left_as_it_was_and_the_rest_of_its_batch_is_w
     let third = taken(&db, &[short, given(&far, "s-before")], 3_000).unwrap();
     assert_eq!((third.written, third.refused.len()), (1, 1));
     assert_eq!(third.refused[0].0, "s-after");
+    // And the log is told what happened.
+    assert_eq!(third.refused[0].1, SHAPE);
     // And an error that is not a session's own is the batch's.
     db.execute_batch("DROP TABLE hud_rows").unwrap();
     assert!(taken(&db, &all(&far), 4_000).is_err());

@@ -52,6 +52,8 @@ pub(super) mod history;
 mod history_leftovers;
 #[path = "machines/history_more.rs"]
 mod history_more;
+#[path = "machines/history_pace.rs"]
+mod history_pace;
 #[path = "machines/lists.rs"]
 mod lists;
 #[path = "machines/mirrors.rs"]

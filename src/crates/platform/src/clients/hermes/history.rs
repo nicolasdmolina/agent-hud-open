@@ -71,6 +71,8 @@ struct State {
     /// Each profile's ages, as last read from its mirror or set by a tick.
     ages: HashMap<Profile, Reads>,
     without: Option<Without>,
+    /// How many sessions of each profile the mirror refused.
+    refused: HashMap<Profile, usize>,
 }
 
 impl History {
@@ -120,9 +122,10 @@ impl History {
         self.state().over
     }
 
-    /// Whether a poll found a far session in a turn a short while ago.
+    /// Whether a poll found a far session in a turn a short while ago:
+    /// within the plan's `worked`.
     fn working(&self) -> bool {
-        let fresh = crate::hooks::now_ms() - FRESH.as_millis() as i64;
+        let fresh = crate::hooks::now_ms() - self.plan.worked.as_millis() as i64;
         self.writer.working(fresh)
     }
 
@@ -168,11 +171,14 @@ impl History {
         self.slots.retired(&self.key);
     }
 
-    /// The machine's two ages, and why it has no history where it has
-    /// none.
+    /// The machine's two ages, why it has no history where it has none,
+    /// and how many of its sessions the mirror refused.
     pub(crate) fn ages(&self) -> Ages {
         let state = self.state();
-        Ages::of(state.ages.values(), state.without)
+        Ages {
+            refused: state.refused.values().sum(),
+            ..Ages::of(state.ages.values(), state.without)
+        }
     }
 
     /// One tick: every home of the machine in turn. Nothing is read
@@ -194,6 +200,7 @@ impl History {
             let path = self.route.named(&home).into_owned();
             let at = progress.entry(profile.clone()).or_default();
             let ran = self.profile(&link, &path, &profile, at);
+            (self.state().refused).insert(profile.clone(), at.refused());
             ticked.reads += ran.reads;
             let Some(failure) = ran.stopped else {
                 ticked.overdue |= ran.overdue;
@@ -209,7 +216,9 @@ impl History {
             match failure {
                 tick::Stop::Read(Failure::Far(Far::NoDatabase)) => {
                     // Nothing to keep in step: it has no age either.
-                    self.state().ages.remove(&profile);
+                    let mut state = self.state();
+                    state.ages.remove(&profile);
+                    state.refused.remove(&profile);
                 }
                 tick::Stop::Read(Failure::NoHistory) => {
                     self.state().without = Some(Without::Python);

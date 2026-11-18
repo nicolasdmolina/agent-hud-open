@@ -130,6 +130,7 @@ impl Run<'_> {
         for (id, _) in &got.skipped {
             let print = print_of(id).cloned().unwrap_or_default();
             self.at.skipped.insert(id.clone(), print);
+            self.at.refused.remove(id);
         }
         let waits = |id: &String| (id.clone(), print_of(id).cloned().unwrap_or_default());
         let mut unread: Vec<(String, String)> = got.unread.iter().map(waits).collect();
@@ -164,9 +165,13 @@ impl Run<'_> {
                     // is now, like one the far side cannot give: the
                     // writer logged it, and nothing waits on it.
                     match refused.contains(&id) {
-                        true => self.at.skipped.insert(id, print),
+                        true => {
+                            self.at.refused.insert(id.clone());
+                            self.at.skipped.insert(id, print)
+                        }
                         false => {
                             self.at.skipped.remove(&id);
+                            self.at.refused.remove(&id);
                             self.stored.insert(id, print)
                         }
                     };

@@ -53,6 +53,7 @@ impl Gateway {
             self.rows.insert(at.clone(), look.listed.clone());
         }
         self.rows.retain(|at, _| self.listed.contains_key(at));
+        (self.asking).retain(|at| self.listed.contains_key(at));
         self.keep_apart();
         // The turns of a far session, which no card below reads.
         self.keep_watched();
@@ -82,6 +83,12 @@ impl Gateway {
     /// Opens a card for each request a reading found that has none.
     pub(super) fn open(&mut self, read: BTreeMap<SessionRef, Look>, effects: &mut Vec<Effect>) {
         for (at, look) in read {
+            // A read that failed, or is not done, says nothing new.
+            match &look.read {
+                Read::Done(reading) if reading.open => self.asking.insert(at.clone()),
+                Read::Done(_) | Read::Skipped => self.asking.remove(&at),
+                Read::Wanted { .. } | Read::Failed => false,
+            };
             let Read::Done(reading) = look.read else {
                 continue;
             };

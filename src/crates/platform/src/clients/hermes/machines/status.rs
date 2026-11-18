@@ -172,7 +172,8 @@ impl State {
                 // checked whole; or why it has no history.
                 let history = self.far.get(&key).and_then(|far| far.history.as_ref());
                 ages = history.map(|history| history.ages()).unwrap_or_default();
-                let note = ages.without.map(words::no_history);
+                let note = (ages.without.map(words::no_history))
+                    .or_else(|| (ages.refused > 0).then(|| words::set_aside(ages.refused)));
                 (id, MachineState::Connected, note)
             }
             Standing::Alias(key) => {

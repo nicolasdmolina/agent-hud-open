@@ -18,7 +18,7 @@ use std::{
 
 /// How many ticks the site's refresh has made: each begins with one
 /// read of what the desktop app holds, once no sweep is overdue.
-fn ticks(site: &Site) -> usize {
+pub(super) fn ticks(site: &Site) -> usize {
     let held = |read: &&String| read.starts_with("held ok ");
     site.reads().iter().filter(held).count()
 }

@@ -10,7 +10,7 @@
 //! (`sample.rs`).
 use super::command::{active_list, events_since, resume, stats, Command};
 use super::effect::Status;
-use super::fold::{batches, prompts, Reading};
+use super::fold::{batches, prompts, requested, Reading};
 use super::frame::Cursor;
 use super::identity::{GatewayId, Profile, SessionRef};
 use super::listing::Listed;
@@ -185,6 +185,7 @@ impl Poll {
                 let reading = Reading {
                     asks,
                     over: search.over,
+                    open: requested(&result["open_requests"]),
                     ..Reading::default()
                 };
                 if let Some(look) = self.sessions.get_mut(session) {

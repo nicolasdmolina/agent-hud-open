@@ -5,7 +5,7 @@ use super::{
     fixture::{chmod, far_with, private_folder, text, write_pointer, FarLab, Manner, SHORT},
 };
 use agent_hud_agents::hermes::gateway::{
-    far::{Quiet, Request, Unchecked},
+    far::{Quiet, Request, Unchecked, RELAY_SECONDS},
     granted, identify, Identified, Scope,
 };
 use serde_json::json;
@@ -268,8 +268,10 @@ fn a_listener_of_another_user_is_refused_and_no_line_reaches_it() {
     let gate = lab.gate(&home, Manner::gateway("one", &[&home]));
     // Stubbed: the test machine has no second user to listen, so the user
     // the relay reads for the listener is made to differ from its own.
+    // The app's own deadline: a loaded machine took more than the short
+    // one to start the relay (ticket 63).
     let far = far_with(
-        SHORT,
+        RELAY_SECONDS,
         "_real_peer_uid = peer_uid\ndef peer_uid(listener):\n    return _real_peer_uid(listener) + 1\n",
     );
     assert_eq!(

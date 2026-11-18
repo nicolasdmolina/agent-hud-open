@@ -87,6 +87,15 @@ pub(super) struct Progress {
     /// Sessions that cannot be read, each with the fingerprint it had
     /// when that was found; empty where that is not known yet.
     skipped: HashMap<String, String>,
+    /// Those of them the mirror refused (ticket 63).
+    refused: HashSet<String>,
+}
+
+impl Progress {
+    /// How many sessions the mirror refused and are not counted.
+    pub(super) fn refused(&self) -> usize {
+        self.refused.len()
+    }
 }
 
 #[cfg(test)]
