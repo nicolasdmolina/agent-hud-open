@@ -199,7 +199,6 @@ fn listing(session: &str, read_ms: i64) -> Listing {
     Listing {
         read_ms,
         profiles: BTreeMap::from([(Profile::Default, rows)]),
-        samples: BTreeMap::new(),
     }
 }
 

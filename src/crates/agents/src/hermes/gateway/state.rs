@@ -54,9 +54,9 @@ pub struct Gateway {
     pub(super) polls: u64,
     pub(super) cards: BTreeMap<Key, Card>,
     /// What the last poll listed each live session as doing. It is
-    /// reported (`statuses`, `poll_ms`), and says which sessions a far
-    /// poll asks for their count once more (`sample.rs`); no card is
-    /// decided by it.
+    /// reported (`statuses`, `poll_ms`), and says which sessions of a
+    /// far gateway are asked what they have used (`sample.rs`); no card
+    /// is decided by it.
     pub(super) listed: BTreeMap<SessionRef, Status>,
     /// What else that poll's list said of each (`listing.rs`).
     pub(super) rows: BTreeMap<SessionRef, super::listing::Listed>,
@@ -96,6 +96,9 @@ pub struct Gateway {
     /// Where each stream of a far machine was last seen, for telling the
     /// turns that end there (`turns.rs`). No card reads it.
     pub(super) turns: super::turns::Turns,
+    /// The sessions of a far machine that are owed one more count
+    /// (`sample.rs`). No card reads it.
+    pub(super) owed: super::sample::Owed,
 }
 
 impl Gateway {
@@ -119,6 +122,7 @@ impl Gateway {
             apart: BTreeMap::new(),
             listing: BTreeMap::new(),
             asking: BTreeSet::new(),
+            owed: Default::default(),
         }
     }
     pub fn id(&self) -> &GatewayId {
@@ -188,7 +192,7 @@ impl Gateway {
             .collect();
         let mut poll = Poll::new(self.id.clone(), self.polls, served, shown, recent);
         poll.turns = self.turns.watch();
-        Some(self.sampling(poll))
+        Some(poll)
     }
 
     /// Takes what happened at `now_ms` and returns what to do, in order.
@@ -206,6 +210,7 @@ impl Gateway {
             }
             Input::Denied(Denied::Unsupported(why)) => self.unsupported(why, &mut effects),
             Input::Polled(poll) => self.reconcile(poll, now_ms, &mut effects),
+            Input::Counted(counting) => self.counted(&counting),
             Input::Sent { request } => self.sent(request, now_ms, &mut effects),
             Input::Responded { request, reply } => self.responded(request, reply, &mut effects),
             Input::Unsent { request } => self.unsent(request, &mut effects),
@@ -274,6 +279,7 @@ impl Gateway {
         self.listed.clear();
         self.snapshotted.clear();
         self.turns.forget();
+        self.owed.forget();
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {
             self.close(&key, why.clone(), effects);
         }

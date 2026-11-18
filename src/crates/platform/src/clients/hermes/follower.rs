@@ -86,6 +86,9 @@ pub(super) struct Shared {
     pub(super) look: Arc<Signal>,
     /// The sessions that are read apart from the polls (`apart.rs`).
     pub(super) apart: super::apart::Lanes,
+    /// The lane the count calls of a far machine's sessions go on
+    /// (`counting.rs`).
+    pub(super) counts: super::counting::Lane,
     /// Every reader that was ended in core, for the tests that count them.
     #[cfg(test)]
     pub(super) ends: Arc<Mutex<Vec<String>>>,

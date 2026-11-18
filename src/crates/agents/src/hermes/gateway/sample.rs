@@ -1,20 +1,33 @@
 //! A far session's token count while it runs, for showing and for
 //! nothing else. A far machine's usage reaches the ledger from its own
 //! database alone; until that is read, a session that works would show
-//! no tokens. So a poll of a far gateway asks `session.stats` of each
-//! session that works, and once more of one that started or worked at
-//! the poll before and is listed as something else now, since a turn's
-//! last call adds to the count as it ends. A session that only starts
-//! is not asked: its agent has not begun, and one can be listed so for
-//! days. The call reads the counters of the session's agent and
-//! subscribes to nothing (`gateway/session_usage.py`, `stats`).
+//! no tokens. So a far gateway's sessions are asked `session.stats`,
+//! which reads the counters of a session's agent and subscribes to
+//! nothing (`gateway/session_usage.py`, `stats`).
+//!
+//! **Apart from the polls.** The calls are no step of a poll. They are
+//! a round of their own (`Counting`), begun after a poll and asked on a
+//! socket of its own, so no poll and no card waits for a count however
+//! long Hermes takes to say one.
+//!
+//! **Who is asked.** Each session the newest poll listed as working,
+//! in every round. And one that is owed a last count (`Owed`), until a
+//! call for it is answered:
+//!
+//! - one that started, worked or waited at one poll and is listed as
+//!   something else at the next: a turn's last call adds to the count
+//!   as it ends;
+//! - one a turn was read to start or end in (`turns.rs`), which is how
+//!   a turn that ran wholly between two polls is known of at all.
+//!
+//! A call that fails leaves its session owed, and it is asked again in
+//! the next round, `TRIES` rounds at most: its row then shows what it
+//! showed until its history is read. A session that only starts is not
+//! asked: its agent has not begun, and one can be listed so for days.
 //!
 //! Hermes answers zeros where it holds no agent for the session, as it
-//! does for a scheduled job's: that is no count, and gives no sample.
-//! What is given is the samples of the newest poll that counted, with
-//! the live list they came with (`listing.rs`). No card is decided by a
-//! sample, and a call that fails only leaves a session without one
-//! until the next poll.
+//! does for a scheduled job's: that is an answer, and no count, and
+//! gives no sample. No card is decided by a sample.
 //!
 //! A gateway of the machine Agent HUD runs on is never asked: its
 //! database is read where it is.
@@ -60,67 +73,158 @@ impl Sample {
     }
 }
 
-/// The samples one poll of a far gateway takes.
+/// How many rounds in a row a session that is owed a count is asked
+/// again after a call for it failed.
+pub(super) const TRIES: u32 = 5;
+
+/// The sessions that are owed one more count.
 #[derive(Debug, Default)]
-pub(super) struct Sampling {
-    /// The sessions the poll before listed as starting or working, each
-    /// with which of the two.
-    before: BTreeMap<SessionRef, Status>,
-    /// What each session asked answered; None where it gave no sample.
-    taken: BTreeMap<SessionRef, Option<Sample>>,
+pub(super) struct Owed {
+    /// Each with the number it came to be owed under, and how many
+    /// calls for it have failed since.
+    sessions: BTreeMap<SessionRef, (u64, u32)>,
+    /// Counts every time a session came to be owed.
+    last: u64,
 }
 
-impl Gateway {
-    /// `poll`, which also takes samples where this gateway is a far
-    /// machine's.
-    pub(super) fn sampling(&self, mut poll: Poll) -> Poll {
-        if matches!(self.id.machine(), Machine::Far(_)) {
-            let ran = |status: &Status| matches!(status, Status::Starting | Status::Working);
-            let before = self.listed.iter().filter(|(_, status)| ran(status));
-            poll.sampling = Some(Box::new(Sampling {
-                before: before.map(|(at, status)| (at.clone(), *status)).collect(),
-                taken: BTreeMap::new(),
-            }));
-        }
-        poll
+impl Owed {
+    /// `at` is owed a count from now, whatever was asked of it before.
+    pub(super) fn owe(&mut self, at: &SessionRef) {
+        self.last += 1;
+        self.sessions.insert(at.clone(), (self.last, 0));
+    }
+
+    /// Nothing is owed any more: the gateway is another one.
+    pub(super) fn forget(&mut self) {
+        self.sessions.clear();
     }
 }
 
-impl Poll {
-    /// The sessions still to ask `session.stats` of.
-    pub(super) fn unsampled(&self) -> impl Iterator<Item = Step> + '_ {
-        let sampling = self.sampling.as_deref().into_iter();
-        sampling.flat_map(move |sampling| {
-            let wanted = move |(at, look): (&SessionRef, &super::poll::Look)| {
-                let works = look.status == Status::Working;
-                // Started or worked, and is listed as something else now.
-                let moved = (sampling.before.get(at)).is_some_and(|was| *was != look.status);
-                let asked = sampling.taken.contains_key(at);
-                ((works || moved) && !asked).then(|| Step::Stats(at.clone()))
-            };
-            self.sessions.iter().filter_map(wanted)
-        })
+/// What a session asked in a round said.
+#[derive(Debug)]
+enum Said {
+    /// Not yet.
+    Nothing,
+    /// The call failed, or was never answered.
+    Failed,
+    /// The reply, with the sample it gave where it counted anything.
+    Answered(Option<Sample>),
+}
+
+/// One round of count calls: the sessions asked, and what each said.
+/// Whoever runs it asks for `steps()`, gives each result to `answer`
+/// (or says it `failed`), and hands the round to the model as
+/// `Input::Counted`, having taken its `samples`.
+#[derive(Debug)]
+pub struct Counting {
+    /// Each session asked, with the number it was owed under, where it
+    /// was owed. A session's name holds its gateway's, so a round says
+    /// nothing of another gateway's sessions.
+    asked: BTreeMap<SessionRef, (Option<u64>, Said)>,
+}
+
+impl Counting {
+    /// The calls still to be answered. They may go out at once.
+    pub fn steps(&self) -> Vec<Step> {
+        let unanswered = |(at, (_, said)): (&SessionRef, &(Option<u64>, Said))| {
+            matches!(said, Said::Nothing).then(|| Step::Stats(at.clone()))
+        };
+        self.asked.iter().filter_map(unanswered).collect()
     }
 
-    /// The reply to a `session.stats` of `at`, or None where it failed.
-    pub(super) fn sampled(&mut self, at: &SessionRef, result: Option<&Value>) {
-        if let Some(sampling) = &mut self.sampling {
-            let sample = result.and_then(Sample::of);
-            sampling.taken.entry(at.clone()).or_insert(sample);
+    /// The `result` of the reply to `step`.
+    pub fn answer(&mut self, step: &Step, result: &Value) {
+        self.say(step, Said::Answered(Sample::of(result)));
+    }
+
+    /// `step` was refused or never answered.
+    pub fn failed(&mut self, step: &Step) {
+        self.say(step, Said::Failed);
+    }
+
+    fn say(&mut self, step: &Step, said: Said) {
+        let Step::Stats(at) = step else {
+            return;
+        };
+        if let Some((_, was @ Said::Nothing)) = self.asked.get_mut(at) {
+            *was = said;
         }
     }
 
     /// The samples taken, profile by profile, by Hermes's session id.
-    pub(super) fn samples(&self) -> BTreeMap<Profile, Vec<(String, Sample)>> {
+    pub fn samples(&self) -> BTreeMap<Profile, Vec<(String, Sample)>> {
         let mut all: BTreeMap<Profile, Vec<(String, Sample)>> = BTreeMap::new();
-        let sampling = self.sampling.as_deref().into_iter();
-        let taken = sampling.flat_map(|sampling| &sampling.taken);
-        for (at, sample) in taken {
-            if let Some(sample) = sample {
+        for (at, (_, said)) in &self.asked {
+            if let Said::Answered(Some(sample)) = said {
                 let of = all.entry(at.profile.clone()).or_default();
                 of.push((at.id().to_owned(), *sample));
             }
         }
         all
+    }
+}
+
+impl Gateway {
+    /// Begins a round of count calls: every session the newest poll
+    /// that counted listed as working, and every one owed a count. None
+    /// where nobody is to be asked, and for a gateway of this machine.
+    /// Only the sessions of profiles that poll listed are asked, as
+    /// only they are current (`live.rs`): none while the gateway is not
+    /// ready, nor before a poll has listed it since it last was.
+    pub fn count(&self) -> Option<Counting> {
+        if !matches!(self.id.machine(), Machine::Far(_)) {
+            return None;
+        }
+        let current = |at: &SessionRef| self.told.fresh().contains(&at.profile);
+        let works = (self.listed.iter())
+            .filter(|(at, status)| **status == Status::Working && current(at))
+            .map(|(at, _)| (at.clone(), (None, Said::Nothing)));
+        let mut asked: BTreeMap<SessionRef, (Option<u64>, Said)> = works.collect();
+        for (at, (under, _)) in &self.owed.sessions {
+            if current(at) {
+                asked.insert(at.clone(), (Some(*under), Said::Nothing));
+            }
+        }
+        (!asked.is_empty()).then_some(Counting { asked })
+    }
+
+    /// A round of count calls came back. A session that was owed a
+    /// count and answered is owed none; one whose call failed is asked
+    /// again, `TRIES` rounds at most. One that came to be owed anew
+    /// while the round was out stays owed: what it said was said before
+    /// that.
+    pub(super) fn counted(&mut self, counting: &Counting) {
+        for (at, (under, said)) in &counting.asked {
+            let owed = self.owed.sessions.get_mut(at);
+            let Some((_, tries)) = owed.filter(|(now, _)| Some(*now) == *under) else {
+                continue;
+            };
+            *tries += 1;
+            if matches!(said, Said::Answered(_)) || *tries >= TRIES {
+                self.owed.sessions.remove(at);
+            }
+        }
+    }
+
+    /// What `poll`, which counts, says of who is owed a count, before
+    /// its list replaces the one before: a session that started, worked
+    /// or waited and is listed as something else now. One that works
+    /// now is asked in every round as it is.
+    pub(super) fn owe_moved(&mut self, poll: &Poll) {
+        let ran = |was: &Status| *was != Status::Idle;
+        for (at, look) in &poll.sessions {
+            let was = self.listed.get(at);
+            let moved = was.is_some_and(|was| ran(was) && *was != look.status);
+            if moved && look.status != Status::Working {
+                self.owed.owe(at);
+            }
+        }
+    }
+
+    /// A session that left the live list is owed nothing: Hermes holds
+    /// no agent for it to ask.
+    pub(super) fn keep_owed(&mut self) {
+        let listed = &self.listed;
+        self.owed.sessions.retain(|at, _| listed.contains_key(at));
     }
 }

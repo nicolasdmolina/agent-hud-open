@@ -230,3 +230,82 @@ fn a_new_label_is_never_the_write_a_full_queue_drops() {
     assert_eq!(label(&reports()), "New");
     writer.stop();
 }
+
+/// Counts that arrive while the disk stalls do not pile up (ticket 60):
+/// one write waits for a profile, whatever the rounds, and it says the
+/// newest of every session any of them asked.
+#[test]
+fn counts_that_wait_for_the_disk_are_one_write_for_a_profile() {
+    use agent_hud_agents::hermes::gateway::Sample;
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().canonicalize().unwrap().join("data");
+    crate::os::private_directory(&data).unwrap();
+    let disk = Arc::new(Stalled {
+        shut: Mutex::new(false),
+        moved: Condvar::new(),
+    });
+    let untold: Changed = Arc::new(|_| {});
+    let log = Log::new(&data).of(Some("mirror"));
+    let space = Duration::from_millis(1);
+    let named = (&key(), "Mini");
+    let writer = Writer::spaced(&data, named, disk.clone(), untold, log, space).unwrap();
+    let rows = [("s1", "First"), ("s2", "Second")];
+    writer.listed(listing(&Profile::Default, &rows, 1_000), 1);
+    writer.listed(listing(&reports(), &[("r1", "First")], 1_000), 1);
+    writer.settle();
+
+    // The disk stalls: the thread takes one write and waits in it.
+    *disk.shut.lock().unwrap() = true;
+    writer.listed(listing(&Profile::Default, &[("s3", "Third")], 2_000), 1);
+    let limit = Instant::now() + Duration::from_secs(30);
+    while !writer.state().busy {
+        assert!(Instant::now() < limit, "the write was never taken");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let said = |profile: &Profile, sessions: &[(&str, u64)]| {
+        let sample = |total: u64| Sample {
+            input: total,
+            ..Sample::default()
+        };
+        let samples = sessions
+            .iter()
+            .map(|(id, total)| ((*id).to_owned(), sample(*total)));
+        BTreeMap::from([(profile.clone(), samples.collect::<Vec<_>>())])
+    };
+    // A hundred rounds: the first asks both sessions, the rest only one.
+    writer.counted(said(&Profile::Default, &[("s1", 10), ("s2", 77)]), 3_000, 1);
+    for round in 1..=100 {
+        writer.counted(
+            said(&Profile::Default, &[("s1", 10 + round)]),
+            3_000 + round as i64,
+            1,
+        );
+        writer.counted(said(&reports(), &[("r1", round)]), 3_000 + round as i64, 1);
+    }
+    // One write of counts waits for each profile.
+    assert_eq!(writer.state().queue.len(), 2);
+    *disk.shut.lock().unwrap() = false;
+    disk.moved.notify_all();
+    writer.settle();
+    std::thread::sleep(Duration::from_millis(50));
+    writer.settle();
+
+    let kept = |profile: &Profile| {
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
+        let db = rusqlite::Connection::open_with_flags(writer.file(profile), flags).unwrap();
+        let sql = "SELECT session_id, input_tokens FROM hud_live ORDER BY session_id";
+        let mut statement = db.prepare(sql).unwrap();
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)));
+        rows.unwrap()
+            .map(Result::unwrap)
+            .collect::<Vec<(String, i64)>>()
+    };
+    // The newest of the session every round asked, and what the first
+    // round said of the one no later round asked.
+    assert_eq!(
+        kept(&Profile::Default),
+        [("s1".to_owned(), 110), ("s2".to_owned(), 77)]
+    );
+    assert_eq!(kept(&reports()), [("r1".to_owned(), 100)]);
+    writer.stop();
+}

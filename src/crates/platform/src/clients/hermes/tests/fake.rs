@@ -166,6 +166,8 @@ pub struct World {
     /// One session whose events are slow to read: each read of them is
     /// held back this long.
     pub slow_replay: Option<(String, Duration)>,
+    /// How long each `session.stats` is held back (ticket 60).
+    pub slow_stats: Duration,
     /// One session whose looks (a read of its stream that names no
     /// epoch) are never answered, while everything else is.
     pub mute: Option<String>,
@@ -688,7 +690,11 @@ fn serve_socket(stream: TcpStream, world: Arc<Mutex<World>>, running: Arc<Atomic
                 replay && frame["params"]["session_id"] == session.as_str()
             };
             let slow = world.slow_replay.as_ref().filter(held);
-            world.slow + slow.map_or(Duration::ZERO, |(_, slow)| *slow)
+            let stats = match frame["method"] == "session.stats" {
+                true => world.slow_stats,
+                false => Duration::ZERO,
+            };
+            world.slow + stats + slow.map_or(Duration::ZERO, |(_, slow)| *slow)
         };
         thread::sleep(slow);
         let reply = {

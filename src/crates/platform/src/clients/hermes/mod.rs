@@ -26,6 +26,7 @@ mod apart;
 mod asking;
 mod control;
 mod cost;
+mod counting;
 mod decisions;
 mod discovery;
 mod effects;

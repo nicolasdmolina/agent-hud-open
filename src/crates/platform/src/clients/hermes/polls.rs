@@ -75,6 +75,8 @@ pub(super) fn run(shared: &Arc<Shared>, socket: &mut Socket) -> Result<Option<Ra
     // model is unlocked. The writer drops a list it has taken already.
     let listing = (shared.mirror.as_ref()).and_then(|_| model.gateway.listing());
     let working = model.gateway.working();
+    // What a session has used is asked on a lane (`counting.rs`).
+    let counts = model.gateway.count().is_some();
     drop(model);
     if let (Some(mirror), Some(listing)) = (&shared.mirror, listing) {
         // One of them is in a turn: the machine's history is read at
@@ -83,6 +85,9 @@ pub(super) fn run(shared: &Arc<Shared>, socket: &mut Socket) -> Result<Option<Ra
             mirror.worked(listing.read_ms);
         }
         mirror.listed(listing, shared.under.load(Ordering::Acquire));
+    }
+    if counts {
+        shared.counts.want(shared);
     }
     // A session whose read held this poll up is read apart from the next.
     for session in asked.slow {
@@ -166,8 +171,7 @@ pub(super) fn rounds(
             // it goes to no lane, and keeps none going.
             let session = match &step {
                 Step::Since { session, .. } | Step::Snapshot(session) => Some(session),
-                // A session's count is asked beside its events, of one
-                // that is read apart too: the call reads no stream.
+                // No step of a poll: counts have a lane (`counting.rs`).
                 Step::List(_) | Step::Watch { .. } | Step::Stats(_) => None,
             };
             if beside && session.is_some_and(|session| shared.apart.reads(session)) {

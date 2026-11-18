@@ -67,13 +67,15 @@ impl Writer {
                 Turn::Queued(Write::Listed {
                     profile,
                     sessions,
+                    read_ms,
+                    route,
+                }) => self.list(&mut files, &profile, sessions, (read_ms, route), &label),
+                Turn::Queued(Write::Counted {
+                    profile,
                     samples,
                     read_ms,
                     route,
-                }) => {
-                    let said = (sessions, samples);
-                    self.list(&mut files, &profile, said, (read_ms, route), &label)
-                }
+                }) => self.count(&mut files, &profile, samples, (read_ms, route), &label),
                 // Whoever asked may have stopped waiting: then nobody hears.
                 Turn::Queued(Write::History(batch, done)) => {
                     let _ = done.send(self.keep(&mut files, batch, &label));
@@ -112,14 +114,34 @@ impl Writer {
         }
     }
 
+    /// What a round of count calls said of `profile`: its samples wait
+    /// for their time, and are written now where it has come
+    /// (`commit`).
+    fn count(
+        &self,
+        files: &mut Files,
+        profile: &Profile,
+        samples: Vec<(String, Sample)>,
+        (read_ms, route): (i64, u64),
+        label: &str,
+    ) {
+        if !self.routes.under(route, &mut || {}) {
+            let name = profile.name();
+            self.log
+                .line(&format!("mirror dropped profile={name} why=route"));
+            return;
+        }
+        files.counts.sample(profile, samples, read_ms, route);
+        self.commit(files, None, label);
+    }
+
     /// What one poll said of `profile`: a row for each of its sessions
-    /// that the mirror lacks, written at once, and its samples, which
-    /// wait for their time (`commit`).
+    /// that the mirror lacks, written at once.
     fn list(
         &self,
         files: &mut Files,
         profile: &Profile,
-        (sessions, samples): (Vec<(String, Listed)>, Vec<(String, Sample)>),
+        sessions: Vec<(String, Listed)>,
         (read_ms, route): (i64, u64),
         label: &str,
     ) {
@@ -134,7 +156,8 @@ impl Writer {
         }
         let path = mirror::file(&self.root, &self.key, profile);
         let lacking = files.lacking(profile, &path, sessions);
-        files.counts.sample(profile, samples, read_ms, route);
+        // Counts that waited under another route number wait no more.
+        files.counts.sample(profile, Vec::new(), read_ms, route);
         if !lacking.is_empty() {
             self.commit(files, Some((profile, (lacking, read_ms, route))), label);
         }

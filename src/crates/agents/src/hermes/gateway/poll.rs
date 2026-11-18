@@ -5,9 +5,8 @@
 //! whole poll goes to the model as `Input::Polled`.
 //!
 //! A poll lists the sessions of every served profile, then reads each
-//! session that works, waits or shows a card (`read.rs`). A poll of a
-//! far gateway also asks what the sessions that work have used
-//! (`sample.rs`).
+//! session that works, waits or shows a card (`read.rs`). What a far
+//! session has used is asked apart from the polls (`sample.rs`).
 use super::command::{active_list, events_since, resume, stats, Command};
 use super::effect::Status;
 use super::fold::{batches, prompts, requested, Reading};
@@ -41,7 +40,8 @@ pub enum Step {
         cursor: Option<Cursor>,
     },
     /// What a session has used so far (`session.stats`). Needs no
-    /// subscription.
+    /// subscription, and is no step of a poll: it is asked in a round
+    /// of its own (`sample.rs`).
     Stats(SessionRef),
 }
 
@@ -110,9 +110,6 @@ pub struct Poll {
     /// What it learns of the streams, where the gateway's turns are
     /// watched (`turns.rs`).
     pub(super) turns: Option<super::turns::Watch>,
-    /// Set where the poll also takes samples of what the sessions that
-    /// work have used (`sample.rs`).
-    pub(super) sampling: Option<Box<super::sample::Sampling>>,
 }
 
 impl Poll {
@@ -132,7 +129,6 @@ impl Poll {
             recent,
             apart: None,
             turns: None,
-            sampling: None,
         }
     }
 
@@ -156,16 +152,15 @@ impl Poll {
         });
         // After the reads the cards wait on, which so go out first.
         let looks = self.turns.iter().flat_map(|watch| watch.steps());
-        (lists.chain(reads).chain(looks))
-            .chain(self.unsampled())
-            .collect()
+        lists.chain(reads).chain(looks).collect()
     }
 
     /// The `result` of the reply to `step`.
     pub fn answer(&mut self, step: &Step, result: &Value) {
         match step {
             Step::List(profile) => self.listed(profile, result),
-            Step::Stats(session) => self.sampled(session, Some(result)),
+            // No step of a poll (`sample.rs`).
+            Step::Stats(_) => {}
             Step::Since { session, cursor } => {
                 if let Some(search) = self.wanted(session, step) {
                     self.read(session, cursor.as_ref(), search, result);
@@ -221,7 +216,7 @@ impl Poll {
                     watch.failed(step);
                 }
             }
-            Step::Stats(session) => self.sampled(session, None),
+            Step::Stats(_) => {}
         }
     }
 

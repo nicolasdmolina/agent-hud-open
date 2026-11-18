@@ -10,12 +10,14 @@
 //! - **The pass over the old ones**, the sessions the last pass ended
 //!   with, from the lowest rowid up. It reads those whose counts grew or
 //!   that were active since, as it always has: Hermes adds to a session
-//!   in place (`session_counts`). A page looks at a hundred of them. In
-//!   a mirror it looks at ten thousand, and reads a hundred at most as
-//!   everywhere: a mirror's rows are short, since its writer cuts every
-//!   word it stores, and every write to one begins this pass anew, which
-//!   then ends in the page that began it and not a hundred rows a pass
-//!   later, each pass at what a pass costs.
+//!   in place (`session_counts`). A page looks at a hundred of them,
+//!   and reads those of them that changed. In a mirror it looks at ten
+//!   thousand, and reads as many as changed (ticket 60): a mirror's
+//!   rows are short, since its writer cuts every word it stores, and
+//!   every write to one begins this pass anew, which then ends in the
+//!   page that began it and not a hundred rows a pass later, each pass
+//!   at what a pass costs. So what changes in a mirror shows after one
+//!   pass, whether it is one session's count or the label of them all.
 //!
 //! So a session that begins is read on the first page after it, however
 //! many the database holds and wherever a pass has got to. Read at the
@@ -38,7 +40,8 @@ use rows::Sessions;
 /// How many new sessions one page reads; and how many old ones it looks
 /// at, and reads at most.
 const PAGE: i64 = 100;
-/// How many old sessions of a mirror one page looks at.
+/// How many old sessions of a mirror one page looks at, and reads at
+/// most.
 const MIRROR_PAGE: i64 = 10_000;
 
 pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Page> {
@@ -96,14 +99,14 @@ pub fn read(db: &Connection, path: &Path, cursor: &Value) -> rusqlite::Result<Pa
     // The pass over the sessions the last one ended with: up to where it
     // has got to now, and whether that is their end.
     let (swept, ended) = if scan < rowid_after {
-        let looked = match sessions.of_a_mirror() {
-            true => MIRROR_PAGE,
-            false => PAGE,
+        let limits = match sessions.of_a_mirror() {
+            true => (MIRROR_PAGE, MIRROR_PAGE),
+            false => (PAGE, PAGE),
         };
         let old = sessions.page(
             ("rowid>?1 AND rowid<=?2", false),
             &[scan, rowid_after],
-            (looked, PAGE),
+            limits,
             &mut |rowid, updated, print| {
                 max_ts = max_ts.max(updated);
                 let grew = prints.changed(rowid, print);

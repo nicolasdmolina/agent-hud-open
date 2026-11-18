@@ -212,6 +212,7 @@ impl Followers {
             awaits: AtomicU64::new(0),
             look: self.look.clone(),
             apart: Default::default(),
+            counts: Default::default(),
             #[cfg(test)]
             ends: self.ends.clone(),
             #[cfg(test)]

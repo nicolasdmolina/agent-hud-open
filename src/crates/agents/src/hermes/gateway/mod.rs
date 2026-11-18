@@ -52,7 +52,7 @@ pub use machine::{
     StoredKey, INSTALL_ID_FILE,
 };
 pub use poll::{Poll, Step};
-pub use sample::Sample;
+pub use sample::{Counting, Sample};
 pub use state::{Gateway, BUSY_POLL_MS, IDLE_POLL_MS, SNAPSHOT_EVERY_MS};
 pub use ticket::{
     granted, identify_line, pointed_socket, ticket_line, Scope, Ticket, CONTROL_POINTER,

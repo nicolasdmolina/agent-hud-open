@@ -24,8 +24,9 @@
 //! - **History.** What the far database itself gave is a write on the
 //!   same queue (`history.rs`), which whoever asks waits for: the
 //!   refresh reads the next page against what the mirror then holds.
-//! - **Counts.** What a poll's samples said the sessions have used so
-//!   far goes into `hud_live`, for showing alone (`mirror::live`). A
+//! - **Counts.** What a round of count calls said the sessions have used
+//!   so far (`counting.rs`) goes into `hud_live`, for showing alone
+//!   (`mirror::live`), as a write on the same queue. A
 //!   count moves with every call a session's model answers, and every
 //!   commit asks core for a pass, so counts are not written as they
 //!   come: a machine's counts are committed at most once in `SPACE`,
@@ -44,7 +45,7 @@ use agent_hud_agents::hermes::{
     mirror,
 };
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
     thread,
@@ -113,7 +114,13 @@ enum Write {
     Listed {
         profile: Profile,
         sessions: Vec<(String, Listed)>,
-        /// What that poll's samples said its sessions have used so far.
+        read_ms: i64,
+        route: u64,
+    },
+    /// What a round of count calls said the sessions of one profile
+    /// have used so far.
+    Counted {
+        profile: Profile,
         samples: Vec<(String, Sample)>,
         read_ms: i64,
         route: u64,
@@ -177,7 +184,7 @@ impl Writer {
 
     /// A poll that counted listed these live sessions, over a socket
     /// opened under the route number `route`. It returns at once.
-    pub(crate) fn listed(&self, mut listing: Listing, route: u64) {
+    pub(crate) fn listed(&self, listing: Listing, route: u64) {
         let read_ms = listing.read_ms;
         let mut state = self.state();
         if state.over {
@@ -190,10 +197,48 @@ impl Writer {
                 let oldest = state.queue.iter().position(listed);
                 oldest.and_then(|oldest| state.queue.remove(oldest));
             }
-            let samples = listing.samples.remove(&profile).unwrap_or_default();
             state.queue.push_back(Write::Listed {
                 profile,
                 sessions,
+                read_ms,
+                route,
+            });
+        }
+        drop(state);
+        self.wake.notify_all();
+    }
+
+    /// A round of count calls read at `read_ms`, over a socket opened
+    /// under the route number `route`, said these sessions have used
+    /// this much so far. It returns at once. At most one such write
+    /// waits for a profile: a newer round says what the one before it
+    /// said, or more.
+    pub(crate) fn counted(
+        &self,
+        samples: BTreeMap<Profile, Vec<(String, Sample)>>,
+        read_ms: i64,
+        route: u64,
+    ) {
+        let mut state = self.state();
+        if state.over {
+            return;
+        }
+        for (profile, samples) in samples {
+            let same = |write: &Write| matches!(write, Write::Counted { profile: of, route: under, .. } if *of == profile && *under == route);
+            let waits = state.queue.iter().position(same);
+            let mut samples = samples;
+            if let Some(Write::Counted {
+                samples: before, ..
+            }) = waits.and_then(|at| state.queue.remove(at))
+            {
+                // What the older round said of a session this one did
+                // not ask is kept.
+                let asked = |id: &String| samples.iter().any(|(now, _)| now == id);
+                let kept: Vec<_> = before.into_iter().filter(|(id, _)| !asked(id)).collect();
+                samples.extend(kept);
+            }
+            state.queue.push_back(Write::Counted {
+                profile,
                 samples,
                 read_ms,
                 route,

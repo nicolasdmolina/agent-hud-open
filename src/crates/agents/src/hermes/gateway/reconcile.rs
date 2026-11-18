@@ -38,6 +38,7 @@ impl Gateway {
         // A session this poll lists anew, or as no longer doing what the
         // poll before listed and not as waiting, has a new listing
         // (`apart.rs`).
+        self.owe_moved(&poll);
         for (at, look) in &poll.sessions {
             let before = self.listed.get(at);
             let moved = before != Some(&look.status) && look.status != Status::Waiting;
@@ -54,6 +55,7 @@ impl Gateway {
         }
         self.rows.retain(|at, _| self.listed.contains_key(at));
         (self.asking).retain(|at| self.listed.contains_key(at));
+        self.keep_owed();
         self.keep_apart();
         // The turns of a far session, which no card below reads.
         self.keep_watched();
