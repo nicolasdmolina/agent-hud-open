@@ -113,7 +113,7 @@ impl Book {
         let Some(far) = state.far.remove(key) else {
             return;
         };
-        far.followers.stop();
+        far.stop();
         for slot in &mut state.slots {
             if matches!(&slot.lead, Lead::Owner(of) | Lead::Alias(of) if of == key) {
                 slot.lead = Lead::Nowhere;

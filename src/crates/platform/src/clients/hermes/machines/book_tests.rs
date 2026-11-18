@@ -1,6 +1,8 @@
 //! What the tests read of the book, and the one place they hold it.
 use super::book::{Book, Far, Slot};
-use crate::clients::hermes::{followers::Followers, machine::Inner};
+use crate::clients::hermes::{
+    far_history::Slots, followers::Followers, history::History, machine::Inner,
+};
 use std::sync::Arc;
 
 /// Entered, and let go on.
@@ -48,6 +50,28 @@ impl Book {
             .iter()
             .find(its)
             .and_then(|slot| slot.route.clone())
+    }
+
+    /// The history refresh of the machine the entry `entry` owns.
+    pub(in crate::clients::hermes) fn history_of(&self, entry: &str) -> Option<Arc<History>> {
+        let state = self.state();
+        let owned = |far: &&Far| far.owner.as_deref() == Some(entry);
+        (state.far.values().find(owned)).and_then(|far| far.history.clone())
+    }
+
+    /// The route switch of the machine the entry `entry` owns.
+    pub(in crate::clients::hermes) fn switch_of(
+        &self,
+        entry: &str,
+    ) -> Option<Arc<crate::clients::hermes::route::switch::Switch>> {
+        let state = self.state();
+        let owned = |far: &&Far| far.owner.as_deref() == Some(entry);
+        (state.far.values().find(owned)).map(|far| far.switch.clone())
+    }
+
+    /// The history readers' slots, one for each far machine.
+    pub(in crate::clients::hermes) fn slots(&self) -> Arc<Slots> {
+        self.slots.clone()
     }
 
     /// The followers of the machine the entry `entry` owns.

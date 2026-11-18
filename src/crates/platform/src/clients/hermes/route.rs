@@ -13,12 +13,14 @@
 //! a gateway is another `Route`, and nothing that follows a gateway
 //! changes for it.
 use super::control::Silent;
+use crate::ssh_link::Link;
 use agent_hud_agents::hermes::gateway::{Command, Failure, Instance, Profile};
 use serde_json::Value;
 use std::{
     borrow::Cow,
     net::TcpStream,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -173,6 +175,14 @@ pub(crate) trait Route: Send + Sync {
     /// whole life.
     fn epoch(&self) -> Option<Epoch> {
         Some(Epoch::default())
+    }
+
+    /// The link far programs of the machine's own run over, where the
+    /// route has one that stands: the history reader's
+    /// (`history.rs`). None for the route to this machine, whose history
+    /// core reads from its own files, and while a far link is down.
+    fn link(&self) -> Option<Arc<Link>> {
+        None
     }
 
     /// The instance `instance`, by its id, is followed no more: its

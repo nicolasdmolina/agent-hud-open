@@ -80,6 +80,11 @@ impl FarObserver {
     pub(in crate::clients::hermes) fn inner(&self) -> &Arc<Inner> {
         &self.inner
     }
+
+    #[cfg(test)]
+    pub(in crate::clients::hermes) fn book(&self) -> &Arc<Book> {
+        &self.book
+    }
 }
 
 impl Drop for FarObserver {

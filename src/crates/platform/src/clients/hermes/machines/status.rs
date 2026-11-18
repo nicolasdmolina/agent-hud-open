@@ -17,7 +17,7 @@ use super::{
     list::Unread,
     words,
 };
-use crate::clients::hermes::machine::Standing;
+use crate::clients::hermes::{history::Ages, machine::Standing};
 use agent_hud_agents::{
     hermes::{
         connections::{Kind, SshAddress},
@@ -157,6 +157,7 @@ impl State {
             let note = Some(words::no_route(why));
             return status(&known, &entry.label, MachineState::NotCovered, note);
         };
+        let mut ages = Ages::default();
         let (id, state, note) = match route.standing() {
             // The owner, but for the moment in which another entry's
             // route took the machine and this one has yet to hear of it.
@@ -167,7 +168,12 @@ impl State {
                 } else {
                     known
                 };
-                (id, MachineState::Connected, None)
+                // When it was last read, and when its history was last
+                // checked whole; or why it has no history.
+                let history = self.far.get(&key).and_then(|far| far.history.as_ref());
+                ages = history.map(|history| history.ages()).unwrap_or_default();
+                let note = ages.without.map(words::no_history);
+                (id, MachineState::Connected, note)
             }
             Standing::Alias(key) => {
                 let other = match &slot.lead {
@@ -186,12 +192,17 @@ impl State {
                 (known, MachineState::NotCovered, Some(words::reason(&why)))
             }
         };
-        status(
+        let told = status(
             &id,
             &entry.label,
             state,
             note.filter(|note| !note.is_empty()),
-        )
+        );
+        MachineStatus {
+            contact_ms: ages.contact_ms,
+            history_checked_ms: ages.checked_ms,
+            ..told
+        }
     }
 
     /// The entry whose status goes by the machine `key`: its owner, and

@@ -146,6 +146,13 @@ impl Route for Switch {
         }
     }
 
+    /// The link of the way there is now. What is read over it is
+    /// written under the route number the reader took first, so a link
+    /// handed out just before the route changed writes nothing.
+    fn link(&self) -> Option<Arc<crate::ssh_link::Link>> {
+        self.way().and_then(|(_, way)| way.link())
+    }
+
     fn admit(&self, instance: &Instance, call: Call<'_>) -> Result<(), Failure> {
         let (number, way) = self.way().ok_or(Failure::Unreachable)?;
         self.kept(number, way.admit(instance, call), Failure::Unreachable)

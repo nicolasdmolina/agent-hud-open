@@ -52,7 +52,7 @@ impl Bench {
     /// The passes the collector makes while core says logs wait, two
     /// seconds apart in the app, with nothing told and no file event:
     /// until none waits. How many those were.
-    fn reads_on(&mut self) -> usize {
+    pub(super) fn reads_on(&mut self) -> usize {
         let mut passes = 0;
         while self.core.indexing() {
             self.silent_pass();
@@ -62,13 +62,13 @@ impl Bench {
         passes
     }
 
-    fn found(&mut self, search: &str) -> Value {
+    pub(super) fn found(&mut self, search: &str) -> Value {
         let query = json!({"scope": "all", "search": search});
         self.core.request("sessions", query).unwrap()
     }
 
     /// How many sessions core lists. A page of the list is 200 at most.
-    fn count(&mut self) -> usize {
+    pub(super) fn count(&mut self) -> usize {
         self.found("")["total"].as_u64().unwrap() as usize
     }
 

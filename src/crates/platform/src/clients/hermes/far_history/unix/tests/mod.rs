@@ -15,7 +15,7 @@ mod exclusion;
 mod idle;
 mod reads;
 mod refusals;
-mod schema;
+pub(in crate::clients::hermes) mod schema;
 mod slot;
 mod verifier;
 mod world;

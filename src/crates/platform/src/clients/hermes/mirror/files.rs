@@ -76,6 +76,12 @@ impl Files {
         held.extend(sessions.into_iter().map(|(id, _)| id));
     }
 
+    /// The mirror of `profile` holds a row for each of `ids` now.
+    pub(super) fn holds(&mut self, profile: &Profile, ids: impl Iterator<Item = String>) {
+        self.failed.remove(profile);
+        self.held.entry(profile.clone()).or_default().extend(ids);
+    }
+
     /// A write of the mirror of `profile` failed for the reason `why`:
     /// whether that is news, which it is not while every write since the
     /// last good one failed the same way.

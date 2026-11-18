@@ -30,21 +30,21 @@ use std::{
 };
 
 /// The least free disk the far machine must have, in KiB: 5 GB.
-const LEAST_FREE_KB: u64 = 5 * 1024 * 1024;
+pub(super) const LEAST_FREE_KB: u64 = 5 * 1024 * 1024;
 /// How many polls of each gateway are timed.
 const POLLS: usize = 100;
-const ROOT: &str = "${HERMES_HOME:-$HOME/.hermes}";
+pub(super) const ROOT: &str = "${HERMES_HOME:-$HOME/.hermes}";
 
 /// What the test did and found, written to the receipt folder line by
 /// line as it goes, so a run that ends early has said all it did.
-struct Receipt {
-    folder: PathBuf,
+pub(super) struct Receipt {
+    pub(super) folder: PathBuf,
     /// Every control path a master of this test was started on.
-    paths: Vec<PathBuf>,
+    pub(super) paths: Vec<PathBuf>,
 }
 
 impl Receipt {
-    fn say(&mut self, line: impl Into<String>) {
+    pub(super) fn say(&mut self, line: impl Into<String>) {
         use std::io::Write;
         let line = line.into();
         println!("{line}");
@@ -56,7 +56,7 @@ impl Receipt {
     }
 
     /// Notes the control paths of the masters that are up in `folder`.
-    fn note_paths(&mut self, folder: &Folder) {
+    pub(super) fn note_paths(&mut self, folder: &Folder) {
         for name in sockets(folder) {
             let path = folder.path().join(name);
             if !self.paths.contains(&path) {
@@ -69,7 +69,7 @@ impl Receipt {
     /// The end, whichever way the run went: nothing answers on any
     /// control path this test used, each checked by its own name, and no
     /// `ssh` that names the control folder is left. True where that holds.
-    fn proof(&mut self, folder: &Folder) -> bool {
+    pub(super) fn proof(&mut self, folder: &Folder) -> bool {
         self.say("## Cleanup proof");
         let mut clean = !self.paths.is_empty();
         for control in self.paths.clone() {
@@ -108,7 +108,7 @@ impl Receipt {
 
 /// One reading command on the far machine: its output, where it ended
 /// well.
-fn read(link: &Link, script: &str) -> Option<String> {
+pub(super) fn read(link: &Link, script: &str) -> Option<String> {
     let ran = link.run(&FarCommand {
         script,
         args: &[],
@@ -134,7 +134,7 @@ fn sockets(folder: &Folder) -> Vec<String> {
 }
 
 /// Every `ssh` process that names a socket in `folder`.
-fn masters(folder: &Folder) -> Vec<String> {
+pub(super) fn masters(folder: &Folder) -> Vec<String> {
     let listed = Command::new("/bin/ps")
         .args(["-axww", "-o", "pid=,args="])
         .output();
@@ -145,7 +145,7 @@ fn masters(folder: &Folder) -> Vec<String> {
 }
 
 /// The hashes of every profile's `config.yaml` on the far machine.
-fn config_hashes(link: &Link) -> Option<String> {
+pub(super) fn config_hashes(link: &Link) -> Option<String> {
     let script = format!(
         "root=\"{ROOT}\"; for file in \"$root/config.yaml\" \"$root\"/profiles/*/config.yaml; \
          do [ -f \"$file\" ] && shasum -a 256 \"$file\"; done; exit 0"
@@ -153,7 +153,7 @@ fn config_hashes(link: &Link) -> Option<String> {
     read(link, &script)
 }
 
-fn summed(mut times: Vec<u64>) -> String {
+pub(super) fn summed(mut times: Vec<u64>) -> String {
     times.sort();
     let at = |part: usize| times[(times.len() * part / 100).min(times.len() - 1)];
     let within = times.iter().filter(|ms| **ms <= 1000).count();

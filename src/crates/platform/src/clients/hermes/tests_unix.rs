@@ -34,6 +34,8 @@ mod far;
 mod far_long;
 #[path = "tests/far_mini.rs"]
 mod far_mini;
+#[path = "tests/far_mini_history.rs"]
+mod far_mini_history;
 #[path = "tests/far_rows_timing.rs"]
 mod far_rows_timing;
 #[path = "tests/far_timing.rs"]
@@ -128,6 +130,12 @@ fn quick() -> Pace {
         // gateway and count what is asked of its route. `followers.rs`
         // turns it on.
         discover: None,
+        // No history read by the clock: the tests that read one tick by
+        // hand (`machines/history.rs`).
+        history: super::history::Plan {
+            clock: false,
+            ..Default::default()
+        },
         trace: false,
     }
 }

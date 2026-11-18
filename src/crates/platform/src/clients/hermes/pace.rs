@@ -39,6 +39,8 @@ pub(crate) struct Pace {
     /// (`discovery.rs`), the first as soon as the observer starts. None
     /// for no look by the clock: one is taken only when a follower asks.
     pub discover: Option<Duration>,
+    /// How a far machine's stored history is kept in step (`history.rs`).
+    pub history: super::history::Plan,
     /// Whether the log says every poll and every hint, for looking at what
     /// a real gateway does. Never on in the app.
     pub trace: bool,
@@ -57,6 +59,7 @@ impl Default for Pace {
             write: Duration::from_millis(500),
             apart: Duration::from_millis(250),
             discover: Some(Duration::from_secs(10)),
+            history: super::history::Plan::default(),
             trace: false,
         }
     }

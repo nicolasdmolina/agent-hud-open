@@ -35,13 +35,40 @@ const HIDDEN: Duration = Duration::from_secs(32);
 const POLL: Duration = Duration::from_secs(1);
 const PROFILE: &str = "default";
 
-fn following(pace: Pace) -> Option<(FarLab, Fake)> {
+/// Set to run the suite while the history of the far machine is read
+/// back to back (ticket 37): the same tests, the same bounds.
+pub(super) const HISTORY_READS: &str = "AGENT_HUD_HISTORY_READS";
+
+fn following(mut pace: Pace) -> Option<(FarLab, Fake)> {
     let mut far = far_lab()?;
     let gateway = Fake::serving(&far.root, "instance-1", &[PROFILE]);
     gateway.world().install = Some(super::far::INSTALL.into());
+    let reads = std::env::var_os(HISTORY_READS).is_some();
+    if reads {
+        // A far database of four hundred sessions that Hermes holds
+        // open, and a refresh that never waits between two ticks: a
+        // history read is in flight for as long as the test runs.
+        let db = super::machines::history::far_db(&far.root);
+        for n in 0..400 {
+            let id = format!("s-stored-{n:03}");
+            super::machines::history::session(&db, &id, 1_600_000_000.0 + f64::from(n));
+            super::machines::history::used(&db, &id, "model-a", "", 100);
+        }
+        Box::leak(Box::new(db));
+        pace.history = super::super::history::Plan {
+            first: Duration::ZERO,
+            live: Duration::ZERO,
+            idle: Duration::ZERO,
+            page: 100,
+            ..Default::default()
+        };
+    }
     far.follow_at(pace);
     far.followed();
     until("the polls run", || !gateway.world().listed.is_empty());
+    if reads {
+        until("the history reads run", || far.history_reads() > 0);
+    }
     Some((far, gateway))
 }
 

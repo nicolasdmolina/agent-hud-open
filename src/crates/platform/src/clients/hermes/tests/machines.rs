@@ -44,6 +44,10 @@ mod alerts;
 mod answers;
 #[path = "machines/guards.rs"]
 mod guards;
+#[path = "machines/history.rs"]
+pub(super) mod history;
+#[path = "machines/history_more.rs"]
+mod history_more;
 #[path = "machines/lists.rs"]
 mod lists;
 #[path = "machines/mirrors.rs"]
@@ -160,7 +164,10 @@ pub(super) fn fleet(hosts: usize) -> Option<Fleet> {
     let at = std::fs::canonicalize(dir.path()).expect("the fleet's folder");
     let mut far = Vec::new();
     for _ in 0..hosts.max(1) {
-        let lab = Lab::start_with(&[("HOME", "{lab}/far")])?;
+        // A far login's home is the lab's, and its path has a folder of
+        // the lab first, empty unless a test puts a stand-in there.
+        let path = "{lab}/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+        let lab = Lab::start_with(&[("HOME", "{lab}/far"), ("PATH", path)])?;
         let home = std::fs::canonicalize(lab.at("")).unwrap().join("far");
         let root = home.join(".hermes");
         crate::os::private_directory(&home).unwrap();

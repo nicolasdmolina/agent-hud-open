@@ -43,6 +43,7 @@ mod book_tests;
 mod change;
 mod keeper;
 mod list;
+mod make;
 mod status;
 pub(in crate::clients::hermes) mod words;
 

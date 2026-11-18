@@ -195,6 +195,14 @@ impl FarLab {
     }
 }
 
+impl FarLab {
+    /// How many history reads the log says came back with an answer.
+    pub(super) fn history_reads(&self) -> usize {
+        let read = |line: &&str| line.contains(" history ") && line.contains(" ok exit=0 ");
+        self.log().lines().filter(read).count()
+    }
+}
+
 /// A test that fails says what the connection logged.
 impl Drop for FarLab {
     fn drop(&mut self) {
@@ -202,6 +210,12 @@ impl Drop for FarLab {
         self.observer.take();
         if std::thread::panicking() {
             eprintln!("the connection's log:\n{}", self.log());
+        } else if std::env::var_os(super::far_timing::HISTORY_READS).is_some() {
+            // The timing suite run beside history reads says how many
+            // there were while its test ran, and fails with none.
+            let reads = self.history_reads();
+            println!("TIMING history_reads_meanwhile={reads}");
+            assert!(reads > 0, "no history read ran beside the test");
         }
     }
 }
