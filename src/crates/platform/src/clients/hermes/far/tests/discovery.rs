@@ -250,6 +250,43 @@ fn v_discovery_never_silently_drops_a_valid_home() {
     );
 }
 
+/// Ticket 57. A profile's folder that is there and cannot be entered has
+/// no path the far side can resolve. It is told by name, never left out
+/// as if it were not there, and it is no home: nothing is asked of it.
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn a_profile_whose_home_cannot_be_resolved_is_told_and_never_dropped() {
+    let Some(lab) = FarLab::start() else { return };
+    let (root, ops, shut) = (lab.root(), lab.profile("ops"), lab.profile("shut"));
+    // No profile's name: told of no more than a folder that resolves.
+    let stray = root.join("profiles").join("Not A Profile");
+    private_folder(&stray);
+    let _gate = lab.gate(&root, Manner::gateway("all", &[&root, &ops, &shut]));
+    let far = Far::default();
+    let whole = far.homes(&lab.link).expect("the homes");
+    assert_eq!(whole.homes.len(), 3);
+    assert!(whole.unresolved.is_empty(), "{:?}", whole.unresolved);
+
+    chmod(&shut, 0o000);
+    chmod(&stray, 0o000);
+    let found = far.homes(&lab.link);
+    let picture = far.discover(&lab.link);
+    chmod(&shut, 0o700);
+    chmod(&stray, 0o700);
+    let (found, picture) = (found.expect("the homes"), picture.expect("a picture"));
+    let named = vec![Profile::folder("shut").unwrap()];
+    assert_eq!(found.unresolved, named, "told by name, not dropped");
+    assert_eq!(
+        found.homes,
+        vec![home(None, &root), home(Some("ops"), &ops)]
+    );
+    assert_eq!(picture.unresolved, named);
+    let asked: Vec<&FarHome> = picture.asked.iter().map(|(home, _)| home).collect();
+    assert_eq!(asked, found.homes.iter().collect::<Vec<_>>());
+    // Entered again, it is a home as before.
+    assert_eq!(far.homes(&lab.link), Ok(whole));
+}
+
 #[test]
 #[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
 fn a_machine_where_the_relay_cannot_run_or_a_check_fails_is_not_covered() {

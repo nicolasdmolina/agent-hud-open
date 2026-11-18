@@ -51,6 +51,7 @@ fn three() -> Homes {
             far_home(Some("ops"), OPS),
             far_home(Some("reports"), REPORTS),
         ],
+        unresolved: Vec::new(),
     }
 }
 
@@ -259,6 +260,37 @@ fn the_homes_command_names_the_root_and_each_profile() {
     assert_eq!(
         homes(b"root\0/Users/far/.hermes\0python\0yes\0end"),
         Err(NoHomes::Garbled)
+    );
+    // A profile's folder that could not be resolved is told by name, and
+    // is no home; one that is no profile's is told of no more than before.
+    let found = said(&[
+        "root",
+        ROOT,
+        "unresolved",
+        "shut",
+        "profile",
+        "ops",
+        OPS,
+        "unresolved",
+        "Not A Profile",
+        "unresolved",
+        "barred",
+        "python",
+        "yes",
+        "end",
+    ])
+    .unwrap();
+    assert_eq!(
+        found.homes,
+        vec![far_home(None, ROOT), far_home(Some("ops"), OPS)]
+    );
+    let unresolved = ["barred", "shut"].map(|name| Profile::folder(name).unwrap());
+    assert_eq!(found.unresolved, unresolved);
+    assert_eq!(picture::<Quiet>(&found, Vec::new()).unresolved, unresolved);
+    assert_eq!(
+        said(&["root", ROOT, "unresolved"]),
+        Err(NoHomes::Garbled),
+        "cut short"
     );
     assert_eq!(homes(&[0xff, 0x00]), Err(NoHomes::Garbled));
     // The command is short enough to send, has no here-document, and names

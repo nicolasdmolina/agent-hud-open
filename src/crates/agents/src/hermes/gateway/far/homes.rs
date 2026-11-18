@@ -8,10 +8,13 @@ pub const HOMES_SECONDS: u32 = 15;
 /// Run under `sh` on the far machine. It prints, each ended by a NUL:
 /// `root` and the Hermes root home, `${HERMES_HOME:-$HOME/.hermes}` as the
 /// login shell has it, with its links resolved there; `profile`, a name and
-/// its resolved home for each folder under `profiles/`; `python` and
-/// whether a `python3` can run the relay; `end`. With no root home it
-/// prints `none`. It reads and writes nothing else, and it carries its own
-/// deadline: it is killed [`HOMES_SECONDS`] after it starts.
+/// its resolved home for each folder under `profiles/`; `unresolved` and
+/// the name of each folder there that is still there and whose home could
+/// not be resolved (it cannot be entered, say), so that none is left out
+/// without a word; `python` and whether a `python3` can run the relay;
+/// `end`. With no root home it prints `none`. It reads and writes nothing
+/// else, and it carries its own deadline: it is killed [`HOMES_SECONDS`]
+/// after it starts.
 ///
 /// `/usr/bin/python3` on a Mac without the developer tools is a stub that
 /// asks to install them in a window, so it is not run where
@@ -23,7 +26,11 @@ if root=$(real "${HERMES_HOME:-$HOME/.hermes}"); then
   printf 'root\0%s\0' "$root"
   for home in "$root"/profiles/*/; do
     name=${home%/}
-    at=$(real "$home") && printf 'profile\0%s\0%s\0' "${name##*/}" "$at"
+    if at=$(real "$home"); then
+      printf 'profile\0%s\0%s\0' "${name##*/}" "$at"
+    elif [ -d "$home" ]; then
+      printf 'unresolved\0%s\0' "${name##*/}"
+    fi
   done
   python=no
   found=$(command -v python3 2>/dev/null) || found=
@@ -63,6 +70,10 @@ pub struct Homes {
     /// The Hermes root home, canonical as `machine_key` needs it.
     pub root: String,
     pub homes: Vec<FarHome>,
+    /// The profiles whose folder is there and whose home could not be
+    /// resolved, by name. None of them is among `homes` and none was
+    /// asked: whether a gateway runs there is not known.
+    pub unresolved: Vec<Profile>,
 }
 
 /// Why a far machine named no homes.
@@ -83,7 +94,9 @@ pub enum NoHomes {
 /// Reads what [`HOMES_SCRIPT`] printed. A folder under `profiles/` that is
 /// no profile's (Hermes allows a profile a name of `a-z`, `0-9`, `_`, `-`)
 /// names no home, and neither does one whose home is not a canonical path.
-/// Every home that is left is in the answer, or there is no answer.
+/// Every home that is left is in the answer, or there is no answer. A
+/// profile's folder that could not be resolved is in it by name
+/// ([`Homes::unresolved`]): it is never left out as if it were not there.
 pub fn homes(output: &[u8]) -> Result<Homes, NoHomes> {
     let text = std::str::from_utf8(output).map_err(|_| NoHomes::Garbled)?;
     let mut words = text.split('\0');
@@ -93,7 +106,7 @@ pub fn homes(output: &[u8]) -> Result<Homes, NoHomes> {
         "root" => next()?.to_owned(),
         _ => return Err(NoHomes::Garbled),
     };
-    let mut named = Vec::new();
+    let (mut named, mut unresolved) = (Vec::new(), Vec::new());
     let python = loop {
         match next()? {
             "profile" => {
@@ -105,6 +118,7 @@ pub fn homes(output: &[u8]) -> Result<Homes, NoHomes> {
                     });
                 }
             }
+            "unresolved" => unresolved.extend(Profile::folder(next()?)),
             "python" => break next()? == "yes",
             _ => return Err(NoHomes::Garbled),
         }
@@ -133,5 +147,11 @@ pub fn homes(output: &[u8]) -> Result<Homes, NoHomes> {
         path: root.clone(),
     }];
     homes.append(&mut named);
-    Ok(Homes { root, homes })
+    unresolved.sort();
+    unresolved.dedup();
+    Ok(Homes {
+        root,
+        homes,
+        unresolved,
+    })
 }

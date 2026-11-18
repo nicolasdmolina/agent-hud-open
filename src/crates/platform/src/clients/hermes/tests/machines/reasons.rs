@@ -60,6 +60,34 @@ fn an_empty_install_id_is_not_covered_with_that_reason() {
     );
 }
 
+/// Ticket 57. A profile's folder that cannot be entered may hold the
+/// machine's gateway. Finding none elsewhere is then not word that none
+/// runs: the machine goes on connecting, and the log names the profile.
+#[test]
+#[ignore = "starts processes: run by the_lab_tests_pass"]
+fn a_profile_whose_home_cannot_be_resolved_is_not_word_that_no_gateway_runs() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    let Some(mut fleet) = fleet(1) else {
+        return;
+    };
+    let shut = fleet.hosts[0].root.join("profiles").join("shut");
+    let mode = |mode| fs::set_permissions(&shut, fs::Permissions::from_mode(mode)).unwrap();
+    fs::create_dir_all(&shut).unwrap();
+    mode(0o000);
+    fleet.write(&[here(), ssh("a", "Mini", "m0")]);
+    fleet.start();
+    until("the unresolved profile is logged", || {
+        fleet.log().contains("profile not resolved profile=shut")
+    });
+    fleet.looked(3);
+    let row = fleet.row("Mini").expect("its status");
+    mode(0o700);
+    assert_eq!(row["state"], "connecting", "{row}");
+    // Every home resolved and no gateway in any: that is the word.
+    let row = fleet.stands("Mini", "not-covered");
+    assert_eq!(row["note"], words::reason("no_gateway_running").as_str());
+}
+
 #[test]
 #[ignore = "starts processes: run by the_lab_tests_pass"]
 fn never_verified_and_no_live_connection_is_not_covered() {

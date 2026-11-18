@@ -1,7 +1,10 @@
 //! What one round of `identify` over a far machine's homes adds up to: its
 //! gateways, and the profiles each serves.
 use super::{
-    super::connection::{identify, Identified, Instance},
+    super::{
+        connection::{identify, Identified, Instance},
+        identity::Profile,
+    },
     Answered, FarHome, Homes,
 };
 use std::collections::BTreeMap;
@@ -39,6 +42,10 @@ pub struct Picture<Q> {
     pub gateways: Vec<FoundGateway>,
     /// Every home that was asked and what came of it, in the homes' order.
     pub asked: Vec<(FarHome, Asked<Q>)>,
+    /// The profiles whose home could not be resolved there
+    /// ([`Homes::unresolved`]). None was asked, so the gateways above are
+    /// not known to be all there are.
+    pub unresolved: Vec<Profile>,
     /// Homes that two instances both say they serve: a restart overlapping.
     /// No card is issued for one until a later round agrees.
     pub contested: Vec<FarHome>,
@@ -119,6 +126,7 @@ pub fn picture<Q>(homes: &Homes, answers: Vec<(FarHome, Result<Answered, Q>)>) -
         root: homes.root.clone(),
         gateways,
         asked,
+        unresolved: homes.unresolved.clone(),
         contested,
     }
 }
