@@ -79,6 +79,7 @@ pub fn read(db: &Connection, cursor: &Value) -> rusqlite::Result<Page> {
             title: sql_text(row, 4),
             client: None,
             machine: None,
+            live_total: None,
             title_fallback: None,
             cwd: sql_text(row, 5),
             model: fields[2].as_str().unwrap_or("Unknown").into(),

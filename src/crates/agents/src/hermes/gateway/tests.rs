@@ -22,6 +22,7 @@ mod machines;
 mod reach;
 mod regressions;
 mod replay;
+mod samples;
 mod scenarios;
 mod served;
 mod stored;
@@ -70,6 +71,7 @@ const READ_WHOLE: &[&str] = &[
     "ticket-lifetime",
     "real-gateway-readonly-aggregate",
     "hook-payloads-same-session",
+    "session-stats",
 ];
 
 #[test]
@@ -88,7 +90,7 @@ fn every_recorded_fixture_is_tested() {
         .collect();
     tested.sort();
     assert_eq!(recorded, tested);
-    assert_eq!(recorded.len(), 37);
+    assert_eq!(recorded.len(), 38);
 }
 
 /// None of the copied recordings names a real person, home or credential.

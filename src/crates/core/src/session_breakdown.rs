@@ -93,7 +93,7 @@ impl AgentHudCore {
         currency: Option<&str>,
     ) {
         let (usage, _) = family.usage(head);
-        value["tokens"] = json!(usage.total());
+        value["tokens"] = json!(head.shown_tokens(usage.total()));
         value["usage"] = usage.json();
         value["cost"] = json!(family.list_cost(head));
         let (priced, unpriced) = family.priced_cost(head);

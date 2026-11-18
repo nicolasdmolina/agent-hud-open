@@ -27,6 +27,7 @@ mod poll;
 mod reach;
 mod read;
 mod reconcile;
+mod sample;
 mod served;
 mod state;
 mod ticket;
@@ -34,7 +35,7 @@ mod turns;
 
 pub use ask::{Approval, Ask, Batch, BatchQuestion, Choice, Locked, Pending, Prompt, Question};
 pub use card::out_of_reach;
-pub use command::{active_list, detach, events_since, profiles_list, resume, Command};
+pub use command::{active_list, detach, events_since, profiles_list, resume, stats, Command};
 pub use connection::{
     identify, refused, served_homes, Connection, Denied, Failure, Identified, Instance, Served,
     Unsupported, SESSION_AUTHORITY,
@@ -51,6 +52,7 @@ pub use machine::{
     StoredKey, INSTALL_ID_FILE,
 };
 pub use poll::{Poll, Step};
+pub use sample::Sample;
 pub use state::{Gateway, BUSY_POLL_MS, IDLE_POLL_MS, SNAPSHOT_EVERY_MS};
 pub use ticket::{
     granted, identify_line, pointed_socket, ticket_line, Scope, Ticket, CONTROL_POINTER,

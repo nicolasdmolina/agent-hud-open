@@ -42,6 +42,8 @@ use std::{
 mod alerts;
 #[path = "machines/answers.rs"]
 mod answers;
+#[path = "machines/counts.rs"]
+pub(super) mod counts;
 #[path = "machines/guards.rs"]
 mod guards;
 #[path = "machines/history.rs"]

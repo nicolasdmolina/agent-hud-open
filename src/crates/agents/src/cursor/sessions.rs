@@ -84,6 +84,7 @@ pub(crate) fn read_at(db: &Connection, cursor: &Value, now_ms: i64) -> rusqlite:
             title: name.map(str::to_owned),
             client: None,
             machine: None,
+            live_total: None,
             title_fallback: None,
             cwd: cwd.map(str::to_owned),
             model: "Unknown".into(),

@@ -35,6 +35,7 @@ impl Sessions<'_> {
         records: &mut Vec<Record>,
     ) -> rusqlite::Result<()> {
         let label = self.mirror.as_ref().map(|mirror| mirror.label.clone());
+        let live_total = super::rows::live_total(row)?;
         let profile = match &self.of {
             Profile::Named(name) => Some(name.as_str().to_owned()),
             Profile::Default => None,
@@ -73,6 +74,7 @@ impl Sessions<'_> {
                     title_fallback: title_fallback.clone(),
                     client: client.clone(),
                     machine: label.clone(),
+                    live_total,
                     cwd: cwd.clone(),
                     model: routed(
                         sql_model(sql_text(row, 0)),
@@ -118,6 +120,7 @@ impl Sessions<'_> {
                 title_fallback,
                 client,
                 machine: label.clone(),
+                live_total,
                 cwd,
                 model: routed(
                     sql_model(sql_text(row, 6)),

@@ -343,7 +343,9 @@ fn ten_idle_sessions_cost_one_call_each_in_each_poll() {
     assert_eq!(told(&mut g, &mut h, 41_000).len(), 1);
     assert_eq!(watched(&h), [None; 9]);
     assert_eq!(h.read_from(), [0]);
-    assert_eq!(h.asked.len(), 2 + 9 + 2);
+    // And one call for what the session that works has used so far
+    // (`sample.rs`), which is no look.
+    assert_eq!(h.asked.len(), 2 + 9 + 2 + 1);
 }
 
 #[test]
@@ -734,10 +736,17 @@ fn the_looks_go_out_after_the_reads_the_cards_wait_on() {
         .map(|step| match step {
             Step::Since { session, .. } => ("read", session.id().to_owned()),
             Step::Watch { session, .. } => ("look", session.id().to_owned()),
+            Step::Stats(session) => ("count", session.id().to_owned()),
             other => panic!("{other:?}"),
         })
         .collect();
-    let expected = [("read", "far-m"), ("look", "far-a"), ("look", "far-z")];
+    // What the session that works has used is asked last of all.
+    let expected = [
+        ("read", "far-m"),
+        ("look", "far-a"),
+        ("look", "far-z"),
+        ("count", "far-m"),
+    ];
     let expected: Vec<(&str, String)> = (expected.iter())
         .map(|(kind, id)| (*kind, (*id).to_owned()))
         .collect();

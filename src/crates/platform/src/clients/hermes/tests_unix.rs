@@ -34,6 +34,8 @@ mod far;
 mod far_long;
 #[path = "tests/far_mini.rs"]
 mod far_mini;
+#[path = "tests/far_mini_counts.rs"]
+mod far_mini_counts;
 #[path = "tests/far_mini_history.rs"]
 mod far_mini_history;
 #[path = "tests/far_rows_timing.rs"]

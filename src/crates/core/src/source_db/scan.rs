@@ -153,6 +153,8 @@ impl AgentHudCore {
             if record.machine.is_some() {
                 log.machine = record.machine.clone();
             }
+            // Shown and never counted, and it only goes up.
+            log.live_total = log.live_total.max(record.live_total);
             if record.parent.is_some() {
                 log.live.parent_id = record.parent.clone();
                 log.live.is_subagent = true;

@@ -42,6 +42,8 @@ impl Status {
 }
 
 /// What happened.
+// A poll is the largest of them by far, and is handed over once.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Input<'a> {
     /// The control socket is being asked.

@@ -24,6 +24,15 @@
 //! - **History.** What the far database itself gave is a write on the
 //!   same queue (`history.rs`), which whoever asks waits for: the
 //!   refresh reads the next page against what the mirror then holds.
+//! - **Counts.** What a poll's samples said the sessions have used so
+//!   far goes into `hud_live`, for showing alone (`mirror::live`). A
+//!   count moves with every call a session's model answers, and every
+//!   commit asks core for a pass, so counts are not written as they
+//!   come: a machine's counts are committed at most once in `SPACE`,
+//!   the newest of each session, every profile's at one time and with
+//!   one word to core. A count that waits is written when its time
+//!   comes whether or not another poll follows. One that says no more
+//!   than its mirror holds is not written at all.
 //! - **Retired.** Once the machine's last owner is gone (`stop`), no
 //!   write begins, the one under way is waited out, and the files are
 //!   closed, all before `stop` returns. The mirrors stay where they are,
@@ -31,7 +40,7 @@
 use super::log::Log;
 use crate::hooks::Changed;
 use agent_hud_agents::hermes::{
-    gateway::{Listed, Listing, MachineKey, Profile},
+    gateway::{Listed, Listing, MachineKey, Profile, Sample},
     mirror,
 };
 use std::{
@@ -39,8 +48,10 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
     thread,
+    time::Duration,
 };
 
+mod counts;
 mod files;
 mod history;
 #[cfg(test)]
@@ -53,6 +64,11 @@ pub(crate) use history::{Batch, Wrote};
 /// every poll lists its sessions anew. A new label is told once, so it
 /// is never the one dropped.
 const MOST: usize = 64;
+
+/// The least time between two commits of a machine's counts: what the
+/// file watcher's events are held to, so a far session that works asks
+/// core for a pass no more often than one on this machine does.
+pub(crate) const SPACE: Duration = Duration::from_secs(2);
 
 /// Whether a route number is still a machine's own.
 pub(crate) trait Routes: Send + Sync {
@@ -69,6 +85,8 @@ pub(crate) struct Writer {
     routes: Arc<dyn Routes>,
     changed: Changed,
     log: Log,
+    /// The least time between two commits of counts (`SPACE`).
+    space: Duration,
     state: Mutex<State>,
     wake: Condvar,
 }
@@ -95,6 +113,8 @@ enum Write {
     Listed {
         profile: Profile,
         sessions: Vec<(String, Listed)>,
+        /// What that poll's samples said its sessions have used so far.
+        samples: Vec<(String, Sample)>,
         read_ms: i64,
         route: u64,
     },
@@ -113,6 +133,18 @@ impl Writer {
         changed: Changed,
         log: Log,
     ) -> Result<Arc<Self>, String> {
+        Self::spaced(data, (key, label), routes, changed, log, SPACE)
+    }
+
+    /// The same, committing counts no more often than `space`.
+    pub(crate) fn spaced(
+        data: &Path,
+        (key, label): (&MachineKey, &str),
+        routes: Arc<dyn Routes>,
+        changed: Changed,
+        log: Log,
+        space: Duration,
+    ) -> Result<Arc<Self>, String> {
         let state = State {
             queue: VecDeque::from([Write::Label]),
             label: label.to_owned(),
@@ -127,6 +159,7 @@ impl Writer {
             routes,
             changed,
             log,
+            space,
             state: Mutex::new(state),
             wake: Condvar::new(),
         });
@@ -144,7 +177,7 @@ impl Writer {
 
     /// A poll that counted listed these live sessions, over a socket
     /// opened under the route number `route`. It returns at once.
-    pub(crate) fn listed(&self, listing: Listing, route: u64) {
+    pub(crate) fn listed(&self, mut listing: Listing, route: u64) {
         let read_ms = listing.read_ms;
         let mut state = self.state();
         if state.over {
@@ -152,14 +185,16 @@ impl Writer {
         }
         for (profile, sessions) in listing.profiles {
             state.live.listed(&profile, &sessions, read_ms);
-            let listing = |write: &Write| matches!(write, Write::Listed { .. });
-            if state.queue.iter().filter(|write| listing(write)).count() >= MOST {
-                let oldest = state.queue.iter().position(listing);
+            let listed = |write: &Write| matches!(write, Write::Listed { .. });
+            if state.queue.iter().filter(|write| listed(write)).count() >= MOST {
+                let oldest = state.queue.iter().position(listed);
                 oldest.and_then(|oldest| state.queue.remove(oldest));
             }
+            let samples = listing.samples.remove(&profile).unwrap_or_default();
             state.queue.push_back(Write::Listed {
                 profile,
                 sessions,
+                samples,
                 read_ms,
                 route,
             });

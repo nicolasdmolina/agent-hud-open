@@ -9,6 +9,7 @@
 //! profile whose list failed is left out, since what it holds now is not
 //! known; one that was listed with no session is there, empty.
 use super::identity::Profile;
+use super::sample::Sample;
 use super::state::Gateway;
 use super::Connection;
 use serde_json::Value;
@@ -55,6 +56,9 @@ pub struct Listing {
     pub read_ms: i64,
     /// Each profile that poll listed, with its sessions by Hermes's id.
     pub profiles: BTreeMap<Profile, Vec<(String, Listed)>>,
+    /// What that poll's samples said its sessions have used so far, for
+    /// showing alone (`sample.rs`). Only a far gateway's poll takes any.
+    pub samples: BTreeMap<Profile, Vec<(String, Sample)>>,
 }
 
 impl Gateway {
@@ -75,6 +79,12 @@ impl Gateway {
             }
         }
         let read_ms = self.told.read_ms();
-        Some(Listing { read_ms, profiles })
+        // Taken by that same poll, so of sessions it listed and no others.
+        let samples = self.told.samples().clone();
+        Some(Listing {
+            read_ms,
+            profiles,
+            samples,
+        })
     }
 }

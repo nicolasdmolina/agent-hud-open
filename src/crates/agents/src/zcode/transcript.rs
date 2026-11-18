@@ -199,6 +199,7 @@ fn record(id: &str, session: Option<&Session>, key: String, at: i64, usage: Usag
         title: session.and_then(|s| s.title.clone()),
         client: None,
         machine: None,
+        live_total: None,
         title_fallback: None,
         cwd: session.and_then(|s| s.cwd.clone()),
         model: "Unknown".into(),

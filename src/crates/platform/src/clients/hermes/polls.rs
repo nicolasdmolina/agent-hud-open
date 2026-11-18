@@ -160,7 +160,9 @@ pub(super) fn rounds(
             // it goes to no lane, and keeps none going.
             let session = match &step {
                 Step::Since { session, .. } | Step::Snapshot(session) => Some(session),
-                Step::List(_) | Step::Watch { .. } => None,
+                // A session's count is asked beside its events, of one
+                // that is read apart too: the call reads no stream.
+                Step::List(_) | Step::Watch { .. } | Step::Stats(_) => None,
             };
             if beside && session.is_some_and(|session| shared.apart.reads(session)) {
                 poll.failed(&step);

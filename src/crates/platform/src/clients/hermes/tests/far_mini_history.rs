@@ -393,6 +393,7 @@ fn run(receipt: &mut Receipt, folder: &Folder, data: &Path, host: &str) -> Resul
         let listing = Listing {
             read_ms: crate::hooks::now_ms(),
             profiles: BTreeMap::from([(Profile::Default, rows)]),
+            samples: BTreeMap::new(),
         };
         let before = total(&mut core);
         writer.listed(listing, route.number().max(1));

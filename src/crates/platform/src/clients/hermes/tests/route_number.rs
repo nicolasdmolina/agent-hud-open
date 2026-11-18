@@ -178,10 +178,12 @@ fn a_poll_is_written_under_the_route_number_its_socket_was_opened_under() {
     route.number.store(2, Ordering::Release);
     works(&gateway, "s-after", "After the route changed");
     // The poll that begins next lists it; once another has begun, that
-    // one has ended and queued what it listed.
+    // one has ended and queued what it listed. A poll lists each of the
+    // gateway's two profiles, so two polls are four lists: with two, the
+    // poll that lists it may only have begun.
     let seen = gateway.world().listed.len();
     until("two more polls begin", || {
-        gateway.world().listed.len() >= seen + 2
+        gateway.world().listed.len() >= seen + 4
     });
     writer.settle();
     let under: Vec<u64> = (followers.set().iter())

@@ -139,6 +139,7 @@ fn record(v: &Value) -> Option<Record> {
         title: None,
         client: None,
         machine: None,
+        live_total: None,
         title_fallback: None,
         cwd: v["workspace"].as_str().map(str::to_owned),
         model: v["model"].as_str().unwrap_or("Unknown").into(),

@@ -37,6 +37,12 @@ pub struct Log {
     /// (`Record::machine`); None on this one.
     #[serde(default)]
     pub machine: Option<String>,
+    /// The most the session's machine has said it used so far
+    /// (`Record::live_total`), for showing a far session's count while
+    /// it runs. No usage: it is in no ledger table, statistic, cost or
+    /// quota, and it never goes down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_total: Option<u64>,
     /// The session's first and latest prompts, for where each was typed
     /// (`naming::surfaces`).
     #[serde(default)]
@@ -137,6 +143,7 @@ impl Log {
             stored_title: None,
             client: None,
             machine: None,
+            live_total: None,
             prompts: PromptStamps::default(),
             id,
             model: "Unknown".into(),

@@ -38,6 +38,9 @@ pub(super) struct Files {
     /// Why the last write of each mirror failed, where it did, so that
     /// the same failure at every poll is logged once.
     failed: HashMap<Profile, String>,
+    /// What its sessions have used so far: the samples that wait to be
+    /// written, and what each mirror is known to say (`counts.rs`).
+    pub(super) counts: super::counts::Counts,
 }
 
 impl Files {
@@ -94,6 +97,7 @@ impl Files {
     pub(super) fn forget(&mut self, profile: &Profile) {
         self.open.remove(profile);
         self.held.remove(profile);
+        self.counts.forget(profile);
     }
 
     /// One transaction on the mirror of `profile` at `path`, which is
@@ -127,6 +131,7 @@ impl Files {
     /// Closes every mirror that is open; which those were.
     pub(super) fn close(&mut self) -> Vec<PathBuf> {
         self.held.clear();
+        self.counts = Default::default();
         let open = self.open.drain();
         open.map(|(_, (_, path))| path).collect()
     }

@@ -208,6 +208,7 @@ fn record(
         title: field(0).or_else(|| field(6)),
         client: None,
         machine: None,
+        live_total: None,
         title_fallback: None,
         cwd: field(1),
         model: routed(model, field(4).as_deref()),

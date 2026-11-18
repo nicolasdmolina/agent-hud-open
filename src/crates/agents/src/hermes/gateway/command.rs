@@ -61,6 +61,17 @@ pub fn events_since(session: &SessionRef, cursor: Option<&Cursor>, scope: Scope)
     Command::routed("session.events.since", params, &session.profile, scope)
 }
 
+/// The counters of a session's agent: what it has used so far. A read
+/// that subscribes to nothing; zeros where Hermes holds no agent for it.
+pub fn stats(session: &SessionRef, scope: Scope) -> Command {
+    Command::routed(
+        "session.stats",
+        json!({"session_id": session.id()}),
+        &session.profile,
+        scope,
+    )
+}
+
 /// Subscribes to a session and returns its snapshot: every prompt and
 /// request waiting now. It is the only way to answer, and the only full
 /// reading once a replay is cut short.
