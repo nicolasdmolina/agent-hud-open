@@ -218,6 +218,8 @@ impl Followers {
             shows: Default::default(),
             #[cfg(test)]
             deaf: AtomicBool::new(false),
+            #[cfg(test)]
+            late: Default::default(),
         });
         let owned = shared.clone();
         thread::Builder::new()

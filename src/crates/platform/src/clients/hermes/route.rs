@@ -82,6 +82,28 @@ pub(crate) trait Stop: Sync {
     fn wait(&self, time: Duration) -> bool;
 }
 
+/// Names the link a route reaches its machine over: the route number
+/// (`switch.rs`) and, under it, the number of the link that stood. What
+/// was read over one link is older than the loss of that link, so it is
+/// held against the link that stands when it is taken (`polls.rs`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Epoch {
+    route: u64,
+    link: u64,
+}
+
+impl Epoch {
+    /// The link `link` of a route, by the number its keeper gave it.
+    pub(crate) fn of(link: u64) -> Self {
+        Self { route: 0, link }
+    }
+
+    /// The same link, under the route number `route`.
+    pub(crate) fn under(self, route: u64) -> Self {
+        Self { route, ..self }
+    }
+}
+
 /// The homes of a machine, as one reading found them.
 pub(crate) struct Inventory {
     pub(crate) homes: Vec<Home>,
@@ -141,6 +163,16 @@ pub(crate) trait Route: Send + Sync {
     /// its whole life.
     fn number(&self) -> u64 {
         0
+    }
+
+    /// The link the machine is reached over now, or None while there is
+    /// none: it was lost, or is not open yet. Another link has another
+    /// epoch, and so has another way to the machine. Asked with a
+    /// follower's model locked, so it waits on nothing. A route that
+    /// needs no link, as the one to this machine, is of one epoch for its
+    /// whole life.
+    fn epoch(&self) -> Option<Epoch> {
+        Some(Epoch::default())
     }
 
     /// The instance `instance`, by its id, is followed no more: its

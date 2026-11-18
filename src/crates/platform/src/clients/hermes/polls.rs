@@ -56,9 +56,16 @@ pub(super) fn run(shared: &Arc<Shared>, socket: &mut Socket) -> Result<Option<Ra
         return Ok(None);
     };
     let took = began.elapsed();
+    #[cfg(test)]
+    shared.late.pass();
     let mut model = shared.model();
     if model.stopped {
         return Ok(None);
+    }
+    // Read over a link that is gone by now: the poll is dropped, and its
+    // socket with it, which was that link's.
+    if !stands(shared, socket) {
+        return Err(Failure::Unreachable);
     }
     shared.take(&mut model, Input::Polled(poll));
     let wait = Duration::from_millis(model.gateway.poll_ms().max(0) as u64);
@@ -82,6 +89,17 @@ pub(super) fn run(shared: &Arc<Shared>, socket: &mut Socket) -> Result<Option<Ra
         calls: asked.calls,
         snapshots: asked.snapshots,
     }))
+}
+
+/// Whether what was read on `socket` may still be taken: the link it
+/// was read over is the one that stands now. A reading carries the link
+/// of its socket, and one whose link was lost since, or gave way to
+/// another, is older than that loss. What is known since (a card marked
+/// as out of reach when an answer could not be sent) is never undone by
+/// it: the reading is dropped whole. Asked with the model locked, in the
+/// step that would take the reading, so no mark can come between.
+pub(super) fn stands(shared: &Shared, socket: &Socket) -> bool {
+    shared.route.epoch() == Some(socket.on())
 }
 
 /// What the rounds of one poll asked.

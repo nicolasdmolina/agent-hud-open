@@ -12,7 +12,7 @@
 //! back under another failed, whatever the old way said: a stream it
 //! dialled is dropped unspoken on. The next way is put in under the
 //! number as it then is.
-use super::{Call, Home, Inventory, Route, Stop};
+use super::{Call, Epoch, Home, Inventory, Route, Stop};
 use crate::clients::hermes::control::Silent;
 use agent_hud_agents::hermes::gateway::{Failure, Instance};
 use std::{
@@ -132,6 +132,12 @@ impl Route for Switch {
     fn dial(&self, instance: &Instance) -> Result<TcpStream, Failure> {
         let (number, way) = self.way().ok_or(Failure::Unreachable)?;
         self.kept(number, way.dial(instance), Failure::Unreachable)
+    }
+
+    /// The way's own link, under the route number: none with no way.
+    fn epoch(&self) -> Option<Epoch> {
+        let (number, way) = self.way()?;
+        Some(way.epoch()?.under(number))
     }
 
     fn release(&self, instance: &str) {
@@ -313,5 +319,19 @@ mod tests {
             3 => switch.dial(&instance).is_ok(),
             _ => switch.admit(&instance, &mut say).is_ok(),
         }
+    }
+
+    /// Each way numbers its links from one: the route number tells the
+    /// link of one way from the link of the next.
+    #[test]
+    fn the_link_of_one_way_is_never_the_link_of_the_next() {
+        let switch = Switch::new(way());
+        let first = switch.epoch().expect("a way with a link");
+        assert_eq!(switch.epoch(), Some(first));
+        switch.raise();
+        assert_eq!(switch.epoch(), None, "no way, no link");
+        switch.install(way());
+        let second = switch.epoch().expect("the next way");
+        assert_ne!(first, second);
     }
 }

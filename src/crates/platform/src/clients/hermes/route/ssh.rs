@@ -27,7 +27,7 @@
 //! (`keeper.rs`); the followers go on asking, as they do for a gateway
 //! that is stopped, and find their gateways again over the new link, with
 //! new forwards.
-use super::{Call, Home, Inventory, Route, Stop};
+use super::{Call, Epoch, Home, Inventory, Route, Stop};
 use crate::{
     clients::hermes::{control::Silent, far::Far},
     ssh_link::{Failure as LinkFailure, Folder, Link, Settings, Target},
@@ -132,18 +132,6 @@ impl Ssh {
 
     pub(crate) fn link(&self) -> Option<(Arc<Link>, u64)> {
         self.keeper.link()
-    }
-
-    /// The link, where its master still runs. A command given to a master
-    /// that is gone never starts; one that is under way when the master
-    /// goes may still run on the far side, and its home is then not asked
-    /// again before its deadline (`far.rs`). So a link that is known to
-    /// be gone is not handed a command at all, and no home waits for one
-    /// that never ran.
-    fn standing_link(&self) -> Option<(Arc<Link>, u64)> {
-        self.keeper
-            .link()
-            .filter(|(link, _)| link.running().is_ok())
     }
 
     /// Why there is no link, where one failed to open or was lost.
@@ -264,6 +252,13 @@ impl Route for Ssh {
         let local = local.ok_or(Failure::Unreachable)?;
         let at = SocketAddr::from((Ipv4Addr::LOCALHOST, local));
         TcpStream::connect_timeout(&at, DIAL).map_err(|_| Failure::Unreachable)
+    }
+
+    /// The link whose master still runs, by its number: one that is
+    /// known to be gone is no link, before its keeper has said so.
+    fn epoch(&self) -> Option<Epoch> {
+        let (_, number) = self.standing_link()?;
+        Some(Epoch::of(number))
     }
 
     fn release(&self, instance: &str) {

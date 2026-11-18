@@ -9,9 +9,23 @@ use crate::{
     ssh_link::{Failure as LinkFailure, Link},
 };
 use agent_hud_agents::hermes::gateway::far::{Homes, Quiet, Unchecked};
-use std::{sync::PoisonError, time::Instant};
+use std::{
+    sync::{Arc, PoisonError},
+    time::Instant,
+};
 
 impl Ssh {
+    /// The link, where its master still runs. A command given to a master
+    /// that is gone never starts; one that is under way when the master
+    /// goes may still run on the far side, and its home is then not asked
+    /// again before its deadline (`far.rs`). So a link that is known to
+    /// be gone is not handed a command at all, and no home waits for one
+    /// that never ran.
+    pub(super) fn standing_link(&self) -> Option<(Arc<Link>, u64)> {
+        let standing = |(link, _): &(Arc<Link>, u64)| link.running().is_ok();
+        self.keeper.link().filter(standing)
+    }
+
     /// The far homes, read anew where the last reading is old or of
     /// another link.
     pub(super) fn told(&self, link: &Link, number: u64) -> Result<Homes, Silent> {

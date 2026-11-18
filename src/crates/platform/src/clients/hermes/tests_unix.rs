@@ -44,6 +44,8 @@ mod followers;
 mod gateways;
 #[path = "tests/handshake.rs"]
 mod handshake;
+#[path = "tests/link_epoch.rs"]
+mod link_epoch;
 #[path = "tests/live.rs"]
 mod live;
 #[path = "tests/machines.rs"]
