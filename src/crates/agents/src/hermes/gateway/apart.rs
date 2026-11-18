@@ -104,7 +104,6 @@ impl Gateway {
             recent: recent.then(|| session.clone()).into_iter().collect(),
             apart: Some(Box::new(apart)),
             turns: self.turns.watch(),
-            sampling: None,
         })
     }
 

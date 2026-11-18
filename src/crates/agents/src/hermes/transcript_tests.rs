@@ -683,15 +683,38 @@ fn a_mirrors_pass_over_its_old_sessions_ends_in_the_page_that_began_it() {
     assert_eq!(pages, 11);
 }
 
-/// What a page reads stays a hundred sessions: a mirror whose every
-/// session changed, here by its label, is read over as many pages as
-/// before, each session once.
+/// A mirror whose every session changed, here by its label, is read in
+/// the page that began the pass, each session once (ticket 60). Read a
+/// hundred a page, as it was, a new label took a pass for each hundred
+/// sessions, and reached the newest of them last.
 #[test]
-fn a_mirror_whose_every_session_changed_is_read_a_hundred_a_page() {
-    let db = sessions(1_000);
-    mirror(&db, row(1, KEY, "Mac mini", "default"));
+fn a_mirror_whose_every_session_changed_is_read_in_the_page_that_began_the_pass() {
+    for count in [1_000, 5_000] {
+        let db = sessions(count);
+        mirror(&db, row(1, KEY, "Mac mini", "default"));
+        let (_, watermark) = pass(&db, Value::Null);
+        db.execute("UPDATE hud_mirror SET label='Studio'", [])
+            .unwrap();
+        let (ids, page) = page(&db, &watermark);
+        assert_eq!(ids, far_named(1..=count));
+        assert!(page.cursor.is_none(), "the pass goes on: {:?}", page.cursor);
+        assert!(page
+            .records
+            .iter()
+            .all(|record| record.machine.as_deref() == Some("Studio")));
+        // Nothing is read again by the pass after it.
+        let (ids, _) = pass(&db, page.watermark.unwrap());
+        assert!(ids.is_empty(), "{} read again", ids.len());
+    }
+}
+
+/// The same change in Hermes's own database, whose sessions can hold
+/// anything, is read a hundred a page as it always was.
+#[test]
+fn a_database_that_is_no_mirror_is_read_a_hundred_changed_sessions_a_page() {
+    let db = sessions(300);
     let (_, watermark) = pass(&db, Value::Null);
-    db.execute("UPDATE hud_mirror SET label='Studio'", [])
+    db.execute_batch("UPDATE session_model_usage SET input_tokens=20")
         .unwrap();
     let (mut cursor, mut all, mut pages) = (Some(watermark), Vec::new(), 0);
     while let Some(next) = cursor {
@@ -701,8 +724,25 @@ fn a_mirror_whose_every_session_changed_is_read_a_hundred_a_page() {
         cursor = page.cursor;
         pages += 1;
     }
-    assert_eq!(all, far_named(1..=1_000));
-    assert!((10..=11).contains(&pages), "{pages} pages");
+    assert_eq!(all, named(1..=300));
+    assert!((3..=4).contains(&pages), "{pages} pages");
+}
+
+/// What a page of a mirror reads is bounded all the same: ten thousand
+/// changed sessions, and the rest in the page after.
+#[test]
+fn a_page_reads_ten_thousand_of_a_mirrors_changed_sessions_at_most() {
+    let db = sessions(10_050);
+    mirror(&db, row(1, KEY, "Mac mini", "default"));
+    let (_, watermark) = pass(&db, Value::Null);
+    db.execute("UPDATE hud_mirror SET label='Studio'", [])
+        .unwrap();
+    let (ids, first) = page(&db, &watermark);
+    assert_eq!(ids.len(), 10_000);
+    let cursor = first.cursor.expect("fifty more changed");
+    let (rest, second) = page(&db, &cursor);
+    assert_eq!(rest, far_named(10_001..=10_050));
+    assert!(second.cursor.is_none());
 }
 
 /// And what a page looks at is bounded too: ten thousand old sessions.

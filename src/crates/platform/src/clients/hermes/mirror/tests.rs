@@ -150,7 +150,6 @@ fn listing(profile: &Profile, sessions: &[(&str, &str)], read_ms: i64) -> Listin
     Listing {
         read_ms,
         profiles: BTreeMap::from([(profile.clone(), rows)]),
-        samples: BTreeMap::new(),
     }
 }
 

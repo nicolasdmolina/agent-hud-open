@@ -69,6 +69,8 @@ pub struct Hermes {
     /// The turns the last whole poll told, which the connection takes
     /// after everything it gives the model (`turns.rs`).
     pub told: Vec<Turn>,
+    /// The samples the last round of count calls took (`count`).
+    pub counted: BTreeMap<Profile, Vec<(String, Sample)>>,
 }
 
 impl Hermes {
@@ -243,7 +245,30 @@ pub fn poll(gateway: &mut Gateway, hermes: &mut Hermes, now_ms: i64) -> Vec<Effe
     ask(&mut poll, hermes);
     let effects = gateway.apply(Input::Polled(poll), now_ms);
     hermes.told = gateway.take_turns();
+    count(gateway, hermes, now_ms);
     effects
+}
+
+/// The round of count calls that follows a poll, as the connection runs
+/// one on a socket of its own (`sample.rs`): begun, asked, and given to
+/// the model. What it asked is added to what the poll asked.
+pub fn count(gateway: &mut Gateway, hermes: &mut Hermes, now_ms: i64) {
+    hermes.counted.clear();
+    let Some(mut counting) = gateway.count() else {
+        return;
+    };
+    for step in counting.steps() {
+        match hermes.answer(&step) {
+            Some(result) => counting.answer(&step, &result),
+            None => counting.failed(&step),
+        }
+    }
+    assert!(
+        counting.steps().is_empty(),
+        "a round asks each session once"
+    );
+    hermes.counted = counting.samples();
+    gateway.apply(Input::Counted(counting), now_ms);
 }
 
 /// An `identify` answer for a gateway that is ready, serving `profiles`.

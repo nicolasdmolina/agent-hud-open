@@ -26,6 +26,8 @@ mod approvals;
 mod cancelled;
 #[path = "tests/cards.rs"]
 mod cards;
+#[path = "tests/counting.rs"]
+mod counting;
 #[path = "tests/fake.rs"]
 mod fake;
 #[path = "tests/far.rs"]

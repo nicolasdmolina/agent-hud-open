@@ -120,31 +120,80 @@ fn a_new_row_in_a_large_mirror_is_listed_at_the_first_pass() {
     }
 }
 
-/// Core is in the middle of the mirror when the session begins. The
-/// machine was just given another label, so every row is read again, a
-/// hundred a pass, and that takes ten passes two seconds apart.
+/// What changes in a mirror that has grown shows after the one pass
+/// its write asks for (ticket 60), and nothing waits for a pass more.
+///
+/// - A session's count: its own row is read again, the oldest in the
+///   mirror as soon as the newest.
+/// - The machine's label, which changes every row. A mirror's changed
+///   rows are read in that one pass, where they took a pass for each
+///   hundred, two seconds apart, and reached the newest rows last.
+/// - And a session that begins after either is listed at the first
+///   pass like any.
 #[test]
-fn a_new_row_is_listed_at_the_first_pass_while_the_mirror_is_being_read() {
-    let (mut bench, held) = Bench::holding(1_000);
-    bench.writer.relabel("Studio");
-    bench.writer.settle();
-    assert_eq!(bench.turn(), 1);
-    bench.silent_pass();
-    bench.silent_pass();
-    assert!(bench.core.indexing(), "the mirror is read through already");
+fn what_changes_in_a_large_mirror_shows_after_one_pass() {
+    use agent_hud_agents::hermes::gateway::Sample;
+    for count in [1_000, 5_000] {
+        let (mut bench, held) = Bench::holding(count);
+        // The newest row and one of the oldest. Each has 120 tokens of
+        // its own, and shows the count, which says more.
+        for (round, at) in [count - 1, 7].into_iter().enumerate() {
+            let (id, title) = &held[at];
+            let total = 700 + round as u64;
+            let sample = Sample {
+                input: total,
+                ..Sample::default()
+            };
+            let said = BTreeMap::from([(Profile::Default, vec![(id.clone(), sample)])]);
+            let tells = bench.tells();
+            bench.writer.counted(said, 3_000 + round as i64, 1);
+            bench.writer.settle();
+            until_told(&bench, tells + 1);
+            let committed = *bench.told.at.lock().unwrap().last().unwrap();
+            assert_eq!(bench.turn(), 1);
+            // Said and not judged, like the label's below: among every
+            // other test of a run the one pass can take longer than
+            // the 2 s it is held to where it is timed, by hand
+            // (`tests/far_rows_timing.rs`).
+            let took = committed.elapsed();
+            let found = bench.found(title);
+            let row = found["items"].as_array().unwrap().iter();
+            let row = row.clone().find(|item| item["title"] == title.as_str());
+            assert_eq!(row.unwrap()["tokens"], json!(total), "{count} rows held");
+            assert!(!bench.core.indexing(), "{count} rows held: logs wait");
+            eprintln!("large mirror: {count} rows held, a count shown {took:?} after its commit");
+        }
 
-    let committed = bench.begins(&held);
-    assert_eq!(bench.turn(), 1);
-    let listed = bench.lists_the_new_one();
-    let took = committed.elapsed();
-    assert!(listed, "not listed at the first pass");
-    assert!(took <= SOON, "{took:?}");
-    // The rest goes on from where it was: every row, under the new label.
-    let passes = bench.reads_on();
-    assert!((5..=9).contains(&passes), "{passes} more passes");
-    assert_eq!(bench.count(), 1_001);
-    let studio = bench.found("studio")["total"].as_u64().unwrap();
-    assert_eq!(studio, 1_001);
+        bench.writer.relabel("Studio");
+        bench.writer.settle();
+        let committed = *bench.told.at.lock().unwrap().last().unwrap();
+        assert_eq!(bench.turn(), 1);
+        let studio = bench.found("studio")["total"].as_u64().unwrap();
+        let took = committed.elapsed();
+        assert_eq!(studio, count as u64, "{count} rows held");
+        assert!(!bench.core.indexing(), "{count} rows held: logs wait");
+        eprintln!("large mirror: {count} rows held, a new label on all {took:?} after its commit");
+
+        let committed = bench.begins(&held);
+        assert_eq!(bench.turn(), 1);
+        let listed = bench.lists_the_new_one();
+        let took = committed.elapsed();
+        assert!(listed, "{count} rows held: not listed at the first pass");
+        assert!(took <= SOON, "{count} rows held: {took:?}");
+        assert!(!bench.core.indexing(), "{count} rows held: logs wait");
+        assert_eq!(bench.count(), count + 1);
+        let studio = bench.found("studio")["total"].as_u64().unwrap();
+        assert_eq!(studio, count as u64 + 1);
+    }
+}
+
+/// Waits until the writer has told core `count` times.
+fn until_told(bench: &Bench, count: usize) {
+    let limit = Instant::now() + Duration::from_secs(20);
+    while bench.tells() < count {
+        assert!(Instant::now() < limit, "{} tells", bench.tells());
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
 /// And a mirror core has never read: the app was just launched, or its

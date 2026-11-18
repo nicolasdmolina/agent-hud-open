@@ -580,7 +580,8 @@ fn ledger_tables(core: &AgentHudCore) -> String {
 
 /// Statistics, cost and quota for the source are the same bytes with and
 /// without `hud_live` rows, and so is every row of the ledger's usage
-/// and quota tables.
+/// and quota tables, and so are the session list's day totals: a row
+/// shows the larger number, and its day's header the ledger's alone.
 #[test]
 fn statistics_cost_and_quota_are_the_same_with_and_without_live_samples() {
     let far = far();
@@ -611,6 +612,12 @@ fn statistics_cost_and_quota_are_the_same_with_and_without_live_samples() {
         let snapshot = core.request("snapshot", json!({})).unwrap();
         all.push(snapshot["totals"].to_string());
         all.push(ledger_tables(core));
+        // The session list's day headers: what each day's sessions
+        // used and cost, and the sessions that used the most.
+        let listed = json!({"scope": "all", "search": ""});
+        let listed = core.request("sessions", listed).unwrap();
+        assert_eq!(listed["days"][0]["tokens"], json!(100), "{listed}");
+        all.push(listed["days"].to_string());
         all
     };
     let without = answers(&mut core, &far);
@@ -667,3 +674,5 @@ fn a_session_with_no_live_total_shows_the_ledgers_total_and_saves_no_field() {
     }
     assert!(seen > 0);
 }
+
+mod large;

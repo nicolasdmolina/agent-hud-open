@@ -174,6 +174,9 @@ impl Gateway {
                     };
                     let after = stream.events.range(seen.seq.saturating_add(1)..);
                     for (_, &(generation, ended)) in after {
+                        // A turn that started or ended adds to what its
+                        // session has used (`sample.rs`).
+                        self.owed.owe(at);
                         let (session, epoch) = (at.clone(), epoch.clone());
                         self.turns.told.push(Turn {
                             session,

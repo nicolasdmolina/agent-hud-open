@@ -1,8 +1,10 @@
 //! Live token counts of a far session (`sample.rs`): which sessions a
-//! poll asks `session.stats` of, what a reply is taken for, and that the
-//! samples of the newest poll that counted are given and no others.
+//! round of count calls asks `session.stats` of, what a reply is taken
+//! for, that no poll asks one, and that a session's last count is asked
+//! until it is answered. `poll` here is a poll and the round of count
+//! calls that follows it (`fake.rs`).
 use super::super::*;
-use super::fake::{ask, identified, names, poll, Hermes};
+use super::fake::{ask, count, identified, names, poll, Hermes};
 use super::{far, fixture, local, INSTALL};
 use serde_json::{json, Value};
 
@@ -25,7 +27,8 @@ fn does(hermes: &mut Hermes, session: &str, status: &str, said: Value) {
     stream.stats = said;
 }
 
-/// The sessions the last poll asked `session.stats` of, in order.
+/// The sessions asked `session.stats` since the last poll began, in
+/// order.
 fn asked(hermes: &Hermes) -> Vec<String> {
     let stats = |step: &Step| match step {
         Step::Stats(session) => Some(session.id().to_owned()),
@@ -34,10 +37,9 @@ fn asked(hermes: &Hermes) -> Vec<String> {
     hermes.asked.iter().filter_map(stats).collect()
 }
 
-/// The samples of the default profile in the listing, by session.
-fn samples(gateway: &Gateway) -> Vec<(String, u64)> {
-    let listing = gateway.listing().expect("a listing");
-    let of = listing.samples.get(&Profile::Default);
+/// The samples the last round took of the default profile, by session.
+fn samples(hermes: &Hermes) -> Vec<(String, u64)> {
+    let of = hermes.counted.get(&Profile::Default);
     let total = |(id, sample): &(String, Sample)| (id.clone(), sample.total());
     of.map(|of| of.iter().map(total).collect())
         .unwrap_or_default()
@@ -54,11 +56,9 @@ fn a_far_poll_asks_stats_once_for_each_session_that_works() {
     // One call, and none for a session that is idle, only waits or only
     // starts: its count does not move.
     assert_eq!(asked(&h), ["local-works"]);
-    assert_eq!(samples(&g), [("local-works".to_owned(), 155)]);
-    let listing = g.listing().unwrap();
-    assert_eq!(listing.read_ms, 1_000);
+    assert_eq!(samples(&h), [("local-works".to_owned(), 155)]);
     assert_eq!(
-        listing.samples[&Profile::Default][0].1,
+        h.counted[&Profile::Default][0].1,
         Sample {
             input: 100,
             output: 20,
@@ -87,7 +87,7 @@ fn a_session_that_started_or_worked_and_is_listed_otherwise_is_asked_once() {
     does(&mut h, "local-turn", "idle", stats(100, 20, 0, 0));
     poll(&mut g, &mut h, 3_000);
     assert_eq!(asked(&h), ["local-turn"]);
-    assert_eq!(samples(&g), [("local-turn".to_owned(), 120)]);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 120)]);
     poll(&mut g, &mut h, 4_000);
     assert_eq!(asked(&h), [] as [&str; 0]);
     // Working, then starting again, and starting still.
@@ -95,7 +95,7 @@ fn a_session_that_started_or_worked_and_is_listed_otherwise_is_asked_once() {
     poll(&mut g, &mut h, 5_000);
     does(&mut h, "local-turn", "starting", stats(300, 40, 0, 0));
     poll(&mut g, &mut h, 6_000);
-    assert_eq!(samples(&g), [("local-turn".to_owned(), 340)]);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 340)]);
     poll(&mut g, &mut h, 7_000);
     assert_eq!(asked(&h), [] as [&str; 0]);
 }
@@ -124,24 +124,24 @@ fn a_session_that_stopped_working_is_asked_once_more_and_then_left() {
     let (mut g, mut h) = start();
     does(&mut h, "local-turn", "working", stats(100, 20, 0, 0));
     poll(&mut g, &mut h, 1_000);
-    assert_eq!(samples(&g), [("local-turn".to_owned(), 120)]);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 120)]);
     // The turn ended, and its last call added to the count after the
     // poll before looked.
     does(&mut h, "local-turn", "idle", stats(200, 40, 0, 0));
     poll(&mut g, &mut h, 2_000);
     assert_eq!(asked(&h), ["local-turn"]);
-    assert_eq!(samples(&g), [("local-turn".to_owned(), 240)]);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 240)]);
     // Idle at the poll before too: not asked, and no sample is given
     // again from an older poll.
     poll(&mut g, &mut h, 3_000);
     assert_eq!(asked(&h), [] as [&str; 0]);
-    assert_eq!(samples(&g), []);
+    assert_eq!(samples(&h), []);
     // The same where it stopped to wait on a question.
     does(&mut h, "local-turn", "working", stats(300, 40, 0, 0));
     poll(&mut g, &mut h, 4_000);
     does(&mut h, "local-turn", "waiting", stats(310, 40, 0, 0));
     poll(&mut g, &mut h, 5_000);
-    assert_eq!(samples(&g), [("local-turn".to_owned(), 350)]);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 350)]);
     poll(&mut g, &mut h, 6_000);
     assert_eq!(asked(&h), [] as [&str; 0]);
 }
@@ -155,7 +155,7 @@ fn a_gateway_of_this_machine_asks_no_stats() {
     poll(&mut g, &mut h, 1_000);
     poll(&mut g, &mut h, 2_000);
     assert_eq!(asked(&h), [] as [&str; 0]);
-    assert!(g.listing().unwrap().samples.is_empty());
+    assert!(g.count().is_none());
 }
 
 #[test]
@@ -193,11 +193,11 @@ fn zeros_a_failed_call_and_a_reply_that_is_no_count_give_no_sample() {
     poll(&mut g, &mut h, 1_000);
     assert_eq!(asked(&h).len(), 7);
     // A count Hermes left out is none of that kind.
-    assert_eq!(samples(&g), [("local-d-part".to_owned(), 7)]);
+    assert_eq!(samples(&h), [("local-d-part".to_owned(), 7)]);
     // A call that failed is asked again at the next poll.
     poll(&mut g, &mut h, 2_000);
     assert_eq!(
-        samples(&g),
+        samples(&h),
         [
             ("local-b-fails".to_owned(), 10),
             ("local-d-part".to_owned(), 7)
@@ -206,29 +206,31 @@ fn zeros_a_failed_call_and_a_reply_that_is_no_count_give_no_sample() {
 }
 
 #[test]
-fn only_the_newest_poll_that_counted_gives_samples() {
+fn only_what_the_newest_poll_that_counted_listed_is_asked() {
     let (mut g, mut h) = start();
     does(&mut h, "local-works", "working", stats(100, 20, 0, 0));
-    // A poll that is no longer the newest when it comes back is dropped.
+    // A poll that is no longer the newest when it comes back is dropped:
+    // nothing is listed, and nobody is asked.
     let mut stale = g.poll().unwrap();
     ask(&mut stale, &mut h);
     let _newer = g.poll().unwrap();
     g.apply(Input::Polled(stale), 500);
-    assert!(g.listing().is_none());
+    assert!(g.count().is_none());
 
     poll(&mut g, &mut h, 1_000);
-    assert_eq!(samples(&g), [("local-works".to_owned(), 120)]);
-    // The socket is lost: nothing is current.
+    assert_eq!(samples(&h), [("local-works".to_owned(), 120)]);
+    // The socket is lost: nobody is asked.
     g.apply(Input::Lost(Failure::Unreachable), 1_500);
-    assert!(g.listing().is_none());
-    // Back: the first poll asks the session that works again, and one
-    // that worked when the socket was lost and has stopped since.
+    assert!(g.count().is_none());
+    // Back, and nobody is asked before a poll has listed anew.
     identified(&mut g, "one");
+    assert!(g.count().is_none());
+    // The first poll asks one that worked when the socket was lost and
+    // has stopped since.
     does(&mut h, "local-works", "idle", stats(300, 60, 0, 0));
     poll(&mut g, &mut h, 2_000);
     assert_eq!(asked(&h), ["local-works"]);
-    assert_eq!(samples(&g), [("local-works".to_owned(), 360)]);
-    assert_eq!(g.listing().unwrap().read_ms, 2_000);
+    assert_eq!(samples(&h), [("local-works".to_owned(), 360)]);
 }
 
 #[test]
@@ -239,7 +241,212 @@ fn a_profile_whose_list_failed_gives_no_sample() {
     h.failing.push(Step::List(Profile::Default));
     poll(&mut g, &mut h, 2_000);
     assert_eq!(asked(&h), [] as [&str; 0]);
-    assert!(g.listing().unwrap().samples.is_empty());
+    assert!(h.counted.is_empty()); // Nor is one that is owed a count, until its profile is listed
+                                   // again.
+    does(&mut h, "local-works", "idle", stats(300, 60, 0, 0));
+    let at = g.session(&Profile::Default, "local-works").unwrap();
+    h.failing.push(Step::Stats(at));
+    poll(&mut g, &mut h, 3_000);
+    assert_eq!(asked(&h), ["local-works"]);
+    h.failing.push(Step::List(Profile::Default));
+    poll(&mut g, &mut h, 4_000);
+    assert_eq!(asked(&h), [] as [&str; 0]);
+    poll(&mut g, &mut h, 5_000);
+    assert_eq!(samples(&h), [("local-works".to_owned(), 360)]);
+}
+
+/// Count calls are no step of a poll (ticket 60): a poll of a far
+/// gateway whose sessions work asks the list and the reads, and ends
+/// without one `session.stats`. They are a round of their own.
+#[test]
+fn no_poll_asks_a_count() {
+    let (mut g, mut h) = start();
+    for id in ["local-a", "local-b", "local-c"] {
+        does(&mut h, id, "working", stats(100, 20, 0, 0));
+    }
+    poll(&mut g, &mut h, 1_000);
+    let mut next = g.poll().unwrap();
+    ask(&mut next, &mut h);
+    assert_eq!(asked(&h), [] as [&str; 0], "{:?}", h.asked);
+    assert!(next.steps().is_empty());
+    // A reply to one given to a poll all the same changes nothing of it.
+    let at = g.session(&Profile::Default, "local-a").unwrap();
+    next.answer(&Step::Stats(at.clone()), &stats(1, 1, 0, 0));
+    next.failed(&Step::Stats(at));
+    assert!(next.steps().is_empty());
+    g.apply(Input::Polled(next), 2_000);
+    // The round after it asks each session that works, once.
+    count(&mut g, &mut h, 2_000);
+    assert_eq!(asked(&h), ["local-a", "local-b", "local-c"]);
+}
+
+/// The call at a turn's end fails (ticket 60, the verifier's probe A):
+/// the session is asked again in the next round, though it is idle by
+/// then, until a call is answered. Then it is left.
+#[test]
+fn a_last_count_whose_call_failed_is_asked_again_until_it_is_answered() {
+    let (mut g, mut h) = start();
+    does(&mut h, "local-turn", "working", stats(100, 20, 0, 0));
+    poll(&mut g, &mut h, 1_000);
+    does(&mut h, "local-turn", "idle", stats(300, 60, 0, 0));
+    let at = g.session(&Profile::Default, "local-turn").unwrap();
+    for now in [2_000, 3_000] {
+        h.failing.push(Step::Stats(at.clone()));
+        poll(&mut g, &mut h, now);
+        assert_eq!(asked(&h), ["local-turn"]);
+        assert_eq!(samples(&h), []);
+    }
+    poll(&mut g, &mut h, 13_000);
+    assert_eq!(asked(&h), ["local-turn"]);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 360)]);
+    poll(&mut g, &mut h, 23_000);
+    assert_eq!(asked(&h), [] as [&str; 0]);
+}
+
+/// A session whose call never answers is not asked for ever: five
+/// rounds, and it is left until a turn runs in it again.
+#[test]
+fn a_last_count_that_never_answers_is_given_up_after_five_rounds() {
+    let (mut g, mut h) = start();
+    does(&mut h, "local-turn", "working", stats(100, 20, 0, 0));
+    poll(&mut g, &mut h, 1_000);
+    does(&mut h, "local-turn", "idle", stats(300, 60, 0, 0));
+    let at = g.session(&Profile::Default, "local-turn").unwrap();
+    let mut rounds = 0;
+    for round in 0..8 {
+        h.failing.push(Step::Stats(at.clone()));
+        poll(&mut g, &mut h, 2_000 + round * 10_000);
+        rounds += asked(&h).len();
+        h.failing.clear();
+    }
+    assert_eq!(rounds, 5);
+    // Zeros are an answer: Hermes holds no agent for it. Asked once.
+    does(&mut h, "local-turn", "working", stats(100, 20, 0, 0));
+    poll(&mut g, &mut h, 90_000);
+    does(&mut h, "local-turn", "idle", stats(0, 0, 0, 0));
+    poll(&mut g, &mut h, 91_000);
+    assert_eq!(asked(&h), ["local-turn"]);
+    poll(&mut g, &mut h, 92_000);
+    assert_eq!(asked(&h), [] as [&str; 0]);
+}
+
+/// A turn that ran wholly between two polls that both list the session
+/// as idle (probe B): the poll's look at the stream reads that a turn
+/// started and ended (`turns.rs`), and the session is asked once.
+#[test]
+fn a_turn_that_ran_wholly_between_two_idle_polls_is_counted_once() {
+    // The tests of the cards run again with the looks forced off.
+    if std::env::var(super::super::turns::LOOKS).as_deref() == Ok("off") {
+        return;
+    }
+    let (mut g, mut h) = start();
+    does(&mut h, "local-turn", "idle", stats(100, 20, 0, 0));
+    h.publish(
+        &Profile::Default,
+        "local-turn",
+        "message.start",
+        1,
+        json!({}),
+    );
+    h.publish(
+        &Profile::Default,
+        "local-turn",
+        "message.complete",
+        1,
+        json!({}),
+    );
+    h.stream(&Profile::Default, "local-turn").status = Some("idle".into());
+    poll(&mut g, &mut h, 1_000);
+    poll(&mut g, &mut h, 11_000);
+    assert_eq!(asked(&h), [] as [&str; 0]);
+    // The turn: it starts, uses, and ends before the next poll.
+    h.publish(
+        &Profile::Default,
+        "local-turn",
+        "message.start",
+        2,
+        json!({}),
+    );
+    h.publish(
+        &Profile::Default,
+        "local-turn",
+        "message.complete",
+        2,
+        json!({}),
+    );
+    h.stream(&Profile::Default, "local-turn").status = Some("idle".into());
+    h.stream(&Profile::Default, "local-turn").stats = stats(900, 90, 0, 0);
+    poll(&mut g, &mut h, 21_000);
+    assert_eq!(h.told.len(), 2, "the turn was read: {:?}", h.told);
+    assert_eq!(asked(&h), ["local-turn"]);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 990)]);
+    poll(&mut g, &mut h, 31_000);
+    assert_eq!(asked(&h), [] as [&str; 0]);
+}
+
+/// Waiting, then idle (probe C): a session that waited on a card and
+/// whose turn ended before a poll saw it work again is asked once.
+#[test]
+fn a_session_that_waited_and_is_idle_now_is_counted_once() {
+    let (mut g, mut h) = start();
+    does(&mut h, "local-turn", "working", stats(100, 20, 0, 0));
+    poll(&mut g, &mut h, 1_000);
+    does(&mut h, "local-turn", "waiting", stats(100, 20, 0, 0));
+    poll(&mut g, &mut h, 2_000);
+    assert_eq!(asked(&h), ["local-turn"]);
+    poll(&mut g, &mut h, 3_000);
+    assert_eq!(asked(&h), [] as [&str; 0]);
+    does(&mut h, "local-turn", "idle", stats(400, 80, 0, 0));
+    poll(&mut g, &mut h, 4_000);
+    assert_eq!(asked(&h), ["local-turn"]);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 480)]);
+    poll(&mut g, &mut h, 5_000);
+    assert_eq!(asked(&h), [] as [&str; 0]);
+}
+
+/// A round that was out while its session came to be owed a count says
+/// nothing of that: what it read, it read before the turn ended.
+#[test]
+fn a_session_owed_a_count_while_a_round_is_out_is_asked_again() {
+    let (mut g, mut h) = start();
+    does(&mut h, "local-turn", "working", stats(100, 20, 0, 0));
+    poll(&mut g, &mut h, 1_000);
+    // A round begins while it works, and is answered.
+    let mut out = g.count().unwrap();
+    let step = out.steps().remove(0);
+    out.answer(&step, &stats(100, 20, 0, 0));
+    // Meanwhile a poll finds it idle.
+    does(&mut h, "local-turn", "idle", stats(300, 60, 0, 0));
+    let mut next = g.poll().unwrap();
+    ask(&mut next, &mut h);
+    g.apply(Input::Polled(next), 2_000);
+    g.apply(Input::Counted(out), 2_001);
+    count(&mut g, &mut h, 2_002);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 360)]);
+    // And one owed anew while the round that asked it was out.
+    does(&mut h, "local-turn", "working", stats(300, 60, 0, 0));
+    poll(&mut g, &mut h, 3_000);
+    does(&mut h, "local-turn", "idle", stats(300, 60, 0, 0));
+    let mut next = g.poll().unwrap();
+    ask(&mut next, &mut h);
+    g.apply(Input::Polled(next), 4_000);
+    let mut out = g.count().unwrap();
+    let step = out.steps().remove(0);
+    out.answer(&step, &stats(300, 60, 0, 0));
+    does(&mut h, "local-turn", "waiting", stats(300, 60, 0, 0));
+    poll_alone(&mut g, &mut h, 5_000);
+    does(&mut h, "local-turn", "idle", stats(500, 60, 0, 0));
+    poll_alone(&mut g, &mut h, 6_000);
+    g.apply(Input::Counted(out), 6_001);
+    count(&mut g, &mut h, 6_002);
+    assert_eq!(samples(&h), [("local-turn".to_owned(), 560)]);
+}
+
+/// One whole poll with no round of count calls after it.
+fn poll_alone(gateway: &mut Gateway, hermes: &mut Hermes, now_ms: i64) {
+    let mut poll = gateway.poll().unwrap();
+    ask(&mut poll, hermes);
+    gateway.apply(Input::Polled(poll), now_ms);
 }
 
 /// The cards are the same whether the stats calls are answered, fail or

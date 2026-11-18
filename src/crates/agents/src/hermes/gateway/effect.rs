@@ -69,6 +69,9 @@ pub enum Input<'a> {
     /// A poll ran to its end: every step it asked for was answered or
     /// failed. A poll that was cut off is dropped, not given.
     Polled(Poll),
+    /// A round of count calls ran to its end (`sample.rs`): every call
+    /// was answered or failed.
+    Counted(super::sample::Counting),
     /// The answer to the request with this id was written to the socket.
     Sent { request: &'a str },
     /// The gateway's reply frame to an answer.

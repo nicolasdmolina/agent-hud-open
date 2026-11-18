@@ -35,6 +35,14 @@
 //! and one every two seconds while core says logs wait. The cases with
 //! an empty mirror take a turn only when a writer asks, as before.
 //!
+//! **What changes in a grown mirror (ticket 60).** With the same 1,000
+//! and 5,000 rows: a count that moves in a session that works, held to
+//! the busy row's bound and to the 2 s from its commit; and the
+//! machine's label, which changes every row, held to the same two from
+//! the writer being told to every row showing it. Each shows after the
+//! one pass its write asks for, and the cases fail where core says
+//! logs still wait after it.
+//!
 //! A pass costs more the more sessions core lists, whatever it reads:
 //! with 5,000 it is about 0.3 s of this test build's CPU time, most of
 //! it the snapshot. So on a machine whose load is several times its
@@ -174,7 +182,6 @@ fn grown(fleet: &mut Fleet, key: &str, rows: usize) {
     let listing = Listing {
         read_ms: crate::hooks::now_ms(),
         profiles: BTreeMap::from([(Profile::Default, sessions.collect())]),
-        samples: BTreeMap::new(),
     };
     let (writer, path) = (fleet.writer("a"), fleet.mirror(key, "default"));
     writer.listed(listing, fleet.number());
@@ -344,6 +351,160 @@ fn idle_with(rows: usize) {
         ));
     }
     held_grown("row_when_it_was_idle", rows, took, IDLE);
+}
+
+/// What core lists of the far session `id`, found by its title: the
+/// tokens its row shows.
+fn tokens_of(fleet: &mut Fleet, id: &str, title: &str) -> serde_json::Value {
+    let query = json!({"scope": "all", "search": title});
+    let found = fleet.core.request("sessions", query).unwrap();
+    let items = found["items"].as_array().unwrap();
+    let row = items.iter().find(|item| item["id"] == id);
+    row.map_or(serde_json::Value::Null, |row| row["tokens"].clone())
+}
+
+/// Hermes says `session` has used `total` by now, while the mirror
+/// holds many rows. How long until its row shows that, and how long
+/// that was after the count's commit.
+fn counted_in_a_grown_mirror(
+    (fleet, collector): (&mut Fleet, &mut Collector),
+    gateway: &Fake,
+    (key, session, title): (&str, &str, &str),
+    total: u64,
+    limit: Duration,
+) -> (Duration, Duration) {
+    let id = far(key, session);
+    while collector.turn(fleet) && fleet.asked() {}
+    *fleet.told_at.lock().unwrap() = None;
+    let began = Instant::now();
+    uses(gateway, session, total - total / 5, total / 5);
+    loop {
+        if collector.turn(fleet) {
+            let committed = *fleet.told_at.lock().unwrap();
+            let took = (began.elapsed(), committed.map(|at| at.elapsed()));
+            if tokens_of(fleet, &id, title) == json!(total) {
+                return (took.0, took.1.expect("a count nobody told of"));
+            }
+        }
+        let took = began.elapsed();
+        assert!(
+            took <= limit,
+            "{session} does not show {total} after {took:?}"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// A count that moved, in a session that works, in a mirror that holds
+/// `rows` rows (ticket 60): from Hermes saying it to the row showing
+/// it, the writer's spacing of count commits included, and from the
+/// count's commit to its listing.
+fn count_with(rows: usize) {
+    let Some((mut fleet, gateway, key)) = following() else {
+        return;
+    };
+    let title = "Busy and counted throughout";
+    works(&gateway, "s-busy", title);
+    fleet.listed(&far(&key, "s-busy"));
+    grown(&mut fleet, &key, rows);
+    let mut collector = Collector::new();
+    let mut took = Vec::new();
+    for run in 0..RUNS {
+        let seen = polls(&gateway);
+        until("the next poll begins", || {
+            collector.turn(&mut fleet);
+            polls(&gateway) > seen
+        });
+        std::thread::sleep(Duration::from_secs(1) * run / RUNS);
+        let total = 1_000 * (u64::from(run) + 1);
+        let both = (&mut fleet, &mut collector);
+        let whose = (key.as_str(), "s-busy", title);
+        took.push(counted_in_a_grown_mirror(
+            both,
+            &gateway,
+            whose,
+            total,
+            BUSY * 2,
+        ));
+        // A pass after the one that showed it would be the old defect.
+        assert!(!fleet.core.indexing(), "logs wait after a count");
+    }
+    held_grown("count_when_the_gateway_was_busy", rows, took, BUSY);
+}
+
+/// The machine is given another label while its mirror holds `rows`
+/// rows (ticket 60): from the writer being told to every one of its
+/// rows showing the label, and from the label's commit to that.
+fn label_with(rows: usize) {
+    let Some((mut fleet, gateway, key)) = following() else {
+        return;
+    };
+    works(&gateway, "s-busy", "Busy throughout");
+    fleet.listed(&far(&key, "s-busy"));
+    grown(&mut fleet, &key, rows);
+    let labelled = |fleet: &mut Fleet, label: &str| {
+        let query = json!({"scope": "all", "search": label});
+        let found = fleet.core.request("sessions", query).unwrap();
+        found["total"].as_u64().unwrap() as usize
+    };
+    let all = labelled(&mut fleet, "Mini");
+    assert!(all > rows, "{all} rows of {rows} say Mini");
+    let writer = fleet.writer("a");
+    let mut collector = Collector::new();
+    let mut took = Vec::new();
+    for run in 0..RUNS {
+        // The polls and the collector go on as they do, a moment
+        // longer each time.
+        let wait =
+            Instant::now() + Duration::from_millis(300) + Duration::from_secs(1) * run / RUNS;
+        while Instant::now() < wait || (collector.turn(&mut fleet) && fleet.asked()) {
+            collector.turn(&mut fleet);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        *fleet.told_at.lock().unwrap() = None;
+        let label = format!("Relabelled-{run:02}-of-twenty");
+        let began = Instant::now();
+        writer.relabel(&label);
+        loop {
+            if collector.turn(&mut fleet) {
+                let committed = *fleet.told_at.lock().unwrap();
+                let at = (began.elapsed(), committed.map(|at| at.elapsed()));
+                if labelled(&mut fleet, &label) == all {
+                    took.push((at.0, at.1.expect("a label nobody told of")));
+                    break;
+                }
+            }
+            let waited = began.elapsed();
+            assert!(waited <= BUSY * 4, "no label after {waited:?}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!fleet.core.indexing(), "logs wait after a label");
+    }
+    held_grown("label_on_every_row", rows, took, BUSY);
+}
+
+#[test]
+#[ignore = "waits on the clock: run by hand"]
+fn count_when_the_gateway_was_busy_with_1000_rows() {
+    count_with(1_000);
+}
+
+#[test]
+#[ignore = "waits on the clock: run by hand"]
+fn count_when_the_gateway_was_busy_with_5000_rows() {
+    count_with(5_000);
+}
+
+#[test]
+#[ignore = "waits on the clock: run by hand"]
+fn label_on_every_row_with_1000_rows() {
+    label_with(1_000);
+}
+
+#[test]
+#[ignore = "waits on the clock: run by hand"]
+fn label_on_every_row_with_5000_rows() {
+    label_with(5_000);
 }
 
 #[test]

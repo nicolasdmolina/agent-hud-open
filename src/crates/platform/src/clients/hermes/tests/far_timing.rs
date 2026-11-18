@@ -13,6 +13,9 @@
 //! they are run by hand and not with every test run, on a machine that
 //! is not starved by other builds:
 //! `cargo test -p agent-hud-platform --lib clients::hermes::tests_unix::far_timing -- --ignored --nocapture --test-threads 3`.
+//!
+//! One case holds the count calls back (ticket 60): see
+//! `card_and_poll_time_while_counts_are_held`.
 use super::{
     super::Pace,
     fake::Fake,
@@ -255,6 +258,60 @@ fn card_with_five_busy_sessions() {
 
 /// How long the slow session's events take to read, each time.
 const SLOW: Duration = Duration::from_secs(2);
+
+/// The probe of ticket 35's verifier, kept as a case of the suite
+/// (ticket 60): three sessions work and the gateway holds every
+/// `session.stats` back two seconds. With the count calls in the poll,
+/// polls came six seconds apart and six cards in ten were over the
+/// bound. The calls go on a lane of their own, so a card is held to the
+/// bounds of any busy session and a poll to its own, with nothing taken
+/// off for the counts.
+#[test]
+#[ignore = "waits on the clock: run by hand"]
+fn card_and_poll_time_while_counts_are_held() {
+    let pace = Pace {
+        trace: true,
+        ..Pace::default()
+    };
+    let Some((far, gateway)) = following(pace) else {
+        return;
+    };
+    let sessions = ["s-a", "s-m", "s-z"];
+    for session in sessions {
+        works(&gateway, session);
+    }
+    let counts = |gateway: &Fake| gateway.world().calls("session.stats").len();
+    until("the counts are asked", || counts(&gateway) >= 3);
+    gateway.world().slow_stats = SLOW;
+    let seen = polls(&gateway);
+    until("polls run beside the held counts", || {
+        polls(&gateway) > seen + 1
+    });
+    let (from, asked) = (poll_times(&far).len(), counts(&gateway));
+    let asking = [sessions[0], sessions[2]];
+    let took = twenty(&far, &gateway, &asking, Duration::from_secs(1), "held");
+    held("card_while_counts_are_held", took, BUSY, BUSY_MOST, 1);
+    let times = poll_times(&far)[from..].to_vec();
+    assert!(times.len() >= 20, "{} polls meanwhile", times.len());
+    let last = times[times.len() - 20..].to_vec();
+    held("poll_time_while_counts_are_held", last, POLL, POLL * 3, 1);
+    // The counts were asked all the while, each held, and on no socket
+    // a poll lists on.
+    let world = gateway.world();
+    let sockets = |method: &str| -> std::collections::HashSet<usize> {
+        (world.calls(method).iter().map(|(socket, _)| *socket)).collect()
+    };
+    let (lists, stats) = (sockets("session.active_list"), sockets("session.stats"));
+    let asked = world.calls("session.stats").len() - asked;
+    println!(
+        "TIMING card_and_poll_time_while_counts_are_held polls={} counts_asked={asked} \
+         each_held_ms={}",
+        times.len(),
+        SLOW.as_millis()
+    );
+    assert!(asked >= 3, "{asked} counts asked meanwhile");
+    assert!(lists.is_disjoint(&stats), "{lists:?} {stats:?}");
+}
 
 #[test]
 #[ignore = "waits on the clock: run by hand"]

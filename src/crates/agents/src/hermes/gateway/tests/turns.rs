@@ -335,7 +335,9 @@ fn ten_idle_sessions_cost_one_call_each_in_each_poll() {
     assert!(turns
         .iter()
         .all(|(id, turn, _)| id == "far-idle-4" && *turn == 2));
-    assert_eq!(h.asked.len(), 13);
+    // And one call for what that turn used (`sample.rs`), in the round
+    // of count calls after the poll.
+    assert_eq!(h.asked.len(), 14);
 
     // A session the poll reads anyway costs no call more: its turns are
     // taken from what the poll read.
@@ -736,17 +738,11 @@ fn the_looks_go_out_after_the_reads_the_cards_wait_on() {
         .map(|step| match step {
             Step::Since { session, .. } => ("read", session.id().to_owned()),
             Step::Watch { session, .. } => ("look", session.id().to_owned()),
-            Step::Stats(session) => ("count", session.id().to_owned()),
+            // What a session has used is asked in no poll (`sample.rs`).
             other => panic!("{other:?}"),
         })
         .collect();
-    // What the session that works has used is asked last of all.
-    let expected = [
-        ("read", "far-m"),
-        ("look", "far-a"),
-        ("look", "far-z"),
-        ("count", "far-m"),
-    ];
+    let expected = [("read", "far-m"), ("look", "far-a"), ("look", "far-z")];
     let expected: Vec<(&str, String)> = (expected.iter())
         .map(|(kind, id)| (*kind, (*id).to_owned()))
         .collect();

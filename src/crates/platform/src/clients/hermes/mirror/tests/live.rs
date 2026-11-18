@@ -1,13 +1,20 @@
 //! Counts through the writer: a far session's sample is kept in its
 //! mirror and shows on its row; counts are committed, and core told, no
 //! more often than the writer's spacing, however often they move; a
-//! poll whose counts did not move writes nothing; and a count read
+//! round whose counts did not move writes nothing; and a count read
 //! under a route number that is no longer the machine's is dropped.
+//!
+//! A count is asked apart from the polls (ticket 60), so it reaches the
+//! writer after the list that gave its session a row: a new session's
+//! row is one commit, and its first count the next (`FIRST`).
 use super::*;
 use agent_hud_agents::hermes::gateway::Sample;
 
 /// A spacing short enough to wait out, and long enough to see.
 const SPACE: Duration = Duration::from_millis(400);
+
+/// The commits a new session costs: its row, then its first count.
+const FIRST: usize = 2;
 
 fn sample(total: u64) -> Sample {
     Sample {
@@ -18,18 +25,29 @@ fn sample(total: u64) -> Sample {
     }
 }
 
+/// What a round of count calls said of `profile`: each session with a
+/// total over zero.
+fn tallied(
+    profile: &Profile,
+    sessions: &[(&str, u64)],
+) -> BTreeMap<Profile, Vec<(String, Sample)>> {
+    let samples = sessions
+        .iter()
+        .filter(|(_, total)| *total > 0)
+        .map(|(id, total)| ((*id).to_owned(), sample(*total)));
+    BTreeMap::from([(profile.clone(), samples.collect())])
+}
+
 impl Bench {
-    /// Queues a poll's listing of `profile` with what its samples said
-    /// each session has used, and waits until the writer has taken it.
+    /// Queues a poll's listing of `profile` and what the round of count
+    /// calls after it said each session has used, and waits until the
+    /// writer has taken both.
     fn counts(&self, profile: &Profile, sessions: &[(&str, u64)], read_ms: i64, route: u64) {
         let rows: Vec<(&str, &str)> = sessions.iter().map(|(id, _)| (*id, "Counted")).collect();
-        let mut listing = listing(profile, &rows, read_ms);
-        let samples = sessions
-            .iter()
-            .filter(|(_, total)| *total > 0)
-            .map(|(id, total)| ((*id).to_owned(), sample(*total)));
-        listing.samples.insert(profile.clone(), samples.collect());
-        self.writer.listed(listing, route);
+        self.writer.listed(listing(profile, &rows, read_ms), route);
+        self.writer.settle();
+        self.writer
+            .counted(tallied(profile, sessions), read_ms, route);
         self.writer.settle();
     }
 
@@ -67,11 +85,11 @@ impl Bench {
 }
 
 #[test]
-fn a_new_sessions_count_is_written_with_its_row_and_shows_on_it() {
+fn a_new_sessions_count_is_written_after_its_row_and_shows_on_it() {
     let mut bench = bench_spaced("Mac mini", SPACE);
     bench.counts(&Profile::Default, &[("s1", 120), ("s2", 0)], 1_000, 1);
-    // One commit for the rows and the count, and one word to core.
-    assert_eq!(bench.tells(), 1);
+    // One commit for the rows and one for the count, each told to core.
+    assert_eq!(bench.tells(), FIRST);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 120)]);
     assert_eq!(bench.turn(), 1);
     assert_eq!(
@@ -81,9 +99,9 @@ fn a_new_sessions_count_is_written_with_its_row_and_shows_on_it() {
             ("default:s2".to_owned(), json!(0))
         ]
     );
-    assert!(bench
-        .log()
-        .contains("mirror wrote profile=default rows=2 counts=1"));
+    let log = bench.log();
+    assert!(log.contains("mirror wrote profile=default rows=2 counts=0"));
+    assert!(log.contains("mirror wrote profile=default rows=0 counts=1"));
 }
 
 #[test]
@@ -97,7 +115,7 @@ fn a_poll_whose_counts_did_not_move_writes_nothing_and_tells_nothing() {
         bench.counts(&Profile::Default, &[("s1", said)], 1_000 + read_ms, 1);
     }
     std::thread::sleep(SPACE * 2);
-    assert_eq!(bench.tells(), 1);
+    assert_eq!(bench.tells(), FIRST);
     assert_eq!(stamps(&bench.file(&Profile::Default)), stamp);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 120)]);
 }
@@ -108,7 +126,7 @@ fn a_poll_whose_counts_did_not_move_writes_nothing_and_tells_nothing() {
 fn counts_are_committed_no_more_often_than_the_spacing_and_the_newest_lands() {
     let mut bench = bench_spaced("Mac mini", SPACE);
     bench.counts(&Profile::Default, &[("s1", 100)], 1_000, 1);
-    assert_eq!(bench.tells(), 1);
+    assert_eq!(bench.tells(), FIRST);
     // Ten polls in a tenth of the spacing, the count growing in each.
     for step in 1..=10 {
         bench.counts(
@@ -118,16 +136,16 @@ fn counts_are_committed_no_more_often_than_the_spacing_and_the_newest_lands() {
             1,
         );
     }
-    assert_eq!(bench.tells(), 1, "held until the spacing has passed");
+    assert_eq!(bench.tells(), FIRST, "held until the spacing has passed");
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 100)]);
     // No further poll: the count that waits is written when its time
     // comes, and it is the newest.
-    bench.told(2);
+    bench.told(FIRST + 1);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 200)]);
     let at = bench.told.at.lock().unwrap().clone();
-    assert!(at[1] - at[0] >= SPACE, "{:?}", at[1] - at[0]);
+    assert!(at[2] - at[1] >= SPACE, "{:?}", at[2] - at[1]);
     std::thread::sleep(SPACE * 2);
-    assert_eq!(bench.tells(), 2, "one commit for the ten");
+    assert_eq!(bench.tells(), FIRST + 1, "one commit for the ten");
     bench.turn();
     assert_eq!(bench.tokens(), [("default:s1".to_owned(), json!(200))]);
 
@@ -140,9 +158,10 @@ fn counts_are_committed_no_more_often_than_the_spacing_and_the_newest_lands() {
         bench.counts(&Profile::Default, &[("s1", total)], 2_000 + total as i64, 1);
         std::thread::sleep(Duration::from_millis(20));
     }
-    bench.told(3);
+    bench.told(FIRST + 2);
     let at = bench.told.at.lock().unwrap().clone();
-    let stream = &at[1..];
+    // From the first commit of a count on.
+    let stream = &at[FIRST..];
     assert!((4..=8).contains(&stream.len()), "{} commits", stream.len());
     for pair in stream.windows(2) {
         assert!(pair[1] - pair[0] >= SPACE, "{:?}", pair[1] - pair[0]);
@@ -156,7 +175,9 @@ fn the_counts_of_every_profile_are_told_in_one_word() {
     let mut bench = bench_spaced("Mac mini", SPACE);
     bench.counts(&Profile::Default, &[("s1", 100)], 1_000, 1);
     bench.counts(&reports(), &[("r1", 50)], 1_000, 1);
-    bench.told(2);
+    // Two rows and two first counts, the second of which waits out the
+    // spacing.
+    bench.told(FIRST * 2);
     bench.turn();
     bench.counts(&Profile::Default, &[("s1", 300)], 2_000, 1);
     bench.counts(&reports(), &[("r1", 70)], 2_000, 1);
@@ -185,14 +206,35 @@ fn a_count_read_under_a_route_number_that_is_not_current_is_dropped() {
     bench.number.now.store(2, Ordering::Release);
     std::thread::sleep(SPACE * 3);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 100)]);
-    assert_eq!(bench.tells(), 1);
+    assert_eq!(bench.tells(), FIRST);
     // One that arrives late under the old number is dropped too, and
     // one read under the new number is written.
     bench.counts(&Profile::Default, &[("s1", 170)], 3_000, 1);
     std::thread::sleep(SPACE * 2);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 100)]);
     bench.counts(&Profile::Default, &[("s1", 180)], 2_500, 2);
-    bench.told(2);
+    bench.told(FIRST + 1);
+    assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 180)]);
+}
+
+/// A count that arrives late, read under the old route number, does not
+/// take the place of one read under the machine's number now that
+/// waits for its time: it is dropped when it is taken, and the one
+/// that waits is written.
+#[test]
+fn a_late_count_of_an_old_route_number_leaves_the_one_that_waits() {
+    let bench = bench_spaced("Mac mini", SPACE);
+    bench.counts(&Profile::Default, &[("s1", 100)], 1_000, 1);
+    bench.number.now.store(2, Ordering::Release);
+    bench.counts(&Profile::Default, &[("s1", 180)], 2_000, 2);
+    // Read earlier, under the first number, and more than any.
+    bench
+        .writer
+        .counted(tallied(&Profile::Default, &[("s1", 900)]), 1_500, 1);
+    bench.writer.settle();
+    bench.told(FIRST + 1);
+    assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 180)]);
+    std::thread::sleep(SPACE * 2);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 180)]);
 }
 
@@ -246,6 +288,32 @@ fn samples_that_waited_under_another_route_number_wait_no_more() {
     assert!(files.due(SPACE).is_none(), "nothing waits");
 }
 
+/// A count that says no more than its mirror is known to hold does not
+/// wait to be written (ticket 35's verifier, v06): no write is due for
+/// it, so the writer opens none. One that says more waits, alone.
+#[test]
+fn a_count_the_mirror_is_known_to_hold_does_not_wait_to_be_written() {
+    use super::super::counts::Counts;
+    let mut counts = Counts::default();
+    let one = |id: &str, total| vec![(id.to_owned(), sample(total))];
+    counts.sample(&Profile::Default, one("s1", 100), 1_000, 1);
+    let (_, waited) = counts.take(&Profile::Default).unwrap();
+    counts.said(&Profile::Default, &waited);
+    counts.counted();
+    // The same again at every round, and less: nothing waits.
+    for (read_ms, total) in [(2_000, 100), (3_000, 100), (4_000, 60)] {
+        counts.sample(&Profile::Default, one("s1", total), read_ms, 1);
+        assert!(counts.waiting().is_empty(), "{total} waits");
+        assert!(counts.due(SPACE).is_none(), "a write is due for {total}");
+    }
+    // Among several, only the one that says more waits.
+    let mut round = one("s1", 100);
+    round.extend(one("s2", 40));
+    counts.sample(&Profile::Default, round, 5_000, 1);
+    let (_, waited) = counts.take(&Profile::Default).unwrap();
+    assert_eq!(waited, vec![("s2".to_owned(), sample(40), 5_000)]);
+}
+
 /// A row written while a count waits for its time leaves the count
 /// waiting: it is written when its time comes, with no further poll.
 #[test]
@@ -253,12 +321,12 @@ fn a_row_written_before_a_counts_time_leaves_the_count_waiting() {
     let bench = bench_spaced("Mac mini", SPACE);
     bench.counts(&Profile::Default, &[("s1", 100)], 1_000, 1);
     bench.counts(&Profile::Default, &[("s1", 150)], 2_000, 1);
-    assert_eq!(bench.tells(), 1);
+    assert_eq!(bench.tells(), FIRST);
     // A new session is listed: its row is written at once.
     bench.counts(&Profile::Default, &[("s1", 150), ("s2", 0)], 3_000, 1);
-    assert_eq!(bench.tells(), 2);
+    assert_eq!(bench.tells(), FIRST + 1);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 100)]);
-    bench.told(3);
+    bench.told(FIRST + 2);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 150)]);
 }
 
@@ -271,7 +339,7 @@ fn of_two_counts_that_wait_the_larger_is_written() {
     bench.counts(&Profile::Default, &[("s1", 100)], 1_000, 1);
     bench.counts(&Profile::Default, &[("s1", 200)], 2_000, 1);
     bench.counts(&Profile::Default, &[("s1", 150)], 3_000, 1);
-    bench.told(2);
+    bench.told(FIRST + 1);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 200)]);
 }
 
@@ -283,13 +351,14 @@ fn a_route_that_changes_before_a_count_is_committed_leaves_it_unwritten() {
     bench.counts(&Profile::Default, &[("s1", 100)], 1_000, 1);
     std::thread::sleep(SPACE * 2);
     let asked = bench.number.asked.load(Ordering::Acquire);
-    // The next write asks when it is taken, and again to commit.
-    bench.number.raise_at.store(asked + 2, Ordering::Release);
+    // The list asks when it is taken and has nothing to write. The
+    // count asks when it is taken, and again to commit.
+    bench.number.raise_at.store(asked + 3, Ordering::Release);
     bench.counts(&Profile::Default, &[("s1", 150)], 2_000, 1);
     std::thread::sleep(SPACE * 2);
     assert_eq!(bench.number.now.load(Ordering::Acquire), 2);
     assert_eq!(bench.kept(&Profile::Default), [("s1".to_owned(), 100)]);
-    assert_eq!(bench.tells(), 1);
+    assert_eq!(bench.tells(), FIRST);
 }
 
 #[test]
@@ -315,10 +384,8 @@ fn a_count_the_mirror_already_holds_is_not_written_again_after_a_relaunch() {
     again.settle();
     let stamp = std::fs::metadata(bench.file(&Profile::Default)).unwrap();
     let (stamp, tells) = ((stamp.len(), stamp.modified().unwrap()), bench.tells());
-    let mut said = listing(&Profile::Default, &[("s1", "Counted")], 5_000);
-    said.samples
-        .insert(Profile::Default, vec![("s1".to_owned(), sample(100))]);
-    again.listed(said, 1);
+    again.listed(listing(&Profile::Default, &[("s1", "Counted")], 5_000), 1);
+    again.counted(tallied(&Profile::Default, &[("s1", 100)]), 5_000, 1);
     again.settle();
     std::thread::sleep(SPACE * 2);
     assert_eq!(bench.tells(), tells);
