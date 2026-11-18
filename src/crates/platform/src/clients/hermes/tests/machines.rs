@@ -48,6 +48,8 @@ pub(super) mod counts;
 mod guards;
 #[path = "machines/history.rs"]
 pub(super) mod history;
+#[path = "machines/history_leftovers.rs"]
+mod history_leftovers;
 #[path = "machines/history_more.rs"]
 mod history_more;
 #[path = "machines/lists.rs"]

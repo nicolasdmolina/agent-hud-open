@@ -12,6 +12,9 @@
 //!   for an old one. No `sessions` row is ever deleted.
 //! - A session read before what the mirror holds of it is dropped: the
 //!   mirror never goes back.
+//! - `taken` writes a batch a session at a time. One the mirror will not
+//!   take, by a rule of its tables, is left as it was and named, and the
+//!   others are written all the same (ticket 61).
 //! - `held` notes which sessions the desktop app holds, and `note` the
 //!   mirror's two ages and how far its whole sweep has got.
 //!
@@ -99,6 +102,56 @@ pub fn durable(db: &Connection, sessions: &[Session], read_ms: i64) -> rusqlite:
         written += 1;
     }
     Ok(written)
+}
+
+/// What became of a batch's sessions in the mirror.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Taken {
+    /// How many were written.
+    pub written: usize,
+    /// The sessions the mirror would not take, each with SQLite's reason.
+    pub refused: Vec<(String, String)>,
+}
+
+/// Whether `error` is of the session being written and not of the
+/// mirror's file: a rule of its tables refused a value, or the session is
+/// not in the shape of the column lists. Two far usage rows that come to
+/// the same name here are the case known: a name that is a blob there is
+/// none here. Anything else (the disk, the file) is the whole batch's.
+fn refusal(error: &rusqlite::Error) -> bool {
+    use rusqlite::ErrorCode::{ConstraintViolation, TooBig, TypeMismatch};
+    match error {
+        rusqlite::Error::InvalidQuery => true,
+        rusqlite::Error::SqliteFailure(failure, _) => {
+            matches!(failure.code, ConstraintViolation | TypeMismatch | TooBig)
+        }
+        _ => false,
+    }
+}
+
+/// Writes `sessions` as [`durable`] does, each one whole or not at all.
+/// A session the mirror refuses is left exactly as the mirror held it and
+/// is named in the answer; the rest of the batch is written. An error
+/// that is not one session's own is the batch's, and then nothing of it
+/// is to be committed.
+pub fn taken(db: &Connection, sessions: &[Session], read_ms: i64) -> rusqlite::Result<Taken> {
+    let mut taken = Taken::default();
+    for session in sessions {
+        db.execute_batch("SAVEPOINT hud_session")?;
+        match durable(db, std::slice::from_ref(session), read_ms) {
+            Ok(written) => taken.written += written,
+            Err(error) => {
+                db.execute_batch("ROLLBACK TO hud_session; RELEASE hud_session")?;
+                if !refusal(&error) {
+                    return Err(error);
+                }
+                taken.refused.push((session.id.clone(), error.to_string()));
+                continue;
+            }
+        }
+        db.execute_batch("RELEASE hud_session")?;
+    }
+    Ok(taken)
 }
 
 /// The fingerprint each durable session of the mirror was last written

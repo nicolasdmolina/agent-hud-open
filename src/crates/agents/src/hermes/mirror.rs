@@ -7,7 +7,7 @@ use super::gateway::{Profile, StoredKey};
 mod history;
 mod live;
 mod write;
-pub use history::{durable, held, note, reads, stored, Reads};
+pub use history::{durable, held, note, reads, stored, taken, Reads, Taken};
 pub use live::live;
 pub use write::{claim, file, files, list, relabel, ROOT};
 

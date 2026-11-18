@@ -10,10 +10,10 @@ pub(crate) struct Plan {
     pub clock: bool,
     /// From the machine being followed to its first tick.
     pub first: Duration,
-    /// Between two ticks while a far session is live, or a whole sweep
-    /// is overdue.
+    /// Between two ticks while a far session is in a turn, or a whole
+    /// sweep is overdue.
     pub live: Duration,
-    /// Between two ticks otherwise.
+    /// Between two ticks otherwise, however many sessions are listed.
     pub idle: Duration,
     /// The most reads of one home in one tick, four at least.
     pub reads: u32,
@@ -46,7 +46,24 @@ impl Default for Plan {
     }
 }
 
-/// A live list older than this says nothing of what is live now.
+impl Plan {
+    /// From a tick that came to `ticked` to the next. Sooner while a far
+    /// session is in a turn (`working`), a whole sweep is overdue, or
+    /// nothing could be read at all just now. Sessions that are listed
+    /// and idle do not hurry it, and a machine with no reader
+    /// (`without`) is asked at the slow pace whatever else holds.
+    pub(super) fn wait(&self, ticked: Ticked, working: bool, without: bool) -> Duration {
+        let soon = ticked.reads == 0 || ticked.overdue || working;
+        match soon && !without {
+            true => self.live,
+            false => self.idle,
+        }
+    }
+}
+
+/// A live list older than this says nothing of what is live now, and a
+/// session found in a turn longer ago than this is not taken to be in
+/// one: the tick after a turn's end still comes at the quick pace.
 pub(super) const FRESH: Duration = Duration::from_secs(120);
 
 /// What the machines list says of a machine's history.
@@ -102,6 +119,32 @@ pub(crate) struct Ticked {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_quick_pace_is_for_work_under_way_and_the_slow_one_for_everything_else() {
+        // The paces themselves: a minute, and five.
+        let plan = Plan::default();
+        let (quick, slow) = (Duration::from_secs(60), Duration::from_secs(300));
+        assert_eq!((plan.live, plan.idle), (quick, slow));
+        let read = Ticked {
+            overdue: false,
+            reads: 3,
+        };
+        // Nothing in a turn, no sweep overdue: slow, whatever is listed.
+        assert_eq!(plan.wait(read, false, false), slow);
+        // A session in a turn, a sweep overdue, or nothing read: quick.
+        assert_eq!(plan.wait(read, true, false), quick);
+        let overdue = Ticked {
+            overdue: true,
+            ..read
+        };
+        assert_eq!(plan.wait(overdue, false, false), quick);
+        assert_eq!(plan.wait(Ticked::default(), false, false), quick);
+        // No reader there: slow, whatever else holds.
+        for ticked in [read, overdue, Ticked::default()] {
+            assert_eq!(plan.wait(ticked, true, true), slow);
+        }
+    }
 
     #[test]
     fn a_machine_was_checked_whole_when_the_last_of_its_profiles_was() {

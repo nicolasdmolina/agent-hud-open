@@ -1,6 +1,6 @@
 """Agent HUD's reader of a far Hermes home's history. One bounded read.
 
-It is sent on standard input (`python3 -I - MARK DEADLINE HOME REQUEST`)
+It is sent on standard input (`python3 -I -B - MARK DEADLINE HOME REQUEST`)
 and is never a file on the far disk. It reads `HOME/state.db` where that
 file is, through a connection that cannot change it, and runs nothing but
 a SELECT. It imports nothing of Hermes's. `far_history.rs` has the rest.

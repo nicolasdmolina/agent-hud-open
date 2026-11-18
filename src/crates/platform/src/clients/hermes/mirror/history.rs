@@ -10,7 +10,10 @@
 //! The writer also knows which sessions are live: every poll that counted
 //! lists them, and the list passes through here on its way to the rows
 //! (`Writer::listed`). The refresh asks for them, with the ones that
-//! left the list since it last asked.
+//! left the list since it last asked. And it knows when a poll last
+//! found one of them in a turn (`Writer::worked`), which is what the
+//! refresh's pace goes by: a session that is only listed, idle, does not
+//! hurry it (ticket 61).
 use super::{files::Files, State, Write, Writer};
 use agent_hud_agents::hermes::{
     far_history::Session,
@@ -40,6 +43,9 @@ pub(crate) enum Wrote {
     /// Committed, or there was nothing to change: how many sessions were
     /// written. A session the mirror held from a later read is not one.
     Written(usize),
+    /// Committed as `Written`, but for the sessions named: the mirror
+    /// would not take them, and holds of each what it held before.
+    Refused(usize, Vec<String>),
     /// Not written, and nothing of it: the route changed (`route`), or
     /// the machine is retired (`over`).
     Dropped(&'static str),
@@ -51,6 +57,8 @@ pub(crate) enum Wrote {
 #[derive(Default)]
 pub(super) struct Live {
     of: HashMap<Profile, Listing>,
+    /// When a poll last came back with a session in a turn.
+    worked_ms: Option<i64>,
 }
 
 #[derive(Default)]
@@ -115,11 +123,18 @@ impl Writer {
         ids.into_iter().collect()
     }
 
-    /// Whether a poll that came back since `fresh_ms` listed a session.
-    pub(crate) fn live(&self, fresh_ms: i64) -> bool {
-        let state: std::sync::MutexGuard<'_, State> = self.state();
-        let lists = |listing: &Listing| listing.read_ms >= fresh_ms && !listing.now.is_empty();
-        state.live.of.values().any(lists)
+    /// A poll that came back at `read_ms` found a session of the machine
+    /// in a turn.
+    pub(crate) fn worked(&self, read_ms: i64) {
+        let mut state: std::sync::MutexGuard<'_, State> = self.state();
+        state.live.worked_ms = state.live.worked_ms.max(Some(read_ms));
+    }
+
+    /// Whether a poll that came back since `fresh_ms` found a session in
+    /// a turn. Sessions that are listed and idle do not count, however
+    /// many: a gateway may list its old chats for as long as it runs.
+    pub(crate) fn working(&self, fresh_ms: i64) -> bool {
+        (self.state().live.worked_ms).is_some_and(|worked| worked >= fresh_ms)
     }
 
     /// One batch, as one transaction on its profile's mirror, which is
@@ -132,10 +147,13 @@ impl Writer {
             return Wrote::Dropped("route");
         }
         let path = mirror::file(&self.root, &self.key, profile);
-        let (mut written, mut rows) = (0, false);
+        let (mut written, mut rows, mut refused) = (0, false, Vec::new());
         let wrote = files.write(profile, &path, Some(batch.route), &*self.routes, |db| {
             let claimed = mirror::claim(db, &self.key, profile, label)?;
-            written = mirror::durable(db, &batch.sessions, batch.read_ms)?;
+            // A session at a time: one the mirror will not take does not
+            // cost the others their write.
+            let taken = mirror::taken(db, &batch.sessions, batch.read_ms)?;
+            (written, refused) = (taken.written, taken.refused);
             let held = (batch.held.as_ref()).map_or(Ok(0), |ids| mirror::held(db, ids))?;
             let noted = (batch.reads.as_ref()).map_or(Ok(0), |reads| mirror::note(db, reads))?;
             // Core reads the rows, and a mirror that is new to it.
@@ -144,10 +162,9 @@ impl Writer {
         });
         match wrote {
             Ok(Some(_)) => {
-                files.holds(
-                    profile,
-                    batch.sessions.into_iter().map(|session| session.id),
-                );
+                let not = |id: &String| refused.iter().all(|(refused, _)| refused != id);
+                let ids = batch.sessions.into_iter().map(|session| session.id);
+                files.holds(profile, ids.filter(not));
                 if rows {
                     (self.changed)(std::slice::from_ref(&path));
                 }
@@ -155,7 +172,16 @@ impl Writer {
                     let line = format!("mirror history profile={name} sessions={written}");
                     self.log.line(&line);
                 }
-                Wrote::Written(written)
+                for (id, why) in &refused {
+                    let line = format!("mirror refused profile={name} session={id} why={why}");
+                    self.log.line(&line);
+                }
+                match refused.is_empty() {
+                    true => Wrote::Written(written),
+                    false => {
+                        Wrote::Refused(written, refused.into_iter().map(|(id, _)| id).collect())
+                    }
+                }
             }
             // The route changed between the look above and the commit.
             Ok(None) => {

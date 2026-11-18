@@ -104,11 +104,22 @@ impl Site {
     /// The site, its far database seeded by `seed` before anything reads
     /// it; None where this machine cannot run an `sshd`.
     pub(super) fn with(plan: Plan, seed: impl FnOnce(&Connection)) -> Option<Self> {
+        Self::listing(plan, seed, |_| {})
+    }
+
+    /// As `with`, its gateway set up by `lists` before anything polls
+    /// it: what it lists is listed from the first poll on.
+    pub(super) fn listing(
+        plan: Plan,
+        seed: impl FnOnce(&Connection),
+        lists: impl FnOnce(&Fake),
+    ) -> Option<Self> {
         let mut fleet = fleet(1)?;
         fleet.reads_mirrors();
         let db = far_db(&fleet.hosts[0].root);
         seed(&db);
         let gateway = fleet.hosts[0].gateway("instance-1", INSTALL[0]);
+        lists(&gateway);
         fleet.write(&[here(), ssh("a", "Mini", "m0")]);
         fleet.start_at(Pace {
             history: plan,

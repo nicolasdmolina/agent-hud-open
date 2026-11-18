@@ -136,3 +136,49 @@ fn nothing_is_listed_before_a_poll_counted_or_once_the_gateway_is_not_ready() {
     poll(&mut g, &mut h, 2_000);
     assert_eq!(g.listing().unwrap().read_ms, 2_000);
 }
+
+#[test]
+fn only_a_session_in_a_turn_counts_as_working_however_many_are_listed() {
+    let (mut g, mut h) = start();
+    assert!(!g.working(), "no poll yet");
+    // Twenty-five idle sessions, as a gateway that keeps its old chats
+    // listed: all listed, none at work.
+    for n in 0..25 {
+        h.stream(&Profile::Default, &format!("idle-{n:02}"));
+    }
+    poll(&mut g, &mut h, 1_000);
+    assert_eq!(rows(&g, &Profile::Default).len(), 25);
+    assert!(!g.working());
+
+    // One of them takes a turn, in either of the words Hermes has for it.
+    for (word, at) in [("starting", 2_000), ("working", 3_000)] {
+        h.stream(&Profile::Default, "idle-07").status = Some(word.into());
+        poll(&mut g, &mut h, at);
+        assert!(g.working(), "{word}");
+    }
+    // Waiting for an answer, its counts stand still: not at work.
+    h.stream(&Profile::Default, "idle-07").status = Some("waiting".into());
+    poll(&mut g, &mut h, 4_000);
+    assert!(!g.working());
+    // Back in its turn, and then done.
+    h.stream(&Profile::Default, "idle-07").status = Some("working".into());
+    poll(&mut g, &mut h, 5_000);
+    assert!(g.working());
+    h.stream(&Profile::Default, "idle-07").status = None;
+    poll(&mut g, &mut h, 6_000);
+    assert!(!g.working());
+
+    // A working session of a profile whose list failed is not current.
+    h.stream(&verify(), "busy").status = Some("working".into());
+    poll(&mut g, &mut h, 7_000);
+    assert!(g.working());
+    h.failing.push(Step::List(verify()));
+    poll(&mut g, &mut h, 8_000);
+    assert!(!g.working());
+    // And none is, of a gateway that is lost.
+    h.failing.clear();
+    poll(&mut g, &mut h, 9_000);
+    assert!(g.working());
+    g.apply(Input::Lost(Failure::Unreachable), 9_500);
+    assert!(!g.working());
+}

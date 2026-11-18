@@ -98,7 +98,7 @@ fn a_python_without_sqlite_is_no_history_on_this_machine() {
     let slot = slots.of(&world.machine());
     // The system's Python, with its `sqlite3` module made unimportable.
     world.stand_in(&format!(
-        "shift 2\nexec {PYTHON} -I -c 'import sys; sys.modules[\"sqlite3\"] = None; exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
+        "shift 3\nexec {PYTHON} -I -c 'import sys; sys.modules[\"sqlite3\"] = None; exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
     ));
     let read = reader.read(&link, &slot, &world.home, &Request::Probe);
     assert_eq!(read, Err(Failure::NoHistory));
@@ -228,7 +228,7 @@ fn a_far_sqlite_too_old_to_measure_a_value_is_refused_by_name() {
     let slot = slots.of(&world.machine());
     // The system's Python, saying its SQLite is the last one without it.
     world.stand_in(&format!(
-        "shift 2\nexec {PYTHON} -I -c 'import sys, sqlite3; sqlite3.sqlite_version_info = (3, 42, 0); exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
+        "shift 3\nexec {PYTHON} -I -c 'import sys, sqlite3; sqlite3.sqlite_version_info = (3, 42, 0); exec(compile(sys.stdin.read(), \"reader\", \"exec\"))' \"$@\""
     ));
     for request in [Request::Probe, sessions(&["s1"])] {
         let read = reader.read(&link, &slot, &world.home, &request);

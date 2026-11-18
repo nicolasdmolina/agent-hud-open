@@ -418,3 +418,38 @@ fn the_time_and_bytes_of_each_kind_of_read() {
     }
     link.close();
 }
+
+#[test]
+#[ignore = "in the lab: tests::the_lab_tests_pass runs it"]
+fn the_far_python_is_started_isolated_and_told_to_write_no_cache_file() {
+    use super::world::PYTHON;
+    let Some(world) = World::start() else { return };
+    let db = world.db();
+    world.add_session(&db, "s-one", 1);
+    // A stand-in that writes down the words it was started with, asks a
+    // Python started with the same flags what they came to, and then is
+    // the reader, with those words.
+    let (words, flags) = (world.lab.at("python-words"), world.lab.at("python-flags"));
+    world.stand_in(&format!(
+        "printf '%s\\n' \"$@\" > '{}'\nflags=\nfor word in \"$@\"; do [ \"$word\" = - ] && break; flags=\"$flags $word\"; done\n\
+         {PYTHON} $flags -c 'import sys; print(sys.flags.isolated, sys.flags.dont_write_bytecode)' > '{}' < /dev/null\n\
+         exec {PYTHON} \"$@\"",
+        words.display(),
+        flags.display()
+    ));
+    let (link, reader, slots) = (world.link(), world.reader(settings()), Slots::new());
+    let slot = slots.of(&world.machine());
+    let page = reader
+        .prints(&link, &slot, &world.home, 0, 10, None)
+        .unwrap();
+    assert_eq!(page.prints.len(), 1);
+    // `-I` and `-B`, then the program on standard input, then its own
+    // four words, the mark first.
+    let given = fs::read_to_string(&words).unwrap();
+    let given: Vec<&str> = given.lines().collect();
+    assert_eq!(given[..3], ["-I", "-B", "-"], "{given:?}");
+    assert!(given[3].starts_with(far::MARK), "{given:?}");
+    assert_eq!(given.len(), 7, "{given:?}");
+    // Isolated, and writing no bytecode.
+    assert_eq!(fs::read_to_string(&flags).unwrap().trim(), "1 1");
+}

@@ -326,6 +326,101 @@ fn a_session_of_the_wrong_shape_is_an_error_before_its_row_is_touched() {
 }
 
 #[test]
+fn a_session_the_mirror_refuses_is_left_as_it_was_and_the_rest_of_its_batch_is_written() {
+    let home = tempfile::tempdir().unwrap();
+    let far = far(&home);
+    for id in ["s-before", "s-bad", "s-after"] {
+        session(&far, id, 1_000);
+        used(&far, id, "model-a", "", 100);
+    }
+    let (db, path) = mirror(&home);
+    let all = |far: &Connection| -> Vec<Session> {
+        (["s-before", "s-bad", "s-after"].iter())
+            .map(|id| given(far, id))
+            .collect()
+    };
+    let first = taken(&db, &all(&far), 1_000).unwrap();
+    assert_eq!((first.written, first.refused.len()), (3, 0));
+    let held = dump(&db, &["sessions", "session_model_usage", "hud_rows"]);
+
+    // The far session's usage grows by two rows whose model is a blob
+    // there: two different names in Hermes's table, and the same one in
+    // the mirror, where a blob is none. Its neighbours grow too.
+    for (blob, input) in [("x'01'", 40), ("x'02'", 50)] {
+        far.execute(
+            &format!(
+                "INSERT INTO session_model_usage VALUES ('s-bad', {blob}, 'openrouter', '', 'api', '',
+                    ?1, 7, 11, 13, 1760000010.125, 1760000500.5)"
+            ),
+            [input],
+        )
+        .unwrap();
+    }
+    far.execute("UPDATE session_model_usage SET input_tokens=250", [])
+        .unwrap();
+    // As the far reader gives it: a blob comes as none.
+    let batch = all(&far);
+    let models: Vec<&Cell> = batch[1].usage.iter().map(|row| &row[0]).collect();
+    assert_eq!(
+        models,
+        [&Cell::Text("model-a".into()), &Cell::Null, &Cell::Null]
+    );
+    // Written as one, the whole batch is refused, and by a rule of the
+    // mirror's table.
+    db.execute_batch("SAVEPOINT whole").unwrap();
+    let whole = durable(&db, &batch, 2_000).unwrap_err();
+    assert!(whole.to_string().contains("UNIQUE"), "{whole}");
+    db.execute_batch("ROLLBACK TO whole; RELEASE whole")
+        .unwrap();
+    assert_eq!(
+        dump(&db, &["sessions", "session_model_usage", "hud_rows"]),
+        held
+    );
+
+    // A session at a time: the two beside it are written, and it is
+    // named with the reason and left exactly as the mirror held it.
+    let second = taken(&db, &batch, 2_000).unwrap();
+    assert_eq!(second.written, 2);
+    assert_eq!(second.refused.len(), 1);
+    assert_eq!(second.refused[0].0, "s-bad");
+    assert!(second.refused[0].1.contains("UNIQUE"), "{second:?}");
+    let now = dump(&db, &["sessions", "session_model_usage", "hud_rows"]);
+    let of = |all: &str, id: &str| -> Vec<String> {
+        (all.lines().filter(|line| line.contains(id)))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(of(&now, "s-bad"), of(&held, "s-bad"));
+    assert_eq!(of(&held, "s-bad").len(), 3, "{held}");
+    assert_ne!(of(&now, "s-before"), of(&held, "s-before"));
+    assert_ne!(of(&now, "s-after"), of(&held, "s-after"));
+    // The ledger's input: the two grew to 250, and the one refused still
+    // counts what it did.
+    let records = records(&db, &path);
+    let inputs: Vec<(&str, u64)> = (records.iter())
+        .map(|(id, _, counts)| (id.as_str(), counts[0]))
+        .collect();
+    assert_eq!(
+        inputs,
+        [
+            ("hermes:s-after", 250),
+            ("hermes:s-bad", 100),
+            ("hermes:s-before", 250)
+        ]
+    );
+
+    // A session of the wrong shape is refused the same way.
+    let mut short = given(&far, "s-after");
+    short.usage[0].pop();
+    let third = taken(&db, &[short, given(&far, "s-before")], 3_000).unwrap();
+    assert_eq!((third.written, third.refused.len()), (1, 1));
+    assert_eq!(third.refused[0].0, "s-after");
+    // And an error that is not a session's own is the batch's.
+    db.execute_batch("DROP TABLE hud_rows").unwrap();
+    assert!(taken(&db, &all(&far), 4_000).is_err());
+}
+
+#[test]
 fn the_sessions_the_desktop_app_holds_are_marked_and_unmarked() {
     let home = tempfile::tempdir().unwrap();
     let far = far(&home);

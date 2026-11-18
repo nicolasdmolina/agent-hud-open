@@ -18,8 +18,11 @@
 //! - **What is read under one route number is written under it**, or not
 //!   at all: the writer drops a batch whose number is not the machine's
 //!   now, and one that comes back after the machine was retired.
-//! - **The interval.** A tick a minute while a far session is live or a
-//!   whole sweep is overdue, and every five minutes otherwise.
+//! - **The interval.** A tick a minute while a far session is in a turn
+//!   or a whole sweep is overdue, and every five minutes otherwise,
+//!   however many idle sessions the machine lists (ticket 61). A session
+//!   that takes a turn during the long wait ends it: the wait looks once
+//!   a minute, on this Mac alone.
 use super::{
     far_history::{Failure, Reader, Slot, Slots},
     log::Log,
@@ -36,7 +39,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 mod plan;
@@ -117,29 +120,40 @@ impl History {
         self.state().over
     }
 
+    /// Whether a poll found a far session in a turn a short while ago.
+    fn working(&self) -> bool {
+        let fresh = crate::hooks::now_ms() - FRESH.as_millis() as i64;
+        self.writer.working(fresh)
+    }
+
     /// Waits `time`, or less once the machine is retired; whether it is.
+    /// A wait longer than the quick pace looks once in that pace whether
+    /// a session has taken a turn, and ends if one has: the quick pace
+    /// begins with the turn, not at the long wait's end. A machine with
+    /// no reader waits it out.
     fn pause(&self, time: Duration) -> bool {
-        let state = self.state();
-        let (state, _) = (self
-            .wake
-            .wait_timeout_while(state, time, |state| !state.over))
-        .unwrap_or_else(PoisonError::into_inner);
-        state.over
+        let began = Instant::now();
+        loop {
+            let left = time.saturating_sub(began.elapsed());
+            let step = left.min(self.plan.live);
+            let state = self.state();
+            let (state, _) = (self.wake)
+                .wait_timeout_while(state, step, |state| !state.over)
+                .unwrap_or_else(PoisonError::into_inner);
+            let (over, without) = (state.over, state.without.is_some());
+            drop(state);
+            if over || step == left || (!without && self.working()) {
+                return over;
+            }
+        }
     }
 
     fn work(&self) {
         let mut wait = self.plan.first;
         while !self.pause(wait) {
             let ticked = self.tick();
-            let fresh = crate::hooks::now_ms() - FRESH.as_millis() as i64;
-            // Sooner while a far session is live, a whole sweep is
-            // overdue, or nothing could be read at all just now. A
-            // machine with no reader is asked at the slow pace.
-            let soon = ticked.reads == 0 || ticked.overdue || self.writer.live(fresh);
-            wait = match soon && self.state().without.is_none() {
-                true => self.plan.live,
-                false => self.plan.idle,
-            };
+            let without = self.state().without.is_some();
+            wait = self.plan.wait(ticked, self.working(), without);
         }
     }
 
