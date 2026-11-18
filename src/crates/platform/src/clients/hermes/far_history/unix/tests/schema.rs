@@ -3,7 +3,7 @@
 //! `sessions` table with every one of its columns, `session_model_usage`
 //! with its key and its two indexes, and `system_prompts`, which
 //! `sessions` refers to. The rows a test puts in are made up.
-pub(super) const HERMES: &str = r#"
+pub(in crate::clients::hermes) const HERMES: &str = r#"
 CREATE TABLE IF NOT EXISTS system_prompts (
     hash TEXT PRIMARY KEY,
     prompt TEXT NOT NULL

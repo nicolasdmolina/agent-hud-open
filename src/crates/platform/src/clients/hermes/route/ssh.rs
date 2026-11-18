@@ -264,6 +264,9 @@ impl Route for Ssh {
     fn release(&self, instance: &str) {
         self.forwards.release(self.keeper.link(), instance);
     }
+    fn link(&self) -> Option<Arc<Link>> {
+        self.standing_link().map(|(link, _)| link)
+    }
 
     fn admit(&self, instance: &Instance, call: Call<'_>) -> Result<(), Failure> {
         let (_, number) = self.keeper.link().ok_or(Failure::Unreachable)?;

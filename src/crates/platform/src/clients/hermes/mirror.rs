@@ -21,6 +21,9 @@
 //! - **Telling core.** After each committed transaction core is told
 //!   which file changed (`hooks::Changed`), which also asks for a pass.
 //!   A write that changed nothing commits nothing and tells nothing.
+//! - **History.** What the far database itself gave is a write on the
+//!   same queue (`history.rs`), which whoever asks waits for: the
+//!   refresh reads the next page against what the mirror then holds.
 //! - **Retired.** Once the machine's last owner is gone (`stop`), no
 //!   write begins, the one under way is waited out, and the files are
 //!   closed, all before `stop` returns. The mirrors stay where they are,
@@ -39,9 +42,12 @@ use std::{
 };
 
 mod files;
+mod history;
 #[cfg(test)]
 mod tests;
 mod work;
+
+pub(crate) use history::{Batch, Wrote};
 
 /// The most listings that wait. A disk that stalls drops the oldest:
 /// every poll lists its sessions anew. A new label is told once, so it
@@ -78,6 +84,8 @@ struct State {
     busy: bool,
     /// The thread has ended, its files closed.
     closed: bool,
+    /// The sessions the newest poll listed live, profile by profile.
+    live: history::Live,
 }
 
 enum Write {
@@ -90,6 +98,8 @@ enum Write {
         read_ms: i64,
         route: u64,
     },
+    /// What the far database gave, and where its answer goes.
+    History(Batch, std::sync::mpsc::Sender<Wrote>),
 }
 
 impl Writer {
@@ -109,6 +119,7 @@ impl Writer {
             over: false,
             busy: false,
             closed: false,
+            live: history::Live::default(),
         };
         let writer = Arc::new(Self {
             root: data.join(mirror::ROOT),
@@ -140,6 +151,7 @@ impl Writer {
             return;
         }
         for (profile, sessions) in listing.profiles {
+            state.live.listed(&profile, &sessions, read_ms);
             let listing = |write: &Write| matches!(write, Write::Listed { .. });
             if state.queue.iter().filter(|write| listing(write)).count() >= MOST {
                 let oldest = state.queue.iter().position(listing);

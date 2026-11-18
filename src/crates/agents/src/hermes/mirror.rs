@@ -4,7 +4,9 @@
 //! sessions show and the far profile. Agent HUD's mirror writer is the only
 //! one that writes it.
 use super::gateway::{Profile, StoredKey};
+mod history;
 mod write;
+pub use history::{durable, held, note, reads, stored, Reads};
 pub use write::{claim, file, files, list, relabel, ROOT};
 
 use crate::transcript::sql_columns;

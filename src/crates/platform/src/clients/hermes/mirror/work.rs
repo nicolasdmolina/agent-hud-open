@@ -44,6 +44,10 @@ impl Writer {
                     read_ms,
                     route,
                 } => self.list(&mut files, &profile, sessions, (read_ms, route), &label),
+                // Whoever asked may have stopped waiting: then nobody hears.
+                Write::History(batch, done) => {
+                    let _ = done.send(self.keep(&mut files, batch, &label));
+                }
             }
             self.state().busy = false;
             self.wake.notify_all();

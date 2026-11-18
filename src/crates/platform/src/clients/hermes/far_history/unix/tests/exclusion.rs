@@ -193,7 +193,7 @@ fn a_late_start(shown: bool) {
     world.make_every_read_endless();
     let mut short = settings();
     short.deadline = Duration::from_secs(1);
-    let mut impatient = short.clone();
+    let mut impatient = short;
     impatient.local_wait = Duration::from_millis(1_200);
     let (reader, hasty, slots) = (world.reader(short), world.reader(impatient), Slots::new());
     let slot = slots.of(&world.machine());

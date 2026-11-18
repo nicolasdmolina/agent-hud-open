@@ -63,9 +63,34 @@ fn following() -> Option<(Fleet, Fake, String)> {
     fleet.reads_mirrors();
     let gateway = fleet.hosts[0].gateway("instance-1", INSTALL[0]);
     fleet.write(&[here(), ssh("a", "Mini", "m0")]);
-    fleet.start_at(Pace::default());
+    let mut pace = Pace::default();
+    // Asked for by the same word as in `far_timing.rs` (ticket 37): the
+    // far machine's history is read back to back while the rows are
+    // timed, four hundred stored sessions of it, into the same mirror.
+    let reads = std::env::var_os(super::far_timing::HISTORY_READS).is_some();
+    if reads {
+        let db = super::machines::history::far_db(&fleet.hosts[0].root);
+        for n in 0..400 {
+            let id = format!("s-stored-{n:03}");
+            super::machines::history::session(&db, &id, 1_600_000_000.0 + f64::from(n));
+            super::machines::history::used(&db, &id, "model-a", "", 100);
+        }
+        Box::leak(Box::new(db));
+        pace.history = super::super::history::Plan {
+            first: Duration::ZERO,
+            live: Duration::ZERO,
+            idle: Duration::ZERO,
+            page: 100,
+            ..Default::default()
+        };
+    }
+    fleet.start_at(pace);
     let key = fleet.connected("Mini");
     until("the polls run", || !gateway.world().listed.is_empty());
+    if reads {
+        let read = |log: &str| log.contains(" history ") && log.contains(" ok exit=0 ");
+        until("the history reads run", || read(&fleet.log()));
+    }
     Some((fleet, gateway, key))
 }
 

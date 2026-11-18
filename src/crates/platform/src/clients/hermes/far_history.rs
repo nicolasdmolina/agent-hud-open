@@ -38,7 +38,7 @@ pub use slot::{Hold, Slot, Slots};
 /// The first and last lines of an answer, beside the bound on its rows.
 const BESIDE_ROWS: usize = 4 * 1024;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Settings {
     /// The reader's own deadline, which it counts from its `started`.
     pub deadline: Duration,
@@ -257,4 +257,4 @@ impl Reader {
 
 #[cfg(all(test, unix))]
 #[path = "far_history/unix/tests/mod.rs"]
-mod tests;
+pub(in crate::clients::hermes) mod tests;

@@ -17,6 +17,7 @@ use std::{
 };
 
 mod failed;
+mod history;
 mod large;
 
 /// How soon after its commit a write must be listed (ticket 34).

@@ -19,10 +19,11 @@
 use super::{bindings::Bindings, list::Unread};
 use crate::{
     clients::hermes::{
+        far_history::Slots,
         followers::Followers,
+        history::History,
         log::Log,
         machine::{Inner, Keeper, Role},
-        mirror::Writer,
         route::{switch::Switch, Route},
         Pace,
     },
@@ -31,7 +32,7 @@ use crate::{
 };
 use agent_hud_agents::hermes::{
     connections::{Entry, Kind},
-    gateway::{Machine, MachineKey},
+    gateway::MachineKey,
 };
 use agent_hud_core::requests::Requests;
 use std::{
@@ -53,11 +54,15 @@ pub(crate) type Here = Arc<dyn Fn() -> Option<MachineKey> + Send + Sync>;
 pub(crate) struct Book {
     pub(super) data: PathBuf,
     pub(super) requests: Requests,
-    wake: Wake,
+    pub(super) wake: Wake,
     /// Tells core which files of a machine's mirrors changed.
-    changed: Changed,
+    pub(super) changed: Changed,
     /// Tells core the turns that start and end on a far machine.
-    told: Told,
+    pub(super) told: Told,
+    /// One history reader at a time for each far machine, for as long as
+    /// this book is kept: a machine that is retired and added again has
+    /// the slot it had (`far_history/slot.rs`).
+    pub(super) slots: Arc<Slots>,
     pub(super) pace: Pace,
     pub(super) log: Log,
     /// None where no route can be made, with the word for why.
@@ -109,6 +114,9 @@ pub(super) enum Lead {
 pub(super) struct Far {
     pub(super) switch: Arc<Switch>,
     pub(super) followers: Arc<Followers>,
+    /// What keeps its mirrors in step with its Hermes databases. None
+    /// where it has no mirror writer.
+    pub(super) history: Option<Arc<History>>,
     /// The entry whose route is behind the switch. None while the route
     /// changes: then nothing is asked of the machine, and its cards wait
     /// marked.
@@ -142,6 +150,7 @@ impl Book {
             wake,
             changed,
             told,
+            slots: Arc::new(Slots::new()),
             pace,
             log: Log::new(data).of(Some("machines")),
             ways,
@@ -181,7 +190,7 @@ impl Book {
             (std::mem::take(&mut state.far), routes)
         };
         for far in far.into_values() {
-            far.followers.stop();
+            far.stop();
         }
         for route in routes {
             route.stop();
@@ -208,36 +217,8 @@ impl Book {
         let owner = state.far.get(key).map(|far| far.owner.clone());
         match owner {
             None => {
-                let switch = Arc::new(Switch::new(way));
-                let machine = (Machine::Far(key.clone()), Some(label.clone()));
-                let (requests, wake) = (self.requests.clone(), self.wake.clone());
-                // The machine's one mirror writer, made with it and its
-                // for as long as it is followed. Without one, the
-                // machine has its cards and no rows.
-                let log = Log::new(&self.data).of(Some(key.as_str()));
-                let (told, routes) = (self.changed.clone(), switch.clone());
-                let mirror = Writer::start(&self.data, (key, &label), routes, told, log);
-                if let Err(why) = &mirror {
-                    self.log
-                        .line(&format!("no mirror machine={} {why}", key.as_str()));
-                }
-                let Ok(followers) = Followers::start(
-                    switch.clone(),
-                    machine,
-                    &self.data,
-                    requests,
-                    wake,
-                    self.pace,
-                    (mirror.ok(), Some(self.told.clone())),
-                ) else {
+                let Some(far) = self.make(key, (id, label), way) else {
                     return Role::Alias;
-                };
-                let far = Far {
-                    switch,
-                    followers,
-                    owner: Some(id),
-                    label,
-                    pending: BTreeSet::new(),
                 };
                 state.far.insert(key.clone(), far);
             }

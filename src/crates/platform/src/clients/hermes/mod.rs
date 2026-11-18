@@ -34,6 +34,7 @@ pub mod far_history;
 mod follower;
 mod followers;
 mod handover;
+mod history;
 mod link;
 mod log;
 mod machine;

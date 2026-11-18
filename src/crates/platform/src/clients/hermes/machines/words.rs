@@ -3,7 +3,7 @@
 //! report); this is the one place those words become text for the user.
 //! A note says the reason and does not repeat the state beside it.
 use super::list::Unread;
-use crate::clients::hermes::machine::Standing;
+use crate::clients::hermes::{history::Without, machine::Standing};
 use agent_hud_agents::hermes::connections::NotCovered;
 use agent_hud_core::l10n::text;
 
@@ -130,6 +130,20 @@ pub(in crate::clients::hermes) fn reason(code: &str) -> String {
         other => text(
             &format!("无法安全地询问那里的 Hermes：{other}"),
             &format!("Hermes there cannot be asked safely: {other}."),
+        ),
+    }
+}
+
+/// Why a machine that is followed shows no stored history.
+pub(in crate::clients::hermes) fn no_history(why: Without) -> String {
+    match why {
+        Without::Python => text(
+            "无法读取历史记录：那台机器没有带 sqlite3 的 python3。",
+            "No history: the machine has no python3 with sqlite3 to read it.",
+        ),
+        Without::SqliteOld => text(
+            "无法读取历史记录：那台机器的 SQLite 版本过旧，无法安全读取。",
+            "No history: the SQLite there is too old to read it safely.",
         ),
     }
 }
