@@ -1,7 +1,8 @@
 //! The application's one snapshot cache: the runtime, the projection it last
 //! published, and the owners each new projection reaches.
 use crate::{
-    activity, coordinator, extension, messages, presentation, service::Service, system, tools,
+    activity, coordinator, extension, messages, presentation, service::Service, shell, system,
+    tools,
 };
 use agent_hud_runtime::Runtime;
 use serde_json::Value;
@@ -27,6 +28,7 @@ impl Backend {
         self.projected = Some(owner.revision());
         app.state::<system::System>().project(&mut value);
         app.state::<system::Sounds>().observe(&value);
+        shell::watching(watches(&value));
         if let Some(tools) = &self.tools {
             value["connection"]["localTools"] =
                 tools.configure(tools::channel_wanted(&value["settings"]));
@@ -110,6 +112,13 @@ impl Backend {
     }
 }
 
+/// Whether the app watches for agents' requests: client hooks are on and
+/// their listener runs, and with it every native channel's follower. The
+/// host is told at every snapshot, so the first one after the switch moves it.
+fn watches(snapshot: &Value) -> bool {
+    snapshot["connection"]["clientHooks"]["enabled"] == true
+}
+
 /// generatedAt identifies a newly built projection; it is not a fact change.
 /// Every other field, including source/account checks and session revisions,
 /// participates so clock-driven phase/coverage changes still reach subscribers.
@@ -153,4 +162,24 @@ pub(crate) async fn cached_snapshot(
     })
     .await
     .map_err(|error| format!("Snapshot reader failed: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::watches;
+    use serde_json::json;
+
+    #[test]
+    fn the_app_watches_exactly_while_client_hooks_listen() {
+        let hooks =
+            |status| json!({"settings":{"clientHooks":true},"connection":{"clientHooks":status}});
+        assert!(watches(&hooks(json!({"enabled":true,"desired":true}))));
+        // Wanted but not listening (a build that owns no hooks, or a failed
+        // install): nothing here finds requests any sooner.
+        assert!(!watches(&hooks(json!({"enabled":false,"desired":true}))));
+        assert!(!watches(&hooks(json!({"enabled":false,"desired":false}))));
+        // The demo and a first snapshot without the status.
+        assert!(!watches(&json!({"connection":{}})));
+        assert!(!watches(&json!({})));
+    }
 }

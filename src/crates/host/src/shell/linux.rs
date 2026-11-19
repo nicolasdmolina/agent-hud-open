@@ -11,6 +11,11 @@ pub(crate) fn window_opened(_app: &tauri::AppHandle) {}
 
 pub(crate) fn windows_changed(_app: &tauri::AppHandle) {}
 
+/// Nothing to do: neither the kernel's scheduler nor a desktop session
+/// lowers an app because its window is hidden or out of focus. Not measured
+/// on Linux.
+pub(crate) fn watching(_on: bool) {}
+
 /// No Dock: Settings opens from the tray menu.
 pub(crate) fn reopened(_event: &tauri::RunEvent) -> bool {
     false

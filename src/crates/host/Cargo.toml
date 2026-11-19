@@ -28,7 +28,7 @@ objc2.workspace = true
 block2 = "0.6"
 dispatch2 = { version = "0.3", default-features = false, features = ["std", "objc2"] }
 objc2-app-kit = { workspace = true, features = ["std", "NSApplication", "NSRunningApplication", "NSWorkspace", "NSWindow", "NSScreen", "NSGraphics", "NSCursor", "NSView", "NSImage", "NSBitmapImageRep", "NSImageRep", "NSAlert", "NSButton", "NSControl", "NSResponder", "objc2-core-foundation"] }
-objc2-foundation = { workspace = true, features = ["std", "NSDictionary", "NSString", "NSBundle", "NSError", "NSValue", "NSNotification", "NSOperation", "NSLocale", "NSArray", "block2"] }
+objc2-foundation = { workspace = true, features = ["std", "NSDictionary", "NSString", "NSBundle", "NSError", "NSValue", "NSNotification", "NSOperation", "NSLocale", "NSArray", "NSProcessInfo", "block2"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFString", "CFUUID"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
