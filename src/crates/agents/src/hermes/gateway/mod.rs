@@ -24,6 +24,7 @@ mod listing;
 mod live;
 mod machine;
 mod poll;
+mod quiet;
 mod reach;
 mod read;
 mod reconcile;
@@ -52,6 +53,7 @@ pub use machine::{
     StoredKey, INSTALL_ID_FILE,
 };
 pub use poll::{Poll, Step};
+pub use quiet::QUIET_MS;
 pub use sample::{Counting, Sample};
 pub use state::{Gateway, BUSY_POLL_MS, IDLE_POLL_MS, SNAPSHOT_EVERY_MS};
 pub use ticket::{

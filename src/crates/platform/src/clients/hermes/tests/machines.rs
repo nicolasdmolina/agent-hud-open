@@ -64,6 +64,8 @@ mod lists;
 pub(super) mod mirrors;
 #[path = "machines/owners.rs"]
 mod owners;
+#[path = "machines/quiet.rs"]
+mod quiet;
 #[path = "machines/reasons.rs"]
 mod reasons;
 #[path = "machines/this_mac.rs"]

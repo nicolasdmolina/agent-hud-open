@@ -18,8 +18,8 @@ use super::poll::{Poll, Shown};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// How long to wait between polls while any session starts, works or
-/// waits, or a card shows.
+/// How long to wait between polls while a card shows, or any session
+/// starts, works or waits and is not quiet (`quiet.rs`).
 pub const BUSY_POLL_MS: i64 = 1_000;
 /// How long when nothing seems to happen: Hermes's hints and the hooks can
 /// be missed, and this is what finds a turn they did not tell.
@@ -99,6 +99,8 @@ pub struct Gateway {
     /// The sessions of a far machine that are owed one more count
     /// (`sample.rs`). No card reads it.
     pub(super) owed: super::sample::Owed,
+    /// When each listed session last changed (`quiet.rs`). No card reads it.
+    pub(super) still: super::quiet::Still,
 }
 
 impl Gateway {
@@ -123,6 +125,7 @@ impl Gateway {
             listing: BTreeMap::new(),
             asking: BTreeSet::new(),
             owed: Default::default(),
+            still: Default::default(),
         }
     }
     pub fn id(&self) -> &GatewayId {
@@ -156,16 +159,6 @@ impl Gateway {
         let known = |at: &SessionRef| Some((at.clone(), self.status(at)?));
         self.listed.keys().filter_map(known).collect()
     }
-    /// How long to wait before the next poll.
-    pub fn poll_ms(&self) -> i64 {
-        let busy = |status: &Status| *status != Status::Idle;
-        if !self.cards.is_empty() || self.listed.values().any(busy) {
-            BUSY_POLL_MS
-        } else {
-            IDLE_POLL_MS
-        }
-    }
-
     /// Begins a poll of the gateway, which is the newest from now on. None
     /// while the gateway is not ready. Run one poll at a time: beginning
     /// another makes the one before it stale.
@@ -280,6 +273,7 @@ impl Gateway {
         self.snapshotted.clear();
         self.turns.forget();
         self.owed.forget();
+        self.still.forget();
         for key in self.cards.keys().cloned().collect::<Vec<_>>() {
             self.close(&key, why.clone(), effects);
         }
