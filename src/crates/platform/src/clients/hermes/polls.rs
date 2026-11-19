@@ -30,7 +30,7 @@ const ROUNDS: usize = 24;
 pub(super) struct Ran {
     /// How long the model says to wait before the next one.
     pub(super) wait: Duration,
-    /// Whether the gateway lists any live session.
+    /// Whether the close watch is kept on the gateway (`quiet.rs`).
     pub(super) live: bool,
     pub(super) took: Duration,
     pub(super) calls: usize,
@@ -69,7 +69,7 @@ pub(super) fn run(shared: &Arc<Shared>, socket: &mut Socket) -> Result<Option<Ra
     }
     shared.take(&mut model, Input::Polled(poll));
     let wait = Duration::from_millis(model.gateway.poll_ms().max(0) as u64);
-    let live = !model.gateway.statuses().is_empty();
+    let live = model.gateway.lively();
     // What the list says of a far machine's live sessions, for their
     // rows: copied here, and queued for the mirrors' writer once the
     // model is unlocked. The writer drops a list it has taken already.

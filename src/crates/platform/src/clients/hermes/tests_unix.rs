@@ -42,6 +42,8 @@ mod far_mini;
 mod far_mini_counts;
 #[path = "tests/far_mini_history.rs"]
 mod far_mini_history;
+#[path = "tests/far_mini_quiet.rs"]
+mod far_mini_quiet;
 #[path = "tests/far_rows_timing.rs"]
 mod far_rows_timing;
 #[path = "tests/far_timing.rs"]
@@ -136,6 +138,9 @@ fn quick() -> Pace {
         // gateway and count what is asked of its route. `followers.rs`
         // turns it on.
         discover: None,
+        // The app's own quiet time, which no test waits out:
+        // `machines/quiet.rs` shortens it.
+        quiet: Pace::default().quiet,
         // No history read by the clock: the tests that read one tick by
         // hand (`machines/history.rs`).
         history: super::history::Plan {
