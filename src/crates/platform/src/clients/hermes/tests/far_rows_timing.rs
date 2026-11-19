@@ -24,6 +24,12 @@
 //! numbers as one line that begins with `TIMING`. They wait on the
 //! clock, the second for minutes, so they are run by hand:
 //! `cargo test -p agent-hud-platform --lib clients::hermes::tests_unix::far_rows_timing -- --ignored --nocapture --test-threads 2`.
+//! Every case is meant to pass with `AGENT_HUD_HISTORY_READS=1` set
+//! too, which reads the far machine's history back to back meanwhile
+//! (ticket 37). The same command with `--release` after `cargo test`
+//! runs them in the optimized build, which is how the app is built and
+//! the only build that judges one number: the 2 s from a label's commit
+//! to every row showing it at 5,000 rows (ticket 68, `label_with`).
 //!
 //! **A mirror that has grown (ticket 54).** The same two cases with
 //! 1,000 and with 5,000 rows in the mirror already, half of them as the
@@ -277,8 +283,16 @@ fn started_in_a_grown_mirror(
     }
 }
 
-/// Prints and judges both numbers of the runs in a grown mirror.
-fn held_grown(name: &str, rows: usize, took: Vec<(Duration, Duration)>, bound: Duration) {
+/// Prints and judges both numbers of the runs in a grown mirror. The
+/// time from commit to listing is printed always and judged unless
+/// `soon_judged` is false.
+fn held_grown(
+    name: &str,
+    rows: usize,
+    took: Vec<(Duration, Duration)>,
+    bound: Duration,
+    soon_judged: bool,
+) {
     let (row, commit): (Vec<Duration>, Vec<Duration>) = took.into_iter().unzip();
     let distinct: HashSet<Duration> = row.iter().copied().collect();
     assert_eq!(distinct.len().min(2), 2, "the runs were one run");
@@ -287,6 +301,10 @@ fn held_grown(name: &str, rows: usize, took: Vec<(Duration, Duration)>, bound: D
     let commit_name = format!("{name}_with_{rows}_rows_commit_to_listed");
     let slow = said(&commit_name, commit, SOON);
     assert!(late == 0, "{name} with {rows} rows: {late} over {bound:?}");
+    if !soon_judged {
+        println!("NOT JUDGED {commit_name}: a test build; run with --release to judge it");
+        return;
+    }
     assert!(slow == 0, "{commit_name}: {slow} over {SOON:?}");
 }
 
@@ -313,7 +331,7 @@ fn busy_with(rows: usize) {
             BUSY * 2,
         ));
     }
-    held_grown("row_when_the_gateway_was_busy", rows, took, BUSY);
+    held_grown("row_when_the_gateway_was_busy", rows, took, BUSY, true);
 }
 
 fn idle_with(rows: usize) {
@@ -350,7 +368,7 @@ fn idle_with(rows: usize) {
             IDLE * 2,
         ));
     }
-    held_grown("row_when_it_was_idle", rows, took, IDLE);
+    held_grown("row_when_it_was_idle", rows, took, IDLE, true);
 }
 
 /// What core lists of the far session `id`, found by its title: the
@@ -429,7 +447,7 @@ fn count_with(rows: usize) {
         // A pass after the one that showed it would be the old defect.
         assert!(!fleet.core.indexing(), "logs wait after a count");
     }
-    held_grown("count_when_the_gateway_was_busy", rows, took, BUSY);
+    held_grown("count_when_the_gateway_was_busy", rows, took, BUSY, true);
 }
 
 /// The machine is given another label while its mirror holds `rows`
@@ -449,6 +467,7 @@ fn label_with(rows: usize) {
     };
     let all = labelled(&mut fleet, "Mini");
     assert!(all > rows, "{all} rows of {rows} say Mini");
+    println!("{all} rows say Mini, {rows} of them grown");
     let writer = fleet.writer("a");
     let mut collector = Collector::new();
     let mut took = Vec::new();
@@ -480,7 +499,14 @@ fn label_with(rows: usize) {
         }
         assert!(!fleet.core.indexing(), "logs wait after a label");
     }
-    held_grown("label_on_every_row", rows, took, BUSY);
+    // The one pass reads every row the label changed: at 5,000 rows,
+    // 1.7 s of a test build's time and 0.4 s of the optimized build's alone,
+    // and the 400 stored sessions of `AGENT_HUD_HISTORY_READS` add 8 %
+    // more rows to it (ticket 68). So the 2 s from commit to listing
+    // holds there in the optimized build only, and only that build
+    // judges it. The bound of spec section 10 is judged in both.
+    let soon_judged = rows < 5_000 || !cfg!(debug_assertions);
+    held_grown("label_on_every_row", rows, took, BUSY, soon_judged);
 }
 
 #[test]
@@ -686,9 +712,14 @@ fn row_when_the_gateway_was_busy_and_counts_move() {
         took
     });
     held("row_when_the_gateway_was_busy_and_counts_move", took, BUSY);
-    // The counts were written beside the rows, and reached them.
+    // The counts were written beside the rows, and reached them. Only the
+    // busy sessions' rows are held to it: with the far history read
+    // meanwhile (`HISTORY_READS`), the stored sessions are rows too, and
+    // each has tokens of its own.
     let rows = fleet.far_rows();
-    let counted = |row: &&super::machines::mirrors::Row| row.tokens.as_u64() > Some(100);
+    let counted = |row: &&super::machines::mirrors::Row| {
+        row.id.contains(":s-busy-") && row.tokens.as_u64() > Some(100)
+    };
     assert_eq!(rows.iter().filter(counted).count(), busy.len(), "{rows:?}");
     let log = fleet.log();
     let commits = log.matches("counts=").count();
