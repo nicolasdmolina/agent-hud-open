@@ -221,6 +221,14 @@ impl Gateway {
         }
     }
 
+    /// Of a round begun before, the calls that may still go out: none of
+    /// a session the newest list no longer holds (ticket 39). A round is
+    /// sent a moment after it begins, and a poll may come in between; a
+    /// session in no live list is named by no call, whoever holds it now.
+    pub fn still_listed(&self, counting: &mut Counting) {
+        (counting.asked).retain(|at, _| self.listed.contains_key(at));
+    }
+
     /// A session that left the live list is owed nothing: Hermes holds
     /// no agent for it to ask.
     pub(super) fn keep_owed(&mut self) {
