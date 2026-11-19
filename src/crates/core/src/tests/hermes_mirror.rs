@@ -532,5 +532,8 @@ fn hermes_rows_say_where_they_were_started_and_open_in_the_desktop_app() {
     }]);
     let detail = (core.request("session_detail", json!({"id": far("s1")}))).unwrap();
     assert_eq!(detail["session"]["navigationTarget"], other);
-    assert!(detail["session"].get("navigationLabel").is_none(), "{detail}");
+    assert!(
+        detail["session"].get("navigationLabel").is_none(),
+        "{detail}"
+    );
 }
