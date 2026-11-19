@@ -595,3 +595,35 @@ fn a_gateway_that_is_another_one_owes_no_count_of_the_one_before() {
         assert_eq!(asked(&h), [] as [&str; 0], "at {now}");
     }
 }
+
+/// A round begun while a session was listed asks nothing of it once a
+/// newer list has left it out (ticket 39): no call names a session that
+/// is in no live list, as one the Hermes desktop app holds now may be.
+#[test]
+fn a_round_asks_nothing_of_a_session_a_newer_list_left_out() {
+    let (mut g, mut h) = start();
+    does(&mut h, "local-gone", "working", stats(100, 20, 0, 0));
+    does(&mut h, "local-stays", "working", stats(5, 5, 0, 0));
+    poll(&mut g, &mut h, 1_000);
+    // A round begins while both work.
+    let mut out = g.count().unwrap();
+    // Before it goes out, a poll finds one gone from the list.
+    h.streams
+        .remove(&(Profile::Default, "local-gone".to_owned()));
+    poll_alone(&mut g, &mut h, 2_000);
+    g.still_listed(&mut out);
+    let ids = |out: &Counting| -> Vec<String> {
+        let id = |step: Step| match step {
+            Step::Stats(at) => at.id().to_owned(),
+            _ => String::new(),
+        };
+        out.steps().into_iter().map(id).collect()
+    };
+    assert_eq!(ids(&out), ["local-stays"]);
+    // A round with nobody listed left asks nothing.
+    h.streams
+        .remove(&(Profile::Default, "local-stays".to_owned()));
+    poll_alone(&mut g, &mut h, 3_000);
+    g.still_listed(&mut out);
+    assert!(ids(&out).is_empty());
+}

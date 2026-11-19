@@ -83,6 +83,9 @@ pub(crate) struct Ages {
     /// How many of its sessions the mirror would not take, which are not
     /// counted until it does (ticket 61). Known since this launch.
     pub refused: usize,
+    /// The Hermes desktop app hosts a session there that no gateway
+    /// lists (ticket 39): its questions are answered in the desktop app.
+    pub desktop: bool,
 }
 
 impl Ages {
@@ -102,6 +105,7 @@ impl Ages {
             },
             without,
             refused: 0,
+            desktop: false,
         }
     }
 }

@@ -447,3 +447,93 @@ fn a_told_file_that_still_cannot_be_read_pauses_again_for_longer() {
     let paused = core.reads.failed.retry_at(&path).expect("a failed read");
     assert!((before + 60_000..=after + 60_000).contains(&paused));
 }
+
+/// Each Hermes row's `origins`: where the session was started, from its
+/// stored `source` (ticket 39).
+fn origins(core: &mut AgentHudCore) -> Vec<(String, Value)> {
+    let found = core.request("sessions", json!({"scope": "all"})).unwrap();
+    let mut rows = (found["items"].as_array().unwrap().iter())
+        .filter(|item| item["source"] == "hermes")
+        .map(|item| {
+            (
+                item["id"].as_str().unwrap().to_owned(),
+                item["origins"].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    rows
+}
+
+fn both(tag: &str) -> Value {
+    json!({"init": tag, "latest": tag})
+}
+
+/// A session the Hermes desktop app runs says it was started there, on
+/// its row, its page and after a relaunch; every other says where it was
+/// (ticket 39). With Hermes's app link registered, it stands in as the
+/// way back of every Hermes session that has none better, named for what
+/// it does, and of no other client's.
+#[test]
+fn hermes_rows_say_where_they_were_started_and_open_in_the_desktop_app() {
+    let fixture = fixture(KEY);
+    (fixture.far)
+        .execute("UPDATE sessions SET source='desktop' WHERE id='s1'", [])
+        .unwrap();
+    let mut core = fixture.open();
+    refresh(&mut core);
+    let expected = vec![
+        (far("s1"), both("desktop:hermes")),
+        (far("s2"), both("others:telegram")),
+        ("hermes:local-s1".to_owned(), both("others:telegram")),
+    ];
+    assert_eq!(origins(&mut core), expected);
+    let detail = (core.request("session_detail", json!({"id": far("s1")}))).unwrap();
+    assert_eq!(detail["session"]["origins"], both("desktop:hermes"));
+    assert!(detail["session"].get("navigationTarget").is_none());
+    drop(core);
+
+    // Relaunched: the saved heads say it before anything is read.
+    let mut core = fixture.open();
+    assert_eq!(origins(&mut core), expected);
+
+    let app = json!({"kind": "hermes-app"});
+    core.set_provider_discovery(vec![crate::ProviderDiscovery {
+        id: "hermes".into(),
+        navigation_target: Some(app.clone()),
+        ..Default::default()
+    }]);
+    let snapshot = core.request("snapshot", json!({})).unwrap();
+    let hermes = (snapshot["sessions"].as_array().unwrap().iter())
+        .filter(|session| session["source"] == "hermes")
+        .collect::<Vec<_>>();
+    assert_eq!(hermes.len(), 3, "{snapshot}");
+    for session in hermes {
+        assert_eq!(session["navigationTarget"], app, "{session}");
+        assert_eq!(session["navigationLabel"], "Open in Hermes desktop");
+    }
+    let detail = (core.request("session_detail", json!({"id": far("s1")}))).unwrap();
+    assert_eq!(detail["session"]["navigationTarget"], app);
+    assert_eq!(
+        detail["session"]["navigationLabel"],
+        "Open in Hermes desktop"
+    );
+    let page = core.request("sessions", json!({"scope": "all"})).unwrap();
+    for item in page["items"].as_array().unwrap() {
+        assert_eq!(item["navigationLabel"], "Open in Hermes desktop", "{item}");
+    }
+    // A link of another kind than Hermes's app link is no way back that
+    // name fits: it is called as any other.
+    let other = json!({"kind": "hermes-other"});
+    core.set_provider_discovery(vec![crate::ProviderDiscovery {
+        id: "hermes".into(),
+        navigation_target: Some(other.clone()),
+        ..Default::default()
+    }]);
+    let detail = (core.request("session_detail", json!({"id": far("s1")}))).unwrap();
+    assert_eq!(detail["session"]["navigationTarget"], other);
+    assert!(
+        detail["session"].get("navigationLabel").is_none(),
+        "{detail}"
+    );
+}

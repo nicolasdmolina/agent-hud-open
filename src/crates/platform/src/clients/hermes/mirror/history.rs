@@ -56,15 +56,18 @@ pub(crate) enum Wrote {
 /// and those that left the list since they were last asked for.
 #[derive(Default)]
 pub(super) struct Live {
-    of: HashMap<Profile, Listing>,
+    pub(super) of: HashMap<Profile, Listing>,
     /// When a poll last came back with a session in a turn.
     worked_ms: Option<i64>,
+    /// The sessions the desktop app holds, as the refresh last read them
+    /// (ticket 39, `desktop.rs`).
+    pub(super) held: HashMap<Profile, BTreeSet<String>>,
 }
 
 #[derive(Default)]
-struct Listing {
-    read_ms: i64,
-    now: BTreeSet<String>,
+pub(super) struct Listing {
+    pub(super) read_ms: i64,
+    pub(super) now: BTreeSet<String>,
     ended: BTreeSet<String>,
 }
 
@@ -92,6 +95,7 @@ impl Writer {
     /// Writes `batch` and says what became of it. It waits for its turn
     /// on the queue and for the write, never for the network.
     pub(crate) fn history(&self, batch: Batch) -> Wrote {
+        let held = (batch.held.clone()).map(|ids| (batch.profile.clone(), ids));
         let (done, wrote) = std::sync::mpsc::channel();
         {
             let mut state = self.state();
@@ -102,7 +106,11 @@ impl Writer {
         }
         self.wake.notify_all();
         // A writer that stops drops what waits, and the sender with it.
-        wrote.recv().unwrap_or(Wrote::Dropped("over"))
+        let wrote = wrote.recv().unwrap_or(Wrote::Dropped("over"));
+        if let (Wrote::Written(_), Some((profile, ids))) = (&wrote, held) {
+            self.holds(profile, ids);
+        }
+        wrote
     }
 
     /// The sessions of `profile` the refresh reads first: those the

@@ -44,6 +44,10 @@ impl Sessions<'_> {
         let title = sql_text(row, 3);
         let cwd = sql_text(row, 4);
         let title_fallback = sql_text(row, 5).map(|source| format!("Hermes · {source}"));
+        // Where Hermes says the session was started: its stored `source`.
+        let started_in = sql_text(row, 5)
+            .map(|source| source.trim().to_owned())
+            .filter(|source| !source.is_empty());
         // The profile the session names, else its database's (Open's
         // HermesSessions); the default profile names none.
         let client = sql_text(row, 16)
@@ -75,6 +79,7 @@ impl Sessions<'_> {
                     client: client.clone(),
                     machine: label.clone(),
                     live_total,
+                    started_in: started_in.clone(),
                     cwd: cwd.clone(),
                     model: routed(
                         sql_model(sql_text(row, 0)),
@@ -121,6 +126,7 @@ impl Sessions<'_> {
                 client,
                 machine: label.clone(),
                 live_total,
+                started_in: started_in.clone(),
                 cwd,
                 model: routed(
                     sql_model(sql_text(row, 6)),

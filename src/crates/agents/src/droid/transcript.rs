@@ -181,6 +181,7 @@ pub fn read(path: &Path, _cursor: &Value) -> rusqlite::Result<Page> {
             client: None,
             machine: None,
             live_total: None,
+            started_in: None,
             title_fallback: None,
             cwd: text(&start["cwd"])
                 .or_else(|| text(&start["lastCwd"]))

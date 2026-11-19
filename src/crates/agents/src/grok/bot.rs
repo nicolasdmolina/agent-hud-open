@@ -59,6 +59,7 @@ pub fn read(path: &Path, cursor: &Value) -> rusqlite::Result<Page> {
             client: None,
             machine: None,
             live_total: None,
+            started_in: None,
             title_fallback: None,
             cwd: None,
             model: "Unknown".into(),

@@ -213,6 +213,12 @@ fn work(shared: &Arc<Shared>) {
             rest = Instant::now() + pace.retry_limit;
             continue;
         };
+        // A poll may have come while the socket opened: a session the
+        // newest list left out is asked nothing (ticket 39).
+        shared.model().gateway.still_listed(&mut counting);
+        if counting.steps().is_empty() {
+            continue;
+        }
         let whole = round(shared, open, &mut counting).unwrap_or(false);
         // Whatever was not answered failed.
         for step in counting.steps() {

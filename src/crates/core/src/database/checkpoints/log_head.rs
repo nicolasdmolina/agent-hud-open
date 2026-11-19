@@ -173,6 +173,7 @@ impl LogHead {
         self.cwd.hash(&mut hash);
         self.machine.hash(&mut hash);
         self.live_total.hash(&mut hash);
+        self.prompts.started_in.hash(&mut hash);
         self.activity_at(None).hash(&mut hash);
         self.usage.total().hash(&mut hash);
         self.list_cost.hash(&mut hash);

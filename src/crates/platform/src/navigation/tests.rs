@@ -179,3 +179,26 @@ fn cursor_app_link_is_offered_only_where_it_is_registered() {
         );
     }
 }
+
+/// Hermes's `hermes://` link brings its desktop app forward (ticket 39).
+/// It cannot name a session on a connection, so nothing a target carries
+/// rides along.
+#[test]
+fn hermes_desktop_comes_forward_only_where_its_link_is_registered() {
+    for target in [
+        json!({"kind":"hermes-app"}),
+        json!({"kind":"hermes-app","id":"20261113_003533_efc110","url":"hermes://open/x"}),
+    ] {
+        assert_eq!(
+            session_url_on(&target, Os::MacOs, |url| url == "hermes://"),
+            Some("hermes://".into())
+        );
+        assert_eq!(session_url_on(&target, Os::MacOs, |_| false), None);
+        for os in [Os::Windows, Os::Linux] {
+            assert_eq!(
+                session_url_on(&target, os, |_| panic!("unverified link")),
+                None
+            );
+        }
+    }
+}

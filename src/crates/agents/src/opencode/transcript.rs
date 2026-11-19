@@ -161,6 +161,7 @@ pub fn read(db: &Connection, cursor: &Value, store: &super::Store) -> rusqlite::
             client: None,
             machine: None,
             live_total: None,
+            started_in: None,
             title_fallback: None,
             cwd: sql_text(row, 5).or_else(|| v["path"]["root"].as_str().map(str::to_owned)),
             model: format!("{model}#{provider}"),

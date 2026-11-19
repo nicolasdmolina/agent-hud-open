@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+mod desktop;
 mod failed;
 mod history;
 mod large;

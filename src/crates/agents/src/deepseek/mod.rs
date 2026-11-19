@@ -19,6 +19,7 @@ static APP_NAVIGATION: crate::discovery::AppNavigation = crate::discovery::AppNa
         windows: Support::Unsupported("Harness's desktop link is not verified on Windows"),
         linux: Support::Unsupported("Harness's desktop link is not verified on Linux"),
     },
+    label: None,
 };
 
 /// The questions DeepSeek Harness's older web hosts (0.1, `--profile web`)

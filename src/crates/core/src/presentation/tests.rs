@@ -250,6 +250,8 @@ fn a_harness_session_gets_the_discovered_app_fallback_and_loses_it_on_refresh() 
         .request("snapshot", json!({"changesOnly":true}))
         .unwrap();
     assert_eq!(snapshot["sessions"][0]["navigationTarget"], app);
+    // Its link names no way back of its own: it is called as any other.
+    assert!(snapshot["sessions"][0].get("navigationLabel").is_none());
     assert!(core.sessions_revision > revision);
     let detail = core.request("session_detail", json!({"id":id})).unwrap();
     assert_eq!(detail["session"]["navigationTarget"], app);

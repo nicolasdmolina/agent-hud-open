@@ -53,6 +53,7 @@ use std::{
 };
 
 mod counts;
+mod desktop;
 mod files;
 mod history;
 #[cfg(test)]
