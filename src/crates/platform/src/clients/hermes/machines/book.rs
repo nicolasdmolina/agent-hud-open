@@ -86,6 +86,8 @@ pub(super) struct State {
     /// Why the list cannot be read, while it cannot.
     pub(super) unread: Option<Unread>,
     pub(super) bindings: Bindings,
+    /// How this machine stands, as its followers knew at the last look.
+    pub(super) here: super::here::Here,
 }
 
 pub(super) struct Slot {
@@ -143,6 +145,7 @@ impl Book {
             far: BTreeMap::new(),
             unread: None,
             bindings,
+            here: Default::default(),
         };
         Arc::new_cyclic(|me| Self {
             data: data.to_owned(),

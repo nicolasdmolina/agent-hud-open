@@ -17,7 +17,10 @@
 //!   verified before, and nothing is dialled from them.
 //! - **The machines list** is told to core after every change, and at
 //!   every look, since a link comes and goes without a word (`status.rs`).
+//!   This machine's row goes by its own followers, read at each look
+//!   (`here.rs`).
 use super::{
+    followers::Followers,
     route::{local::Local, Route},
     Observer, Pace,
 };
@@ -41,6 +44,7 @@ mod book;
 #[cfg(test)]
 mod book_tests;
 mod change;
+mod here;
 mod keeper;
 mod list;
 mod make;
@@ -48,6 +52,7 @@ mod status;
 pub(in crate::clients::hermes) mod words;
 
 pub(crate) use bindings::Bindings;
+pub(in crate::clients::hermes) use here::Gateway;
 pub(crate) use book::{Book, Here, Ways};
 #[cfg(test)]
 pub(in crate::clients::hermes) use book_tests::Gate;
@@ -164,10 +169,10 @@ impl Machines {
             looked: Default::default(),
         });
         let (kept, watched) = (book.clone(), looks.clone());
-        let list = sources.list;
+        let (list, here) = (sources.list, local.all.clone());
         let watching = thread::Builder::new()
             .name("Hermes machines".into())
-            .spawn(move || watched.work(&kept, list, look));
+            .spawn(move || watched.work(&kept, (list, &here), look));
         if watching.is_err() {
             book.stop();
             return Err("the Hermes connection list could not be watched".to_owned());
@@ -222,12 +227,14 @@ impl Looks {
         *over
     }
 
-    fn work(&self, book: &Book, list: Option<PathBuf>, look: Duration) {
+    fn work(&self, book: &Book, (list, here): (Option<PathBuf>, &Followers), look: Duration) {
         // Before the first route of this launch: every master left in
         // the folder is closed, whichever entry it was started for.
         book.sweep();
         let mut watch = list.map(Watch::new);
         while !self.over(Duration::ZERO) {
+            // This machine's followers are read with the book let go.
+            book.here_is(here::read(here));
             match watch.as_mut().map(Watch::look) {
                 Some(Looked::List(list)) => book.apply(list),
                 Some(Looked::Same) => book.read(None),

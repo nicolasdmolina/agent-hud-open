@@ -10,7 +10,7 @@
 //! reach. Ending is one step, taken once: what it was writing is cut,
 //! its cards are closed or withdrawn, and core is told its reader has
 //! ended, before any follower that takes its place is made.
-use super::{log, route::Route, signal::Signal, Model, Pace};
+use super::{log, machines::Gateway, route::Route, signal::Signal, Model, Pace};
 use crate::hooks::Wake;
 #[cfg(test)]
 use agent_hud_agents::hermes::gateway::Instance;
@@ -89,6 +89,9 @@ pub(super) struct Shared {
     /// The lane the count calls of a far machine's sessions go on
     /// (`counting.rs`).
     pub(super) counts: super::counting::Lane,
+    /// What its gateway was when its last dial settled: followed while
+    /// its socket is open (`machines/here.rs`).
+    pub(super) settled: Mutex<Gateway>,
     /// Every reader that was ended in core, for the tests that count them.
     #[cfg(test)]
     pub(super) ends: Arc<Mutex<Vec<String>>>,
@@ -141,6 +144,18 @@ impl Shared {
     /// receipt. Turning client hooks off leaves no receipt.
     pub(super) fn ending(&self, model: &Model) -> bool {
         model.stopped || !self.active()
+    }
+
+    /// Says what its gateway is now that a dial settled: `open` while a
+    /// socket on it is, and as the model has it otherwise.
+    pub(super) fn settle(&self, open: bool) {
+        let gateway = Gateway::of(self.model().gateway.connection(), open);
+        *self.settled.lock().unwrap_or_else(PoisonError::into_inner) = gateway;
+    }
+
+    /// What its gateway was when its last dial settled.
+    pub(super) fn settled(&self) -> Gateway {
+        *self.settled.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The profile whose home is asked.

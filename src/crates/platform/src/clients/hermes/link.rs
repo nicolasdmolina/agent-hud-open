@@ -52,6 +52,7 @@ pub(super) fn work(shared: Arc<Shared>) {
         let next = match dial(&shared) {
             Ok(mut socket) => {
                 (wait, dialing) = (shared.pace.retry, false);
+                shared.settle(true);
                 if let Some(failure) = follow(&shared, &mut socket) {
                     shared.apply(Input::Lost(failure));
                     // What became of the gateway is looked for, by a
@@ -61,9 +62,13 @@ pub(super) fn work(shared: Arc<Shared>) {
                     }
                 }
                 socket.close();
+                shared.settle(false);
                 Next::Soon
             }
-            Err(next) => next,
+            Err(next) => {
+                shared.settle(false);
+                next
+            }
         };
         let pause = match next {
             Next::Soon => shared.pace.retry,

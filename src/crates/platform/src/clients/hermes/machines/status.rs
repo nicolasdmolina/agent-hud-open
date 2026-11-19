@@ -104,8 +104,7 @@ impl State {
         let mut list = Vec::new();
         let listed = |slot: &Slot| slot.entry.kind == Kind::This;
         if !self.slots.iter().any(listed) {
-            let here = status(HERE, &words::this_machine(), MachineState::Connected, None);
-            list.push(MachineStatus { here: true, ..here });
+            list.push(self.here_status(HERE, &words::this_machine()));
         }
         match &self.list {
             Some(_) => list.extend(self.slots.iter().map(|slot| self.status(slot))),
@@ -128,10 +127,7 @@ impl State {
     fn status(&self, slot: &Slot) -> MachineStatus {
         let entry = &slot.entry;
         match &entry.kind {
-            Kind::This => {
-                let here = status(&entry.id, &entry.label, MachineState::Connected, None);
-                MachineStatus { here: true, ..here }
-            }
+            Kind::This => self.here_status(&entry.id, &entry.label),
             Kind::NotCovered(why) => {
                 let note = Some(words::kind(*why));
                 status(
@@ -224,6 +220,15 @@ impl State {
                 .map(|slot| slot.entry.id.as_str())
         };
         owner.or_else(first)
+    }
+
+    /// This machine's status: as its own followers knew at the last look.
+    fn here_status(&self, id: &str, label: &str) -> MachineStatus {
+        let (state, note) = self.here.told();
+        MachineStatus {
+            here: true,
+            ..status(id, label, state, note)
+        }
     }
 
     /// What this machine is called: its entry's label, where it has one.

@@ -242,6 +242,7 @@ fn verifier_hint_on_short_socket_must_request_poll() {
         label: Default::default(),
         apart: Default::default(),
         counts: Default::default(),
+        settled: Default::default(),
         asked: Mutex::new(Profile::Default),
         born: Mutex::default(),
         found: Mutex::default(),

@@ -62,6 +62,9 @@ pub(super) struct Followers {
     set: Mutex<Vec<Arc<Shared>>>,
     /// The profiles two gateways claim, as far as the looks so far know.
     pub(super) contested: Mutex<BTreeSet<Profile>>,
+    /// The last look missed a home, or could not ask one: a machine where
+    /// no gateway is followed may still run one (`machines/here.rs`).
+    pub(super) doubt: AtomicBool,
     /// Every reader that was ended in core, for the tests that count them.
     #[cfg(test)]
     pub(super) ends: Arc<Mutex<Vec<String>>>,
@@ -99,6 +102,7 @@ impl Followers {
             look: Arc::default(),
             set: Mutex::default(),
             contested: Mutex::default(),
+            doubt: AtomicBool::new(false),
             #[cfg(test)]
             ends: Arc::default(),
         });
@@ -213,6 +217,7 @@ impl Followers {
             look: self.look.clone(),
             apart: Default::default(),
             counts: Default::default(),
+            settled: Mutex::default(),
             #[cfg(test)]
             ends: self.ends.clone(),
             #[cfg(test)]
