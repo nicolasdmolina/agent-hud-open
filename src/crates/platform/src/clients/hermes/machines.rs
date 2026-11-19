@@ -52,10 +52,10 @@ mod status;
 pub(in crate::clients::hermes) mod words;
 
 pub(crate) use bindings::Bindings;
-pub(in crate::clients::hermes) use here::Gateway;
 pub(crate) use book::{Book, Here, Ways};
 #[cfg(test)]
 pub(in crate::clients::hermes) use book_tests::Gate;
+pub(in crate::clients::hermes) use here::Gateway;
 
 /// How often the connection list is looked at, and the machines list
 /// told again.

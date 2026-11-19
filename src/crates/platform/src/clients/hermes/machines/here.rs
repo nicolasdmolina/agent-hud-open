@@ -167,7 +167,11 @@ mod tests {
             (Connection::Failed(Failure::TicketRefused), false, Failed),
         ];
         for (connection, open, expected) in cases {
-            assert_eq!(super::Gateway::of(&connection, open), expected, "{connection:?}");
+            assert_eq!(
+                super::Gateway::of(&connection, open),
+                expected,
+                "{connection:?}"
+            );
         }
     }
 

@@ -18,7 +18,10 @@ pub(in crate::clients::hermes) fn this_machine() -> String {
 /// Why this machine is not connected, from what its own followers know
 /// (ticket 69). The far machines' words, said of this one.
 pub(in crate::clients::hermes) fn here_no_gateway() -> String {
-    text("本机没有运行中的 Hermes 网关。", "No Hermes gateway runs on this Mac.")
+    text(
+        "本机没有运行中的 Hermes 网关。",
+        "No Hermes gateway runs on this Mac.",
+    )
 }
 
 pub(in crate::clients::hermes) fn here_unreachable() -> String {

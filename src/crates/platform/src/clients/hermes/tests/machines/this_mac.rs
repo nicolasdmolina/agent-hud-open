@@ -73,7 +73,12 @@ fn a_mac_with_no_hermes_home_is_not_a_failure() {
         fs::remove_dir(&fleet.local).unwrap();
         fleet.write(&list);
         fleet.start();
-        stands(&mut fleet, &label, "not-covered", Some(words::here_no_hermes()));
+        stands(
+            &mut fleet,
+            &label,
+            "not-covered",
+            Some(words::here_no_hermes()),
+        );
         stays(&mut fleet, &label, "not-covered");
         assert_eq!(fleet.note(), None, "no warning on the whole list");
 
