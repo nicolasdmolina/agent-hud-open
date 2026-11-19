@@ -15,6 +15,7 @@ import { alertFill, alertInk, alertText, onAlertFill } from "../tokens";
 import { useGround } from "../ground";
 import { cardColumn } from "../card-column";
 import { CardButton } from "../permissions/CardButton";
+import { returnName } from "../session-return";
 
 export function CompletionAlertView({
   event,
@@ -41,6 +42,8 @@ export function CompletionAlertView({
   const hasSession = Boolean(
     session?.navigationTarget || event.navigationTarget,
   );
+  // Called as the way back it opens: its listed session's, else the event's.
+  const label = session ? session.navigationLabel : event.navigationLabel;
   const ground = useGround(light);
   const ink = (alpha: number) => alertInk(alpha, ground);
   const turnAccent = alertFill("turn", ground);
@@ -80,6 +83,7 @@ export function CompletionAlertView({
             logPath: null,
             parentId: null,
             navigationTarget: event.navigationTarget,
+            navigationLabel: event.navigationLabel,
           }
         : undefined);
     if (!target) return;
@@ -247,9 +251,7 @@ export function CompletionAlertView({
                 ? zh
                   ? "重试会话跳转"
                   : "Retry session"
-                : zh
-                  ? "回到会话"
-                  : "Return to session"}
+                : returnName(label, zh)}
             </CardButton>
           )}
         </div>

@@ -16,6 +16,14 @@ import {
 import { shortenHomePath } from "../project-path";
 import { alertText } from "../tokens";
 import { useGround } from "../ground";
+import { returnName } from "../session-return";
+
+/** A request's way back to its session: `open` resolves false when it
+ * fails, and `label` is what Core calls it where its client names it. */
+export interface SessionReturn {
+  open: () => Promise<boolean>;
+  label?: string;
+}
 
 export function RequestDeliveryNotice({
   delivery,
@@ -61,11 +69,11 @@ export function RequestDeliveryNotice({
 
 /** The open request's way back to its session, as the reply card's. */
 function BackToSession({
-  open,
+  back: { open, label },
   light,
   zh,
 }: {
-  open: () => Promise<boolean>;
+  back: SessionReturn;
   light: boolean;
   zh: boolean;
 }) {
@@ -94,13 +102,7 @@ function BackToSession({
       ) : (
         <ArrowUpRight size={9} strokeWidth={2.6} />
       )}
-      {failed
-        ? zh
-          ? "重试会话跳转"
-          : "Retry session"
-        : zh
-          ? "回到会话"
-          : "Return to session"}
+      {failed ? (zh ? "重试会话跳转" : "Retry session") : returnName(label, zh)}
     </CardButton>
   );
 }
@@ -121,9 +123,9 @@ export function ApprovalContent({
   decide?: (id: string, decision: RequestDecision) => void | Promise<void>;
   /** Settings, on a page such as "agent-plugins", with the HUD put away. */
   openSettings?: (page: string) => void;
-  /** A request's way back to its session, false when it fails; none where
-   * its session cannot be reached. */
-  backToSession?: (request: Approval) => (() => Promise<boolean>) | undefined;
+  /** A request's way back to its session; none where its session cannot be
+   * reached. */
+  backToSession?: (request: Approval) => SessionReturn | undefined;
   light: boolean;
   language?: string;
 }) {
@@ -179,7 +181,7 @@ export function ApprovalContent({
                   >
                     {contextPath}
                   </span>
-                  {back && <BackToSession open={back} light={light} zh={zh} />}
+                  {back && <BackToSession back={back} light={light} zh={zh} />}
                 </div>
               )}
               {/* A request whose questions change is a new card. */}
