@@ -46,6 +46,8 @@ mod answers;
 pub(super) mod counts;
 #[path = "machines/desktop.rs"]
 pub(super) mod desktop;
+#[path = "machines/desktop_real.rs"]
+mod desktop_real;
 #[path = "machines/guards.rs"]
 mod guards;
 #[path = "machines/history.rs"]
@@ -167,6 +169,12 @@ pub(super) fn text(entries: &[Value], token: &str) -> String {
 /// is the first host under a name whose key is not known, and `gone` is
 /// a name that leads to a port nothing listens on.
 pub(super) fn fleet(hosts: usize) -> Option<Fleet> {
+    fleet_with(hosts, &[])
+}
+
+/// The same, each far login also given `env` (a real Hermes home of a
+/// lab's own as its `HERMES_HOME`, `machines/desktop_real.rs`).
+pub(super) fn fleet_with(hosts: usize, env: &[(&str, &str)]) -> Option<Fleet> {
     let dir = tempfile::Builder::new()
         .prefix("ahm")
         .tempdir_in(short_base())
@@ -177,7 +185,9 @@ pub(super) fn fleet(hosts: usize) -> Option<Fleet> {
         // A far login's home is the lab's, and its path has a folder of
         // the lab first, empty unless a test puts a stand-in there.
         let path = "{lab}/bin:/usr/bin:/bin:/usr/sbin:/sbin";
-        let lab = Lab::start_with(&[("HOME", "{lab}/far"), ("PATH", path)])?;
+        let mut login = vec![("HOME", "{lab}/far"), ("PATH", path)];
+        login.extend_from_slice(env);
+        let lab = Lab::start_with(&login)?;
         let home = std::fs::canonicalize(lab.at("")).unwrap().join("far");
         let root = home.join(".hermes");
         crate::os::private_directory(&home).unwrap();

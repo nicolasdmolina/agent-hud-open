@@ -73,6 +73,21 @@ impl Late {
 
 static READS_ONLY: AtomicBool = AtomicBool::new(false);
 static WRITTEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Every frame written, whole, once a test asks for them (ticket 39's
+/// lab with real Hermes, `tests/machines/desktop_real.rs`).
+static FRAMES: Mutex<Option<Vec<Value>>> = Mutex::new(None);
+
+/// From now on every frame written to a gateway is kept whole. Visits
+/// go on as ever.
+pub(super) fn keep_frames() {
+    *FRAMES.lock().unwrap_or_else(PoisonError::into_inner) = Some(Vec::new());
+}
+
+/// Every frame written since `keep_frames`.
+pub(super) fn frames() -> Vec<Value> {
+    let kept = FRAMES.lock().unwrap_or_else(PoisonError::into_inner);
+    kept.clone().unwrap_or_default()
+}
 
 /// From now on no visit begins, and every frame written is noted.
 pub(super) fn read_only() {
@@ -85,6 +100,13 @@ pub(super) fn reads_only() -> bool {
 
 /// One frame is about to be written to a gateway.
 pub(super) fn written(frame: &Value) {
+    if let Some(kept) = FRAMES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_mut()
+    {
+        kept.push(frame.clone());
+    }
     if !reads_only() {
         return;
     }
