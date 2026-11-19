@@ -311,6 +311,44 @@ fn a_mirror_names_far_sessions_and_counts_what_the_same_rows_count() {
     }
 }
 
+/// Each record says where Hermes says its session was started (ticket
+/// 39): the stored `source`, on this machine and in a mirror, where the
+/// desktop app's sessions say `desktop`. A source that says nothing says
+/// nothing.
+#[test]
+fn every_record_says_where_its_session_was_started() {
+    let home = tempfile::tempdir().unwrap();
+    let started = |page: &Page| {
+        (page.records.iter())
+            .map(|record| record.started_in.clone())
+            .collect::<Vec<_>>()
+    };
+    let path = home.path().join("plain/state.db");
+    let plain = read(&state_db(&path, None), &path, &Value::Null).unwrap();
+    assert_eq!(started(&plain), [Some("cli".into())]);
+    for made in MADE {
+        let path = home
+            .path()
+            .join(format!("{made:?}/profiles/{KEY}-default/state.db"));
+        let db = far_db(&path, made, "Mac mini", "default");
+        // A session with no usage row is one record from its own counts.
+        db.execute_batch(
+            "UPDATE sessions SET source='desktop';
+             INSERT INTO sessions (id, source, model, started_at) VALUES ('s2', '  ', 'm', 1760000000);",
+        )
+        .unwrap();
+        let far = read(&db, &path, &Value::Null).unwrap();
+        let by_id = |id: &str| {
+            (far.records.iter())
+                .filter(|record| record.id.ends_with(id))
+                .map(|record| record.started_in.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(by_id(":s1"), [Some("desktop".into())], "{made:?}");
+        assert_eq!(by_id(":s2"), [None], "{made:?}");
+    }
+}
+
 #[test]
 fn a_mirror_takes_its_profile_from_its_table_and_never_its_folder() {
     let home = tempfile::tempdir().unwrap();

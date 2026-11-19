@@ -44,6 +44,7 @@ static APP_NAVIGATION: crate::discovery::AppNavigation = crate::discovery::AppNa
         windows: Support::Unsupported("Cursor's desktop link is not verified on Windows"),
         linux: Support::Unsupported("Cursor's desktop link is not verified on Linux"),
     },
+    label: None,
 };
 
 /// Where a Cursor session opens: a cloud agent by its `bc-` id, a local one

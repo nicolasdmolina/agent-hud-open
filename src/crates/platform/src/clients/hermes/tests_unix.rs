@@ -28,6 +28,8 @@ mod cancelled;
 mod cards;
 #[path = "tests/counting.rs"]
 mod counting;
+#[path = "tests/desktop_words.rs"]
+mod desktop_words;
 #[path = "tests/fake.rs"]
 mod fake;
 #[path = "tests/far.rs"]

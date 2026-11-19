@@ -125,6 +125,9 @@ pub fn client_category(agent: &str, client: &str) -> (Category, Option<String>) 
         ("antigravity", "CLI") => (Category::Cli, None),
         ("antigravity", "CLI · exec") => (Category::Sdk, None),
         ("antigravity", "IDE") => fixed(Category::Ide, "antigravity"),
+        // Where Hermes says a session was started (its stored `source`).
+        ("hermes", "desktop") => fixed(Category::Desktop, "hermes"),
+        ("hermes", "cli" | "tui") => (Category::Cli, None),
         (_, other) => fixed(Category::Others, other),
     }
 }

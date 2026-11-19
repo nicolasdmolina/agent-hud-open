@@ -21,6 +21,7 @@ fn stamps(first: PromptStamp, last: PromptStamp) -> PromptStamps {
         tracked: true,
         first: Some(first),
         last: Some(last),
+        ..PromptStamps::default()
     }
 }
 
@@ -134,6 +135,46 @@ fn a_hermes_profile_is_not_where_its_session_runs() {
             (Some("cli:others".into()), Some("others:telegram".into()))
         );
     }
+}
+
+/// Hermes keeps where each session was started (its stored `source`):
+/// the Hermes desktop app's chat, a terminal, or a messaging platform.
+/// That is where its prompts are typed, unless a hook says otherwise.
+#[test]
+fn a_hermes_session_was_started_where_its_stored_source_says() {
+    let started = |word: &str| PromptStamps {
+        started_in: Some(word.into()),
+        ..PromptStamps::default()
+    };
+    let both = |tag: &str| (Some(tag.to_owned()), Some(tag.to_owned()));
+    for (word, tag) in [
+        ("desktop", "desktop:hermes"),
+        ("cli", "cli:others"),
+        ("tui", "cli:others"),
+        ("telegram", "others:telegram"),
+        ("cron", "others:cron"),
+    ] {
+        for profile in [None, Some("reports")] {
+            let none = Reports::default();
+            assert_eq!(
+                origins(resolve("hermes", &started(word), profile, &none)),
+                both(tag),
+                "{word}"
+            );
+        }
+    }
+    // A hook's report still names where the latest prompt was typed.
+    let reports = Reports {
+        hook: report("others:telegram", T),
+        ..Reports::default()
+    };
+    assert_eq!(
+        origins(resolve("hermes", &started("desktop"), None, &reports)),
+        (
+            Some("desktop:hermes".into()),
+            Some("others:telegram".into())
+        )
+    );
 }
 
 #[test]

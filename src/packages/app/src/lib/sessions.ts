@@ -154,3 +154,16 @@ export function withMessagePage<M, D extends MessagePage<M>>(
     messagesComplete: page.messagesComplete,
   };
 }
+
+/** What a session page's way back is called: Core's name for an app link that stands in for the session's own (Hermes desktop), else "Return to session", else revealing its log. */
+export function returnLabel(
+  session: { navigationTarget?: unknown; navigationLabel?: string },
+  zh: boolean,
+  macos: boolean,
+): string {
+  if (session.navigationTarget) {
+    return session.navigationLabel || (zh ? "回到会话" : "Return to session");
+  }
+  if (macos) return zh ? "在访达中显示日志" : "Reveal log in Finder";
+  return zh ? "显示日志" : "Reveal log";
+}

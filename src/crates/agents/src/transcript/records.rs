@@ -21,6 +21,10 @@ pub struct Record {
     /// from its gateway while it runs. It is shown (`Log::live_total`)
     /// and never metered; `usage` is all that counts.
     pub live_total: Option<u64>,
+    /// Where the client says the session was started, in its own word
+    /// (Hermes's stored `source`: `desktop`, `telegram`, `cli`); None when
+    /// it does not say. `naming::surfaces` makes it a surface.
+    pub started_in: Option<String>,
     pub cwd: Option<String>,
     pub model: String,
     pub key: String,

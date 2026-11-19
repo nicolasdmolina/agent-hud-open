@@ -69,6 +69,8 @@ export interface Session {
   logPath: string | null;
   parentId: string | null;
   navigationTarget?: unknown;
+  /** From Core, in the app's language: what the way back is called where a client's app link stands in for it and names it ("Open in Hermes desktop"). Absent where it is called as any other. */
+  navigationLabel?: string;
   /** Present for Claude Desktop Code Project threads. */
   desktopProject?: DesktopProjectSession;
   /** Authoritative client events, when the provider supplies them; absent is unknown. */

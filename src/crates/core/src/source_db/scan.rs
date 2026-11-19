@@ -155,6 +155,9 @@ impl AgentHudCore {
             }
             // Shown and never counted, and it only goes up.
             log.live_total = log.live_total.max(record.live_total);
+            if record.started_in.is_some() {
+                log.prompts.started_in = record.started_in.clone();
+            }
             if record.parent.is_some() {
                 log.live.parent_id = record.parent.clone();
                 log.live.is_subagent = true;

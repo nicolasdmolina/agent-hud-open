@@ -209,6 +209,7 @@ fn record(
         client: None,
         machine: None,
         live_total: None,
+        started_in: None,
         title_fallback: None,
         cwd: field(1),
         model: routed(model, field(4).as_deref()),

@@ -44,6 +44,8 @@ mod alerts;
 mod answers;
 #[path = "machines/counts.rs"]
 pub(super) mod counts;
+#[path = "machines/desktop.rs"]
+pub(super) mod desktop;
 #[path = "machines/guards.rs"]
 mod guards;
 #[path = "machines/history.rs"]

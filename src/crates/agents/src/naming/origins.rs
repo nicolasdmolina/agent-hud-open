@@ -78,6 +78,11 @@ pub struct PromptStamps {
     pub first: Option<PromptStamp>,
     #[serde(default)]
     pub last: Option<PromptStamp>,
+    /// Where the client says the session was started, for a log that
+    /// marks no prompt (`Record::started_in`): what its tags fall back to
+    /// where no hook or delivery names them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_in: Option<String>,
 }
 
 impl PromptStamps {
@@ -188,7 +193,9 @@ pub fn resolve(
     // session with no log.
     if prompts.first.is_none() && prompts.last.is_none() && client.is_none_or(str::is_empty) {
         let mut origins = from_reports(reports);
-        let only = from_log(agent, None, None);
+        // Where the client says the session was started, else its one
+        // interface.
+        let only = from_log(agent, prompts.started_in.as_deref(), None);
         origins.latest = origins.latest.or_else(|| origins.init.clone());
         origins.init.get_or_insert_with(|| only.clone());
         origins.latest.get_or_insert(only);

@@ -128,16 +128,7 @@ impl Presentation<'_> {
         if claude && session["navigationTarget"].is_null() {
             self.background_job_target(session, desktop);
         }
-        if session["navigationTarget"].is_null() {
-            if let Some(target) = self
-                .discovery
-                .iter()
-                .find(|found| found.id == source)
-                .and_then(|found| found.navigation_target.as_ref())
-            {
-                session["navigationTarget"] = target.clone();
-            }
-        }
+        app_link::stand_in(self.discovery, &source, session);
         if !self.cards(session) {
             self.native.overlay(session);
         }
@@ -294,6 +285,7 @@ pub(super) fn sort_sessions(sessions: &mut [Value]) {
     });
 }
 
+mod app_link;
 mod live;
 pub(crate) mod requests;
 #[cfg(test)]

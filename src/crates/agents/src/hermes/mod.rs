@@ -76,6 +76,19 @@ const FOLDER: &str = "com.nickymolina.agenthud";
 static MAC_SOURCES: [Source; 2] = [HOME, mirrors(Base::AppData)];
 static WINDOWS_SOURCES: [Source; 1] = [HOME];
 static LINUX_SOURCES: [Source; 2] = [HOME, mirrors(Base::DataHome)];
+/// Brings the Hermes desktop app forward (ticket 39). Its `hermes://`
+/// link names no session and no connection: `open/<path>` routes only a
+/// session id, which the app opens on whichever connection its own list
+/// has it under, so the link stops at the app.
+static APP_NAVIGATION: crate::discovery::AppNavigation = crate::discovery::AppNavigation {
+    kind: "hermes-app",
+    url: PerOs {
+        macos: Support::Verified("hermes://"),
+        windows: Support::Unsupported("Hermes's desktop link is not verified on Windows"),
+        linux: Support::Unsupported("Hermes's desktop link is not verified on Linux"),
+    },
+    label: Some(("在 Hermes 桌面版中打开", "Open in Hermes desktop")),
+};
 static DISCOVERY: Discovery = Discovery {
     storage: &[
         Location::home(&["HERMES_HOME"], &[".hermes"], "state.db"),
@@ -90,6 +103,7 @@ static DISCOVERY: Discovery = Discovery {
         Location::home(&["HERMES_HOME"], &[".hermes"], "profiles"),
     ],
     commands: &["hermes"],
+    app_navigation: Some(&APP_NAVIGATION),
     ..Discovery::NONE
 };
 

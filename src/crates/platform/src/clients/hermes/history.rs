@@ -174,11 +174,16 @@ impl History {
     /// The machine's two ages, why it has no history where it has none,
     /// and how many of its sessions the mirror refused.
     pub(crate) fn ages(&self) -> Ages {
-        let state = self.state();
-        Ages {
-            refused: state.refused.values().sum(),
-            ..Ages::of(state.ages.values(), state.without)
-        }
+        let ages = {
+            let state = self.state();
+            Ages {
+                refused: state.refused.values().sum(),
+                ..Ages::of(state.ages.values(), state.without)
+            }
+        };
+        let fresh = crate::hooks::now_ms() - FRESH.as_millis() as i64;
+        let desktop = !self.writer.desktop_hosted(fresh).is_empty();
+        Ages { desktop, ..ages }
     }
 
     /// One tick: every home of the machine in turn. Nothing is read

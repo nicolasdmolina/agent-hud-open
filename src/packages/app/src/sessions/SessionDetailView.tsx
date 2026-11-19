@@ -1,6 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { Card } from "@agent-hud/ui/components/card";
-import { sessionClient } from "../lib/sessions";
+import { returnLabel, sessionClient } from "../lib/sessions";
 import type { Session, SessionDetail, Snapshot } from "@agent-hud/protocol";
 import type { Measure } from "./TurnBarsChart";
 import { KindsCard, ModelsCard } from "./BreakdownCards";
@@ -95,17 +95,7 @@ export function InlineDetail({
           )}
           revealLabel={
             session.desktopProject?.openLabel ??
-            (session.navigationTarget
-              ? zh
-                ? "回到会话"
-                : "Return to session"
-              : snapshot.connection.platform === "macos"
-                ? zh
-                  ? "在访达中显示日志"
-                  : "Reveal log in Finder"
-                : zh
-                  ? "显示日志"
-                  : "Reveal log")
+            returnLabel(session, zh, snapshot.connection.platform === "macos")
           }
         />
         <DetailFigures session={session} detail={detail} theme={theme} />

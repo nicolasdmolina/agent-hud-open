@@ -3,7 +3,10 @@
 //! report); this is the one place those words become text for the user.
 //! A note says the reason and does not repeat the state beside it.
 use super::list::Unread;
-use crate::clients::hermes::{history::Without, machine::Standing};
+use crate::clients::hermes::{
+    history::{Ages, Without},
+    machine::Standing,
+};
 use agent_hud_agents::hermes::connections::NotCovered;
 use agent_hud_core::l10n::text;
 
@@ -161,6 +164,29 @@ pub(in crate::clients::hermes) fn set_aside(count: usize) -> String {
             &format!("{count} sessions' usage is not counted: their records could not be stored."),
         ),
     }
+}
+
+/// A machine where the Hermes desktop app hosts a session no gateway
+/// lists (ticket 39): it is listed, with no card.
+pub(in crate::clients::hermes) fn desktop_hosted() -> String {
+    text(
+        "在这台机器上提出的问题，请在 Hermes 桌面版中回答。",
+        "Questions asked there are answered in Hermes desktop.",
+    )
+}
+
+/// The notes of a followed machine that has a history reader: that the
+/// Hermes desktop app answers questions there, then sessions its mirror
+/// would not take. Each is said once; None where neither holds.
+pub(in crate::clients::hermes) fn far_notes(ages: &Ages) -> Option<String> {
+    let notes: Vec<String> = [
+        ages.desktop.then(desktop_hosted),
+        (ages.refused > 0).then(|| set_aside(ages.refused)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    (!notes.is_empty()).then(|| notes.join(" "))
 }
 
 /// Whether a route that verified as no machine was reached and refused:
