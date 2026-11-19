@@ -134,6 +134,8 @@ export interface IslandEvent {
   newCredits?: { id?: string; expiresAt?: string | null }[] | number;
   islandAlert?: boolean;
   navigationTarget?: unknown;
+  /** From Core, a completion's: its session's `navigationLabel`, where its way back has one. */
+  navigationLabel?: string;
   hooks?: string[];
   /** Where in the agent the user allows its hooks. */
   step?: string | null;

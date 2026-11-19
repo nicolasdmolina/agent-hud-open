@@ -9,7 +9,10 @@ import type { useIslandNews } from "../IslandNews";
 import { usePanelServices } from "../PanelContext";
 import { NewsContent } from "../alerts/NewsContent";
 import { PendingEventRows } from "../alerts/PendingEventRows";
-import { ApprovalContent } from "../permissions/ApprovalContent";
+import {
+  ApprovalContent,
+  type SessionReturn,
+} from "../permissions/ApprovalContent";
 import { MessageRows, MessagesHeader } from "../ends/MessageRows";
 
 /** The panel's body while an alert is on show: the request or the event, and
@@ -43,19 +46,21 @@ export function AlertStack({
   const zh = snapshotLanguage(snapshot) === "zh";
   const ends = news.ends;
   const services = usePanelServices();
-  // Back to the session a request comes from, where Agent HUD can reach it.
-  // The request still waits, so its card goes to the head as it would
-  // unattended, and the HUD steps aside for the session's window.
-  const backToSession = (request: Approval) => {
+  // Back to the session a request comes from, where Agent HUD can reach it,
+  // called what its session's way back is called. The request still waits,
+  // so its card goes to the head as it would unattended, and the HUD steps
+  // aside for the session's window.
+  const backToSession = (request: Approval): SessionReturn | undefined => {
     const session = snapshot.sessions.find((s) => s.id === request.sessionId);
-    const open = services?.openSession;
-    if (!session?.navigationTarget || !open) return undefined;
-    return async () => {
-      if ((await open(session)) === false) return false;
+    const openSession = services?.openSession;
+    if (!session?.navigationTarget || !openSession) return undefined;
+    const open = async () => {
+      if ((await openSession(session)) === false) return false;
       news.park(request.id);
       handoff();
       return true;
     };
+    return { open, label: session.navigationLabel };
   };
   return (
     <>

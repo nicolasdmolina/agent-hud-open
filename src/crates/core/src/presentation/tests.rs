@@ -265,6 +265,51 @@ fn a_harness_session_gets_the_discovered_app_fallback_and_loses_it_on_refresh() 
     assert_eq!(snapshot["sessions"][0]["navigationTarget"], Value::Null);
 }
 
+/// A reply alert's way back is its session's, and so is its name: the
+/// event Core sends carries Hermes's "Open in Hermes desktop" with the
+/// desktop app's link, and no name for a way back called as any other, so
+/// the alert can name it when its session has left the list (ticket 65).
+#[test]
+fn a_reply_alert_carries_the_name_of_the_way_back_its_session_has() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut core = core(temp.path());
+    let hermes = agent_hud_agents::hermes::AGENT.id;
+    let app = json!({"kind":"hermes-app"});
+    core.set_provider_discovery(vec![crate::ProviderDiscovery {
+        id: hermes.into(),
+        navigation_target: Some(app.clone()),
+        ..Default::default()
+    }]);
+    let mut tracker = crate::island_events::Tracker::new();
+    let at = Utc::now().timestamp_millis() + 1_000;
+    let presentation = core.presentation(at);
+    let replied = |source: &str, id: &str, target: Value| {
+        let facts = json!({"outcome":"completed","endedAt":crate::iso(at),"turnId":"t1"});
+        let mut session = json!({"source":source,"id":id,"title":id,
+            "navigationTarget":target,"liveFacts":facts});
+        presentation.overlay(&mut session, None, None, &Default::default());
+        session
+    };
+    let pane = json!({"kind":"iterm-session","id":"pane"});
+    let sessions = [
+        replied(hermes, "hermes:far", Value::Null),
+        replied(agent_hud_agents::codex::AGENT.id, "codex:own", pane.clone()),
+    ];
+    let events = tracker.update(&sessions, &[], &[], &[], at);
+    let event = |id: &str| {
+        (events["items"].as_array().unwrap().iter())
+            .find(|event| event["kind"] == "completion" && event["sessionId"] == id)
+            .unwrap_or_else(|| panic!("{events}"))
+            .clone()
+    };
+    let far = event("hermes:far");
+    assert_eq!(far["navigationTarget"], app);
+    assert_eq!(far["navigationLabel"], "Open in Hermes desktop");
+    let own = event("codex:own");
+    assert_eq!(own["navigationTarget"], pane);
+    assert!(own.get("navigationLabel").is_none(), "{own}");
+}
+
 #[test]
 fn an_app_fallback_preserves_specific_targets_and_belongs_only_to_its_source() {
     let temp = tempfile::tempdir().unwrap();

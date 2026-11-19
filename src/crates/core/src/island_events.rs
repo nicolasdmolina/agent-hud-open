@@ -96,7 +96,12 @@ impl Tracker {
             if at <= self.started || at > now || self.seen.insert(key.clone(), at).is_some() {
                 continue;
             }
-            self.push(&key,json!({"kind":"completion","at":iso(at),"startedAt":session["liveFacts"]["turnStartedAt"],"source":session["source"],"sessionId":session["id"],"turnId":session["liveFacts"]["turnId"],"title":session["title"],"model":session["model"],"message":session["liveFacts"]["message"],"navigationTarget":session["navigationTarget"],"cwd":session["cwd"],"logPath":session["logPath"]}));
+            let mut event = json!({"kind":"completion","at":iso(at),"startedAt":session["liveFacts"]["turnStartedAt"],"source":session["source"],"sessionId":session["id"],"turnId":session["liveFacts"]["turnId"],"title":session["title"],"model":session["model"],"message":session["liveFacts"]["message"],"navigationTarget":session["navigationTarget"],"cwd":session["cwd"],"logPath":session["logPath"]});
+            // The way back's name goes with it, where its client names it.
+            if let Some(label) = session.get("navigationLabel") {
+                event["navigationLabel"] = label.clone();
+            }
+            self.push(&key, event);
         }
         let ids = quotas
             .iter()
