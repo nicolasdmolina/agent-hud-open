@@ -104,6 +104,7 @@ impl Gateway {
             recent: recent.then(|| session.clone()).into_iter().collect(),
             apart: Some(Box::new(apart)),
             turns: self.turns.watch(),
+            places: BTreeMap::new(),
         })
     }
 
@@ -141,6 +142,7 @@ impl Gateway {
         }
         self.watched(&poll);
         let at = &apart.session;
+        self.stilled_apart(&poll, at, now_ms);
         let its: Vec<_> = self
             .cards
             .keys()

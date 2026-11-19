@@ -55,6 +55,7 @@ impl Gateway {
         }
         self.rows.retain(|at, _| self.listed.contains_key(at));
         (self.asking).retain(|at| self.listed.contains_key(at));
+        self.stilled(&poll, now_ms);
         self.keep_owed();
         self.keep_apart();
         // The turns of a far session, which no card below reads.

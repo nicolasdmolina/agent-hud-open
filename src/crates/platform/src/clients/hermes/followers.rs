@@ -182,6 +182,7 @@ impl Followers {
         let reader = id.to_string();
         let own = *id.machine() == Machine::This && *id.anchor() == Profile::Default;
         let mut model = Model::new(id);
+        (model.gateway).quiet_after(self.pace.quiet.as_millis() as i64);
         // No card opens for a profile two instances claim, from its first
         // poll on.
         let contested = self

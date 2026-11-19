@@ -1,5 +1,6 @@
 //! How the connection paces itself: how long it waits before dialling
 //! again, between polls, and for an answer. Tests shorten it.
+use agent_hud_agents::hermes::gateway::QUIET_MS;
 use std::time::Duration;
 
 /// The waits of one connection.
@@ -15,7 +16,8 @@ pub(crate) struct Pace {
     /// The least time between the starts of two polls, however many ask.
     pub gap: Duration,
     /// The longest time between the starts of two polls while the gateway
-    /// has a live session: a turn can begin and ask in any of them, and
+    /// has a live session (on a far machine, one that is not quiet: the
+    /// model's `lively`): a turn can begin and ask in any of them, and
     /// nothing tells of it but the poll. The model's own timer is slower
     /// while every session is idle; measured against a real gateway, that
     /// showed a question up to ten seconds late, or never when it was
@@ -39,6 +41,9 @@ pub(crate) struct Pace {
     /// (`discovery.rs`), the first as soon as the observer starts. None
     /// for no look by the clock: one is taken only when a follower asks.
     pub discover: Option<Duration>,
+    /// How long nothing may change in a listed session before it stops
+    /// hurrying the polls and the history (the model's `quiet.rs`).
+    pub quiet: Duration,
     /// How a far machine's stored history is kept in step (`history.rs`).
     pub history: super::history::Plan,
     /// Whether the log says every poll and every hint, for looking at what
@@ -59,8 +64,20 @@ impl Default for Pace {
             write: Duration::from_millis(500),
             apart: Duration::from_millis(250),
             discover: Some(Duration::from_secs(10)),
+            quiet: Duration::from_millis(QUIET_MS as u64),
             history: super::history::Plan::default(),
             trace: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_apps_quiet_time_is_the_models_thirty_minutes() {
+        assert_eq!(Pace::default().quiet, Duration::from_secs(30 * 60));
+        assert_eq!(Pace::default().quiet.as_millis() as i64, QUIET_MS);
     }
 }
