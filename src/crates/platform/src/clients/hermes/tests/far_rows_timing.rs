@@ -686,9 +686,14 @@ fn row_when_the_gateway_was_busy_and_counts_move() {
         took
     });
     held("row_when_the_gateway_was_busy_and_counts_move", took, BUSY);
-    // The counts were written beside the rows, and reached them.
+    // The counts were written beside the rows, and reached them. Only the
+    // busy sessions' rows are held to it: with the far history read
+    // meanwhile (`HISTORY_READS`), the stored sessions are rows too, and
+    // each has tokens of its own.
     let rows = fleet.far_rows();
-    let counted = |row: &&super::machines::mirrors::Row| row.tokens.as_u64() > Some(100);
+    let counted = |row: &&super::machines::mirrors::Row| {
+        row.id.contains(":s-busy-") && row.tokens.as_u64() > Some(100)
+    };
     assert_eq!(rows.iter().filter(counted).count(), busy.len(), "{rows:?}");
     let log = fleet.log();
     let commits = log.matches("counts=").count();
