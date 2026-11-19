@@ -4,6 +4,8 @@ use tauri::Manager;
 
 #[path = "macos_hotkey.rs"]
 mod hotkey;
+#[path = "macos_watch.rs"]
+mod watch;
 
 pub(crate) fn prepare(_app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
@@ -31,6 +33,12 @@ pub(crate) fn windows_changed(app: &tauri::AppHandle) {
     } else {
         tauri::ActivationPolicy::Accessory
     });
+}
+
+/// Whether the app watches for agents' requests. While it does, App Nap must
+/// not run it as background work.
+pub(crate) fn watching(on: bool) {
+    watch::set(on);
 }
 
 /// A click on the Dock icon while no window is open.
