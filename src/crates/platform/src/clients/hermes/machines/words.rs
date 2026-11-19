@@ -15,6 +15,34 @@ pub(in crate::clients::hermes) fn this_machine() -> String {
     text("本机", "This Mac")
 }
 
+/// Why this machine is not connected, from what its own followers know
+/// (ticket 69). The far machines' words, said of this one.
+pub(in crate::clients::hermes) fn here_no_gateway() -> String {
+    text(
+        "本机没有运行中的 Hermes 网关。",
+        "No Hermes gateway runs on this Mac.",
+    )
+}
+
+pub(in crate::clients::hermes) fn here_unreachable() -> String {
+    text(
+        "暂时连不上本机的 Hermes 网关。",
+        "This Mac's Hermes gateway cannot be reached right now.",
+    )
+}
+
+pub(in crate::clients::hermes) fn here_no_live_connection() -> String {
+    text(
+        "本机的 Hermes 没有实时连接，需要更新。",
+        "Hermes on this Mac has no live connection. It needs an update.",
+    )
+}
+
+/// No Hermes home at all: nothing failed, there is nothing to follow.
+pub(in crate::clients::hermes) fn here_no_hermes() -> String {
+    text("本机没有 Hermes。", "There is no Hermes on this Mac.")
+}
+
 /// The source-wide note: the list itself could not be read.
 pub(in crate::clients::hermes) fn unread(why: Unread) -> String {
     match why {

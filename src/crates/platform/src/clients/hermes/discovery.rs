@@ -31,7 +31,10 @@ use super::{
 };
 use agent_hud_agents::hermes::gateway::{identify, identify_line, Identified, Instance, Profile};
 use serde_json::Value;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{atomic::Ordering, Arc},
+};
 
 /// What one look found. A home is told of by its place on the machine
 /// (`Home::profile`): the root home, or `profiles/<name>`.
@@ -46,6 +49,9 @@ pub(super) struct Seen {
     /// A home that has a gateway to ask gave no answer to go by: this
     /// look does not know every claim there is.
     pub(super) missed: bool,
+    /// A home could not be asked in a way that does not tell whether a
+    /// gateway runs there: a profile's folder that cannot be entered.
+    pub(super) unclear: bool,
     /// Which look this is, counted from the first.
     pub(super) number: u64,
 }
@@ -82,6 +88,8 @@ pub(super) fn work(all: Arc<Followers>) {
             if let Some(mut seen) = look(&all) {
                 seen.number = number;
                 all.settle(&seen);
+                // Whether finding no gateway is word that none runs.
+                (all.doubt).store(seen.missed || seen.unclear, Ordering::Release);
             }
             all.look.set_looked();
             // However many ask, looks do not follow each other at once.
@@ -112,7 +120,11 @@ fn look(all: &Followers) -> Option<Seen> {
             // claim that is on its way. Whether it leaves a claim open is
             // for whoever knows who answered there before: a follower
             // whose gateway was not heard keeps what it claims.
-            Err(Silent::Absent | Silent::Unclear | Silent::Unsafe(_)) => continue,
+            Err(Silent::Absent | Silent::Unsafe(_)) => continue,
+            Err(Silent::Unclear) => {
+                seen.unclear = true;
+                continue;
+            }
             // Something is there and was not heard: it may claim.
             Err(Silent::TimedOut | Silent::Garbled) => {
                 seen.missed = true;

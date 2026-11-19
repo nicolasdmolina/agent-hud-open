@@ -66,6 +66,8 @@ pub(super) mod mirrors;
 mod owners;
 #[path = "machines/reasons.rs"]
 mod reasons;
+#[path = "machines/this_mac.rs"]
+mod this_mac;
 #[path = "machines/unresolved.rs"]
 mod unresolved;
 
