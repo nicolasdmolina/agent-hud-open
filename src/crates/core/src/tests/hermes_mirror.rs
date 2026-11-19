@@ -522,4 +522,15 @@ fn hermes_rows_say_where_they_were_started_and_open_in_the_desktop_app() {
     for item in page["items"].as_array().unwrap() {
         assert_eq!(item["navigationLabel"], "Open in Hermes desktop", "{item}");
     }
+    // A link of another kind than Hermes's app link is no way back that
+    // name fits: it is called as any other.
+    let other = json!({"kind": "hermes-other"});
+    core.set_provider_discovery(vec![crate::ProviderDiscovery {
+        id: "hermes".into(),
+        navigation_target: Some(other.clone()),
+        ..Default::default()
+    }]);
+    let detail = (core.request("session_detail", json!({"id": far("s1")}))).unwrap();
+    assert_eq!(detail["session"]["navigationTarget"], other);
+    assert!(detail["session"].get("navigationLabel").is_none(), "{detail}");
 }
