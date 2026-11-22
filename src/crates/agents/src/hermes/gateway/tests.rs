@@ -19,6 +19,7 @@ mod installs;
 mod listing;
 mod live;
 mod machines;
+mod quiet;
 mod reach;
 mod regressions;
 mod replay;

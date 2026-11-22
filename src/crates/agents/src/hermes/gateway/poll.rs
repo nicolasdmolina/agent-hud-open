@@ -110,6 +110,8 @@ pub struct Poll {
     /// What it learns of the streams, where the gateway's turns are
     /// watched (`turns.rs`).
     pub(super) turns: Option<super::turns::Watch>,
+    /// Where each stream it read or looked at is (`quiet.rs`).
+    pub(super) places: BTreeMap<SessionRef, super::quiet::Place>,
 }
 
 impl Poll {
@@ -129,6 +131,7 @@ impl Poll {
             recent,
             apart: None,
             turns: None,
+            places: BTreeMap::new(),
         }
     }
 
@@ -162,6 +165,7 @@ impl Poll {
             // No step of a poll (`sample.rs`).
             Step::Stats(_) => {}
             Step::Since { session, cursor } => {
+                self.placed(session, result);
                 if let Some(search) = self.wanted(session, step) {
                     self.read(session, cursor.as_ref(), search, result);
                 }
@@ -188,7 +192,8 @@ impl Poll {
                     look.read = Read::Done(reading);
                 }
             }
-            Step::Watch { .. } => {
+            Step::Watch { session, .. } => {
+                self.placed(session, result);
                 if let Some(watch) = &mut self.turns {
                     watch.answer(step, result);
                 }

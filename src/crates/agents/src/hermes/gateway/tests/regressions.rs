@@ -564,9 +564,11 @@ fn completed_batch_turns_must_not_accumulate_unbounded_terminal_ids() {
         }
         // Its counters gain a digit now and then, and with the looks on
         // (`turns.rs`) so does the one place kept in the session's stream:
-        // twelve digits in 2,000 turns at most, and never an entry more.
+        // twelve digits in 2,000 turns at most. So does the place kept
+        // to say whether the session is quiet (`quiet.rs`): four more.
+        // Never an entry more.
         assert!(
-            debug.len() <= size + 16,
+            debug.len() <= size + 20,
             "turn {turn}: {} from {size}",
             debug.len()
         );

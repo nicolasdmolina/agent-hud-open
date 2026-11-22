@@ -114,6 +114,23 @@ impl Site {
         seed: impl FnOnce(&Connection),
         lists: impl FnOnce(&Fake),
     ) -> Option<Self> {
+        let history = plan;
+        Self::paced(
+            Pace {
+                history,
+                ..super::pace()
+            },
+            seed,
+            lists,
+        )
+    }
+
+    /// As `listing`, at a pace of the test's own.
+    pub(super) fn paced(
+        pace: Pace,
+        seed: impl FnOnce(&Connection),
+        lists: impl FnOnce(&Fake),
+    ) -> Option<Self> {
         let mut fleet = fleet(1)?;
         fleet.reads_mirrors();
         let db = far_db(&fleet.hosts[0].root);
@@ -121,10 +138,7 @@ impl Site {
         let gateway = fleet.hosts[0].gateway("instance-1", INSTALL[0]);
         lists(&gateway);
         fleet.write(&[here(), ssh("a", "Mini", "m0")]);
-        fleet.start_at(Pace {
-            history: plan,
-            ..super::pace()
-        });
+        fleet.start_at(pace);
         let key = fleet.connected("Mini");
         let history = fleet.book().history_of("a").expect("its refresh");
         Some(Self {
