@@ -4,6 +4,9 @@
 //!   window_opened(app)        Settings or Statistics was shown
 //!   windows_changed(app)      Settings or Statistics was closed or hidden
 //!   reopened(event)           the user asked for the app again (Dock click)
+//!   watching(on)              whether the app watches for agents' requests now:
+//!                             while it does, the system must not schedule it as
+//!                             background work that a busy machine starves
 //!   statistics_chrome(b)      the Statistics window's title bar
 //!   system_prefers_chinese()  the system's language, before any setting is read
 //!   alert(title, body, ok)    a blocking message, before the app starts
@@ -17,6 +20,6 @@ mod host;
 #[path = "linux.rs"]
 mod host;
 pub(crate) use host::{
-    alert, install, prepare, reopened, statistics_chrome, system_prefers_chinese, window_opened,
-    windows_changed,
+    alert, install, prepare, reopened, statistics_chrome, system_prefers_chinese, watching,
+    window_opened, windows_changed,
 };
