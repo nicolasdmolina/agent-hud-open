@@ -147,7 +147,7 @@ fn a_permission_allowed_automatically_shows_no_card_and_plays_no_sound() {
         "a request that showed no card made a sound"
     );
     // The channel still says so a while later: the same wait, still silent.
-    lab.later(crate::requests::APPROVED_QUIET_MS + 1_000);
+    lab.later(6_000);
     assert_eq!(lab.look(), ("waiting".into(), 0, 0));
     // A question then asked shows its card, and that sounds.
     assert!(!lab.card("codex-desktop-question:2", "question"));
@@ -162,7 +162,7 @@ fn a_permission_a_hook_allowed_automatically_plays_no_sound() {
     lab.look();
     lab.core
         .requests()
-        .note_auto_approved("codex", THREAD, lab.now);
+        .note_auto_approved("codex", THREAD, Some("call-66"));
     lab.told_waiting();
     assert_eq!(lab.look(), ("waiting".into(), 0, 0));
 }
@@ -181,4 +181,39 @@ fn a_request_answered_in_its_own_client_still_sounds() {
     assert!(!lab.card("codex-desktop-permission:1", "permission"));
     lab.told_waiting();
     assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+}
+
+/// The verifier's first probe (round 2). The app first sees the approved
+/// request's wait five seconds and a millisecond after allowing it: no
+/// look came in between. It is still that request's wait, however late it
+/// is seen, and makes no sound.
+#[test]
+fn a_wait_first_seen_long_after_its_automatic_approval_plays_no_sound() {
+    let mut lab = Lab::new(true);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    assert!(lab.card("codex-desktop-permission:1", "permission"));
+    lab.told_waiting();
+    lab.later(5_001);
+    assert_eq!(
+        lab.look(),
+        ("waiting".into(), 0, 0),
+        "a request that showed no card made a sound, seen late"
+    );
+}
+
+/// The verifier's second probe. After the approval the session is seen at
+/// work, with nothing waiting. A wait it then reports is another wait, not
+/// the approved request's, and sounds though it has no card yet.
+#[test]
+fn a_separate_wait_after_an_automatic_approval_still_sounds() {
+    let mut lab = Lab::new(true);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    assert!(lab.card("codex-desktop-permission:1", "permission"));
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    lab.told_waiting();
+    assert_eq!(
+        lab.look(),
+        ("waiting".into(), 0, 1),
+        "a new wait was taken for the approved request's"
+    );
 }

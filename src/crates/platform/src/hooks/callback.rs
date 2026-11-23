@@ -28,7 +28,11 @@ pub(super) fn wait_for_answer(
     {
         // Agent HUD Fork (ticket 66): it showed no card, so it makes no
         // sound; core is told which session it was allowed in.
-        requests.note_auto_approved(&request.source, &request.session_id, now_ms());
+        requests.note_auto_approved(
+            &request.source,
+            &request.session_id,
+            request.call_id.as_deref(),
+        );
         return request
             .response(&serde_json::json!({"kind":"allow"}))
             .ok()
@@ -126,8 +130,8 @@ mod tests {
     }
 
     /// Agent HUD Fork (ticket 66): a request allowed with no card is told
-    /// to core with its session, so the wait its session shows for a
-    /// moment makes no sound; one that waits for the user is not.
+    /// to core with its session and the tool call it names, so that its
+    /// wait makes no sound; one that waits for the user is not.
     #[test]
     fn an_approved_request_is_noted_with_its_session_for_the_sound_decision() {
         let requests = Requests::default();
@@ -143,17 +147,30 @@ mod tests {
             )
         };
         assert!(ask(Some("claude")).is_none());
-        assert!(requests.auto_approved(now_ms()).is_empty());
+        assert!(requests.auto_approved().is_empty());
         requests.set_auto_approve(AutoApprove::from_settings(&json!({"autoApprove": true})));
-        assert!(ask(Some("claude")).is_some());
-        let noted = requests.auto_approved(now_ms());
-        let session = agent_hud_agents::parse_request("claude", &claude_asks(Some("claude")))
+        let mut asked = claude_asks(Some("claude"));
+        asked["tool_use_id"] = json!("toolu_66");
+        let reply = wait_for_answer(
+            &requests,
+            &reminders,
+            "claude",
+            "--permission-hook",
+            &asked,
+            || false,
+        );
+        assert!(reply.is_some());
+        let session = agent_hud_agents::parse_request("claude", &asked)
             .unwrap()
             .unwrap()
             .session_id;
+        // Kept under the tool call it names, by its session.
         assert_eq!(
-            noted.keys().collect::<Vec<_>>(),
-            [&format!("claude:{session}")]
+            requests.auto_approved(),
+            std::collections::HashMap::from([(
+                format!("claude:{session}"),
+                vec!["call:toolu_66".to_owned()]
+            )])
         );
     }
 }

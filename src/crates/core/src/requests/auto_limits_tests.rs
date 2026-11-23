@@ -3,7 +3,6 @@
 //! answered by hand (Hermes), or leave a session it approved in without
 //! a note for the sound decision.
 use super::super::{auto, AutoApprove, Requests};
-use super::APPROVED_QUIET_MS;
 use serde_json::{json, Value};
 
 const WHY: &str = "The client cannot be reached right now.";
@@ -54,7 +53,7 @@ fn approve_automatically_never_decides_a_request_marked_unreachable() {
     );
     assert_eq!(shown(&requests), ["marked"]);
     // It was not noted as approved, and takes no decision by hand either.
-    assert_eq!(requests.auto_approved(1_000).len(), 1, "only the plain one");
+    assert_eq!(requests.auto_approved().len(), 1, "only the plain one");
     assert_eq!(
         requests.answer("marked", &json!({"kind": "allow"}), 1_500),
         Err(WHY.to_owned())
@@ -88,7 +87,7 @@ fn approve_automatically_never_answers_a_hermes_request() {
         "a Hermes approval was answered"
     );
     assert_eq!(shown(&requests), ["hermes:1"]);
-    assert!(requests.auto_approved(1_000).is_empty());
+    assert!(requests.auto_approved().is_empty());
     // By hand it is answered as ever.
     assert!(requests
         .answer("hermes:1", &json!({"kind": "allow"}), 1_500)
@@ -107,35 +106,37 @@ fn only_hermes_is_answered_by_hand() {
     assert_eq!(by_hand, ["hermes"]);
 }
 
-/// The session a permission was allowed in with no card is kept for the
-/// sound decision, a few seconds, from either way in.
+/// A request allowed with no card is kept for the sound decision under
+/// its own names, from either way in, until that decision has looked at
+/// its session. No clock ends it.
 #[test]
-fn an_automatic_approval_is_noted_with_its_session_for_a_few_seconds() {
+fn an_automatic_approval_is_kept_by_its_names_until_its_session_is_looked_at() {
     let requests = approving();
-    let ticket = requests
-        .register_native(
-            "p".into(),
-            permission("codex", Some("codex-desktop")),
-            10_000,
-        )
-        .unwrap();
+    let mut card = permission("codex", Some("codex-desktop"));
+    card["callId"] = json!("call-7");
+    let ticket = requests.register_native("p".into(), card, 10_000).unwrap();
     assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
-    requests.note_auto_approved("claude", "s9", 12_000);
-    let noted = requests.auto_approved(12_000);
-    assert_eq!(noted.get("codex:s1"), Some(&10_000));
-    assert_eq!(noted.get("claude:s9"), Some(&12_000));
-    let later = requests.auto_approved(10_000 + APPROVED_QUIET_MS);
-    assert!(!later.contains_key("codex:s1"));
-    assert!(later.contains_key("claude:s9"));
-    assert!(requests
-        .auto_approved(12_000 + APPROVED_QUIET_MS)
-        .is_empty());
-    // A question is never approved, so never noted.
+    requests.note_auto_approved("claude", "s9", Some("toolu_9"));
+    requests.note_auto_approved("claude", "s9", None);
+    let kept = requests.auto_approved();
+    assert_eq!(kept["codex:s1"], ["p", "call:call-7"]);
+    assert_eq!(kept["claude:s9"], ["call:toolu_9"]);
+    assert_eq!(kept.len(), 2);
+    // Time passing ends nothing: only a look at the session does.
+    requests.expire(10_000_000);
+    assert_eq!(requests.auto_approved(), kept);
+    requests.auto_approved_seen(["codex:s1", "codex:another"]);
+    let kept = requests.auto_approved();
+    assert!(!kept.contains_key("codex:s1"));
+    assert!(kept.contains_key("claude:s9"));
+    requests.auto_approved_seen(["claude:s9"]);
+    assert!(requests.auto_approved().is_empty());
+    // A question is never approved, so never kept.
     let question = json!({"source": "codex", "client": "codex-desktop",
         "sessionId": "s2", "kind": "question"});
     let ticket = requests
         .register_native("q".into(), question, 20_000)
         .unwrap();
     assert!(ticket.response.try_recv().is_err());
-    assert!(requests.auto_approved(20_000).is_empty());
+    assert!(requests.auto_approved().is_empty());
 }

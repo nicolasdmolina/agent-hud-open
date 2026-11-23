@@ -134,11 +134,17 @@ impl Tracker {
             else {
                 continue;
             };
+            let key = format!("{source}:{id}");
+            // A request allowed automatically showed no card: whatever goes
+            // by its names is decided, and so makes no sound.
+            let approved = heard.approved.get(&key);
+            for name in approved.into_iter().flatten() {
+                self.first(&format!("needs-you:{source}:{id}:{name}"), now);
+            }
             let now_requests = requests::requests(session, source, id, heard);
             if session["state"] != "waiting" && now_requests.is_empty() {
                 continue;
             }
-            let key = format!("{source}:{id}");
             let previous = self.waits.remove(&key);
             let before = previous.as_ref();
             let mut told = None;
@@ -171,11 +177,11 @@ impl Tracker {
                     .or(session["updatedAt"].as_str())
                     .unwrap_or("");
                 let identity = format!("needs-you:{source}:{id}:{since}");
-                // A wait with no card, just after a permission of the
-                // session was allowed automatically, is that request's: it
-                // showed no card, so it makes no sound for as long as it
-                // goes on with none.
-                passed = heard.approved.contains_key(&key) || before.is_some_and(|p| p.passed);
+                // A wait with no card, at the first look at its session
+                // since a permission was allowed there automatically, is
+                // that request's: it showed no card, so it makes no sound
+                // for as long as it goes on with none.
+                passed = approved.is_some() || before.is_some_and(|p| p.passed);
                 if self.first(&identity, now) && previous.is_none() && !passed {
                     told = Some(identity);
                 }
@@ -244,16 +250,31 @@ pub(crate) fn names_a_sound(value: &Value) -> bool {
 
 impl AgentHudCore {
     /// This look's alerts, with what the rows no longer show: what cards
-    /// hid, each card's call, and the sessions a permission was just
-    /// allowed in with no card.
+    /// hid, each card's call, and the requests allowed with no card since
+    /// their session was last looked at. A session this look lists has
+    /// been looked at: what was kept of it is over.
     pub(crate) fn sound_look(&mut self, island: &Value, sessions: &[Value], now: i64) -> Value {
         let heard = Heard {
             sightings: self.listed_rows.as_ref().map(|(_, rows)| &rows.heard),
             calls: self.requests.calls(),
-            approved: self.requests.auto_approved(now),
+            approved: self.requests.auto_approved(),
         };
-        self.sound_alerts
-            .update(island, sessions, &heard, &self.settings, now)
+        let alerts = self
+            .sound_alerts
+            .update(island, sessions, &heard, &self.settings, now);
+        let listed: HashSet<String> = sessions
+            .iter()
+            .filter_map(|row| {
+                Some(format!(
+                    "{}:{}",
+                    row["source"].as_str()?,
+                    row["id"].as_str()?
+                ))
+            })
+            .collect();
+        let seen = heard.approved.keys().filter(|key| listed.contains(*key));
+        self.requests.auto_approved_seen(seen.map(String::as_str));
+        alerts
     }
 }
 

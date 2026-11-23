@@ -15,9 +15,10 @@ pub(crate) struct Heard<'a> {
     pub sightings: Option<&'a crate::presentation::requests::Heard>,
     /// The tool call each waiting card holds, by card id, where named.
     pub calls: HashMap<String, String>,
-    /// The sessions a permission was just allowed in automatically, with
-    /// no card, by `source:session` (`Requests::auto_approved`).
-    pub approved: HashMap<String, i64>,
+    /// The requests allowed automatically, with no card, that no look has
+    /// seen the session of yet: by `source:session`, the names each goes
+    /// by (`Requests::auto_approved`).
+    pub approved: HashMap<String, Vec<String>>,
 }
 pub(super) struct Request {
     pub names: Vec<String>,

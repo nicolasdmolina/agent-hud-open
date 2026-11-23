@@ -19,7 +19,7 @@ fn look_approved(
     let heard = Heard {
         approved: approved
             .iter()
-            .map(|key| ((*key).to_owned(), now))
+            .map(|key| ((*key).to_owned(), vec!["native:approved".to_owned()]))
             .collect(),
         ..Heard::default()
     };
@@ -48,8 +48,8 @@ fn a_request_approved_automatically_showed_no_card_and_makes_no_sound() {
     // Told as waiting just as its permission is allowed with no card.
     let alerts = look_approved(&mut tracker, &sessions, &["claude:s1"], T + 1);
     assert_eq!(alerts, [], "a request that showed no card sounded");
-    // Still told as waiting after the approval is no longer noted: the
-    // same wait, so still silent.
+    // Still told as waiting at later looks, where the approval is no
+    // longer kept: the same wait, so still silent.
     let alerts = look_approved(&mut tracker, &sessions, &[], T + 10_000);
     assert_eq!(alerts, [], "the same wait sounded late");
     // Another session's wait is its own.
@@ -76,8 +76,8 @@ fn a_card_in_a_session_just_approved_in_still_sounds() {
     assert_eq!(alerts, [needs_you("s2")]);
 }
 
-/// The wait that passed goes on past the few seconds the approval is
-/// noted for; a question's card that then comes in it is new, and sounds.
+/// The wait that passed goes on through later looks; a question's card
+/// that then comes in it is new, and sounds.
 #[test]
 fn a_card_that_comes_long_after_the_wait_passed_still_sounds() {
     let mut tracker = started();
@@ -97,4 +97,31 @@ fn a_card_that_comes_long_after_the_wait_passed_still_sounds() {
         [needs_you("s1")]
     );
     assert_eq!(look_approved(&mut tracker, &asked, &[], T + 2), []);
+}
+
+/// What goes by an approved request's own names never sounds: here a
+/// transcript sighting of the tool call a hook's callback allowed. A
+/// sighting of another call in the same session is another request.
+#[test]
+fn a_sighting_of_the_approved_call_makes_no_sound_and_another_calls_does() {
+    let look = |tracker: &mut Tracker, call: &str, approved: bool, now: i64| {
+        let before = tracker.items.len();
+        let rid = format!("log:claude:s1:{call}");
+        let sessions = [waiting("s1", &[(rid.as_str(), "permission")])];
+        let mut heard = Heard::default();
+        if approved {
+            heard
+                .approved
+                .insert("claude:s1".into(), vec!["call:toolu_1".into()]);
+        }
+        let out = tracker.update(&no_events(), &sessions, &heard, &on(), now);
+        out["items"].as_array().unwrap().len() - before
+    };
+    let mut tracker = started();
+    assert_eq!(look(&mut tracker, "toolu_1", true, T + 1), 0);
+    assert_eq!(look(&mut tracker, "toolu_1", false, T + 60_000), 0);
+    assert_eq!(look(&mut tracker, "toolu_2", false, T + 60_001), 1);
+    // The control: the same sighting where nothing was approved sounds.
+    let mut tracker = started();
+    assert_eq!(look(&mut tracker, "toolu_1", false, T + 1), 1);
 }
