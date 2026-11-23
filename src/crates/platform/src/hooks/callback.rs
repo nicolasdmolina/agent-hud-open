@@ -197,8 +197,8 @@ mod tests {
     fn a_call_the_persons_own_rule_asks_about_is_never_approved_automatically() {
         let temp = tempfile::tempdir().unwrap();
         let (home, work) = (temp.path().join("home"), temp.path().join("work"));
-        std::fs::create_dir_all(home.join(".factory")).unwrap();
-        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(home.join(".factory")).unwrap(); // plain directory
+        std::fs::create_dir_all(&work).unwrap(); // plain directory
         std::fs::write(
             home.join(".factory/settings.json"),
             json!({"commandDenylist": ["synthetic-deploy"]}).to_string(),
