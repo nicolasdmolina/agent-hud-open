@@ -717,9 +717,10 @@ fn a_real_gateway_answers_the_looks_and_its_completion_carries_no_time() {
     assert_eq!(timed, ["avg_latency_s"]);
 }
 
-/// In a round, the reads the cards wait on are asked before the looks:
-/// a gateway answers the calls of one socket in turn, so a card's read
-/// never queues behind the looks at idle sessions.
+/// The reads the cards wait on are asked before the looks, and are
+/// answered to their end before a look goes out (ticket 72): a gateway
+/// answers the calls of one socket in turn, so no read of a card, the
+/// first or a later one, ever queues behind a look at an idle session.
 #[test]
 fn the_looks_go_out_after_the_reads_the_cards_wait_on() {
     let (mut g, mut h) = start();
@@ -734,17 +735,23 @@ fn the_looks_go_out_after_the_reads_the_cards_wait_on() {
         assert!(matches!(step, Step::List(_)), "{step:?}");
         poll.answer(&step, &h.answer(&step).unwrap());
     }
-    let asked: Vec<(&str, String)> = (poll.steps().iter())
-        .map(|step| match step {
+    // Every round after the lists, as what it asked of which session.
+    let mut rounds: Vec<Vec<(&str, String)>> = Vec::new();
+    while !poll.steps().is_empty() {
+        let steps = poll.steps();
+        let asked = |step: &Step| match step {
             Step::Since { session, .. } => ("read", session.id().to_owned()),
             Step::Watch { session, .. } => ("look", session.id().to_owned()),
             // What a session has used is asked in no poll (`sample.rs`).
             other => panic!("{other:?}"),
-        })
-        .collect();
-    let expected = [("read", "far-m"), ("look", "far-a"), ("look", "far-z")];
-    let expected: Vec<(&str, String)> = (expected.iter())
-        .map(|(kind, id)| (*kind, (*id).to_owned()))
-        .collect();
-    assert_eq!(asked, expected);
+        };
+        rounds.push(steps.iter().map(asked).collect());
+        for step in steps {
+            poll.answer(&step, &h.answer(&step).unwrap());
+        }
+    }
+    let read = vec![("read", "far-m".to_owned())];
+    let looks = vec![("look", "far-a".to_owned()), ("look", "far-z".to_owned())];
+    // Where its stream is, then its events; then the looks, together.
+    assert_eq!(rounds, [read.clone(), read, looks]);
 }

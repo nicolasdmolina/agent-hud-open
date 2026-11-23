@@ -188,6 +188,34 @@ fn a_session_counts_from_when_it_is_first_listed_and_anew_after_a_restart() {
     assert_eq!(paces(&g), QUICK, "another instance");
 }
 
+/// Ticket 67's answer said a reconnect brings thirty quick minutes. It
+/// does not: only a restart of the gateway, or a follower made anew,
+/// sees its sessions for the first time (ticket 72).
+#[test]
+fn a_socket_that_is_lost_and_comes_back_restarts_no_clock() {
+    let (mut g, mut h) = start();
+    listed_as_working(&mut h, STUCK);
+    poll(&mut g, &mut h, 0);
+    poll(&mut g, &mut h, QUIET_MS);
+    assert_eq!(paces(&g), SLOW);
+    // The socket is cut, and the same instance answers again.
+    g.apply(Input::Lost(Failure::Closed(1006)), QUIET_MS + 1_000);
+    identified(&mut g, "one");
+    // The first poll after it finds the gateway quiet as it was.
+    poll(&mut g, &mut h, QUIET_MS + 2_000);
+    assert_eq!(paces(&g), SLOW, "quiet as it was");
+    // Lost before it was ever quiet: its clock ran on meanwhile.
+    let (mut g, mut h) = start();
+    listed_as_working(&mut h, STUCK);
+    poll(&mut g, &mut h, 0);
+    g.apply(Input::Lost(Failure::Closed(1006)), QUIET_MS / 2);
+    identified(&mut g, "one");
+    poll(&mut g, &mut h, QUIET_MS - 1);
+    assert_eq!(paces(&g), QUICK);
+    poll(&mut g, &mut h, QUIET_MS);
+    assert_eq!(paces(&g), SLOW);
+}
+
 #[test]
 fn a_session_that_is_read_apart_moves_by_its_own_reading() {
     let (mut g, mut h) = start();

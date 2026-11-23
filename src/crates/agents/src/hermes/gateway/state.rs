@@ -185,6 +185,7 @@ impl Gateway {
             .collect();
         let mut poll = Poll::new(self.id.clone(), self.polls, served, shown, recent);
         poll.turns = self.turns.watch();
+        poll.still = self.stood();
         Some(poll)
     }
 

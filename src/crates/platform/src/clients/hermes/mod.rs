@@ -54,6 +54,7 @@ mod socket;
 mod tap;
 mod turns;
 mod visit;
+mod waits;
 mod wire;
 
 use follower::Shared;

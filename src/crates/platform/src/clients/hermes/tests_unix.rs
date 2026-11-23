@@ -134,6 +134,9 @@ fn quick() -> Pace {
         // replies back to see what a poll does meanwhile. `apart.rs`
         // turns it on.
         apart: Duration::from_secs(3600),
+        // The app's own: no test here holds back what a poll asks last
+        // for longer than a call may take (`machines/quiet_slow.rs`).
+        still: Pace::default().still,
         // No look at the machine by the clock: these tests follow one
         // gateway and count what is asked of its route. `followers.rs`
         // turns it on.
