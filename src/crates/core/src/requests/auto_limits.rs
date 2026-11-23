@@ -6,6 +6,10 @@
 //! - it never decides a request whose card says its client cannot be
 //!   reached (`unreachable`): that request takes no decision at all
 //!   (`answer.rs`), an automatic one included;
+//! - it never allows a call the person's own rule in the client says to
+//!   ask about (`agents::hooks::RULE_ASKS`). That one is held where the
+//!   mark is read, in the hook's callback
+//!   (`platform/src/hooks/callback.rs`), since only a hook carries it;
 //! - a request it allowed showed no card, so it plays no sound. While the
 //!   client takes the answer, its hooks or its channel can still tell the
 //!   session as waiting, and a wait with no card would sound. So core

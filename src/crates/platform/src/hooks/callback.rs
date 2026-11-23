@@ -22,8 +22,13 @@ pub(super) fn wait_for_answer(
         return None;
     }
     // Approved automatically for its client: the HUD's Allow, with no card.
-    // Questions and plans still wait for the user.
+    // Questions and plans still wait for the user. Agent HUD Fork (ticket
+    // 66): so does a call the person's own rule in the client says to ask
+    // about (`RULE_ASKS`), which the HUD holds for them as the agent
+    // contract says.
+    let rule_asks = payload[agent_hud_agents::hooks::RULE_ASKS] == true;
     if request.kind == "permission"
+        && !rule_asks
         && requests.auto_approves(&request.source, payload[super::CLIENT_KEY].as_str())
     {
         // Agent HUD Fork (ticket 66): it showed no card, so it makes no
@@ -89,7 +94,7 @@ pub(crate) fn settles_in_transcript(source: &str) -> bool {
 mod tests {
     use super::*;
     use agent_hud_core::requests::AutoApprove;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     fn claude_asks(client: Option<&str>) -> serde_json::Value {
         let mut payload = json!({"session_id": "s1", "cwd": "/w",
@@ -172,5 +177,98 @@ mod tests {
                 vec!["call:toolu_66".to_owned()]
             )])
         );
+    }
+
+    /// A Factory Droid call, as its hook sends it before a tool runs.
+    fn droid_asks(cwd: &std::path::Path, mode: &str, command: &str, risk: &str) -> Value {
+        json!({"session_id": "s1", "cwd": cwd.to_str().unwrap(),
+            "permission_mode": mode, "hook_event_name": "PreToolUse",
+            "tool_name": "Execute",
+            "tool_input": {"command": command, "riskLevel": risk}})
+    }
+
+    /// Agent HUD Fork (ticket 66, the verifier's probe): a call the
+    /// person's own rule in the client says to ask about is held for
+    /// them, as the agent contract says (`RULE_ASKS`). Approve
+    /// automatically never allows it, though it allows the same client's
+    /// other calls. Through the real policy screen, which reads Factory's
+    /// settings from a home of the test's own, and the real callback.
+    #[test]
+    fn a_call_the_persons_own_rule_asks_about_is_never_approved_automatically() {
+        let temp = tempfile::tempdir().unwrap();
+        let (home, work) = (temp.path().join("home"), temp.path().join("work"));
+        std::fs::create_dir_all(home.join(".factory")).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(
+            home.join(".factory/settings.json"),
+            json!({"commandDenylist": ["synthetic-deploy"]}).to_string(),
+        )
+        .unwrap();
+        let env = std::collections::HashMap::new();
+        let mark = agent_hud_agents::hooks::RULE_ASKS;
+        // Droid's level alone would run this one; the rule says to ask.
+        let mut ruled = droid_asks(&work, "auto-high", "synthetic-deploy now", "high");
+        assert!(super::super::policy::screen(
+            "droid",
+            &mut ruled,
+            Some(&home),
+            &env
+        ));
+        assert_eq!(ruled[mark], true, "the screen marks what a rule asks about");
+        // One no rule names, which Droid asks about by its level.
+        let mut plain = droid_asks(&work, "off", "synthetic-build", "high");
+        assert!(super::super::policy::screen(
+            "droid",
+            &mut plain,
+            Some(&home),
+            &env
+        ));
+        assert!(plain.get(mark).is_none());
+
+        let requests = Requests::default();
+        let reminders = reminders::Reminders::default();
+        let held = std::cell::Cell::new(0);
+        let ask = |payload: &Value| {
+            held.set(0);
+            wait_for_answer(
+                &requests,
+                &reminders,
+                "droid",
+                "--permission-hook",
+                payload,
+                || {
+                    // Whether it waits as a card, at the one look taken.
+                    held.set(requests.views(now_ms()).len());
+                    false
+                },
+            )
+        };
+        // Approve automatically off: both wait for the person.
+        assert!(ask(&ruled).is_none());
+        assert_eq!(held.get(), 1);
+        assert!(ask(&plain).is_none());
+        assert_eq!(held.get(), 1);
+
+        requests.set_auto_approve(AutoApprove::from_settings(&json!({"autoApprove": true})));
+        assert!(
+            requests.auto_approves("droid", None),
+            "the rule is on for Droid"
+        );
+        // The plain call is allowed at once, with no card.
+        let reply = ask(&plain).expect("an automatic Allow");
+        assert_eq!(
+            reply["hookSpecificOutput"]["permissionDecision"], "allow",
+            "{reply}"
+        );
+        assert_eq!(held.get(), 0);
+        // The call the rule asks about still waits, and hears nothing.
+        let reply = ask(&ruled);
+        assert!(
+            reply.is_none(),
+            "an explicit ask rule was allowed: {reply:?}"
+        );
+        assert_eq!(held.get(), 1, "it waits as a card");
+        // Only the plain one was kept as allowed with no card.
+        assert_eq!(requests.auto_approved().len(), 1);
     }
 }
