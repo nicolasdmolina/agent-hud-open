@@ -1,6 +1,7 @@
 //! SMAppService uses only public frameworks. The Mac never posts system
 //! notifications: the HUD island is its alert surface.
 pub(crate) use super::unix::{client_command_line, configure_client_command, stop_client};
+use agent_hud_runtime::l10n::{self, tr_in, Language};
 use objc2::{
     msg_send,
     rc::Retained,
@@ -30,9 +31,29 @@ const NOT_REGISTERED: isize = 0;
 const ENABLED: isize = 1;
 const REQUIRES_APPROVAL: isize = 2;
 const NOT_FOUND: isize = 3;
-const NOT_FOUND_NOTICE: &str = "The login service was not found in this app bundle.";
-/// Why the launch's registration failed, until the switch is used.
-static STARTUP_FAILURE: Mutex<Option<String>> = Mutex::new(None);
+/// Why the launch's registration failed, until the switch is used: macOS
+/// refused it, with its own reason, or the item is still not found after.
+#[derive(Clone, Debug, PartialEq)]
+enum Failure {
+    Refused(String),
+    NotFound,
+}
+impl Failure {
+    /// The warning Settings shows, in `language`, from the catalogs.
+    fn words(&self, language: Language) -> String {
+        match self {
+            Self::Refused(reason) => l10n::fill(
+                &tr_in(
+                    language,
+                    "macOS could not register the login item: {{reason}}",
+                ),
+                &[("reason", reason)],
+            ),
+            Self::NotFound => tr_in(language, "This build can't find the login service."),
+        }
+    }
+}
+static STARTUP_FAILURE: Mutex<Option<Failure>> = Mutex::new(None);
 /// The main app's login item: the OS's, or a test's.
 trait MainApp {
     fn status(&self) -> isize;
@@ -56,33 +77,38 @@ fn reason(error: *mut NSError) -> String {
 }
 /// Registers when nothing is registered. Returns the warning Settings keeps
 /// when that fails or the item is still not found.
-fn register_at_startup<A: MainApp + ?Sized>(app: &A) -> Option<String> {
+fn register_at_startup<A: MainApp + ?Sized>(app: &A) -> Option<Failure> {
     if !matches!(app.status(), NOT_REGISTERED | NOT_FOUND) {
         return None;
     }
     match app.register() {
-        Err(reason) => Some(format!("macOS could not register the login item: {reason}")),
-        Ok(()) if app.status() == NOT_FOUND => Some(NOT_FOUND_NOTICE.to_owned()),
+        Err(reason) => Some(Failure::Refused(reason)),
+        Ok(()) if app.status() == NOT_FOUND => Some(Failure::NotFound),
         Ok(()) => None,
     }
 }
-/// Settings' view of the raw status and any failed registration.
-fn report(status: isize, failure: Option<&str>, name: &str) -> Value {
+/// Settings' view of the raw status and any failed registration, its
+/// words in `language`.
+fn report(status: isize, failure: Option<&Failure>, name: &str, language: Language) -> Value {
     let (state, notice) = match (status, failure) {
         (ENABLED, _) => ("enabled", None),
         (REQUIRES_APPROVAL, _) => (
             "requires-approval",
-            Some(format!(
-                "Approve {name} in System Settings → General → Login Items."
+            Some(l10n::fill(
+                &tr_in(
+                    language,
+                    "Approve {{name}} in System Settings → General → Login Items.",
+                ),
+                &[("name", &name)],
             )),
         ),
-        (_, Some(failure)) => ("unavailable", Some(failure.to_owned())),
+        (_, Some(failure)) => ("unavailable", Some(failure.words(language))),
         (NOT_REGISTERED | NOT_FOUND, None) => ("disabled", None),
         _ => ("unavailable", None),
     };
     json!({"supported":true,"enabled":status==ENABLED,"status":state,"notice":notice})
 }
-fn startup_failure() -> std::sync::MutexGuard<'static, Option<String>> {
+fn startup_failure() -> std::sync::MutexGuard<'static, Option<Failure>> {
     STARTUP_FAILURE
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -92,7 +118,12 @@ fn login() -> Value {
         return json!({"supported":false,"enabled":false,"status":"unavailable","notice":"Launch at login requires a real app bundle on macOS 13 or later."});
     };
     let failure = startup_failure().clone();
-    report(service.status(), failure.as_deref(), &app_name())
+    report(
+        service.status(),
+        failure.as_ref(),
+        &app_name(),
+        l10n::current(),
+    )
 }
 /// The name Login Items lists: this app bundle's own, so each build says its own.
 fn app_name() -> String {
@@ -110,7 +141,7 @@ pub(super) fn register_if_never_registered() -> bool {
     };
     let failure = register_at_startup(&*service);
     if let Some(failure) = &failure {
-        eprintln!("Agent HUD launch at login: {failure}");
+        eprintln!("Agent HUD launch at login: {}", failure.words(Language::En));
     }
     *startup_failure() = failure;
     true
@@ -265,6 +296,8 @@ pub(crate) fn private_output(options: &mut std::fs::OpenOptions) {
 mod tests {
     use super::*;
 
+    const EN: Language = Language::En;
+
     /// A login item whose status is `before` until it is asked to register,
     /// then `after`.
     struct Fake {
@@ -303,7 +336,7 @@ mod tests {
         let app = Fake::new(NOT_FOUND, Err("Operation not permitted".into()), NOT_FOUND);
         let failure = register_at_startup(&app);
         assert_eq!(app.attempts.get(), 1);
-        let shown = report(app.status(), failure.as_deref(), "Agent HUD Fork");
+        let shown = report(app.status(), failure.as_ref(), "Agent HUD Fork", EN);
         assert_eq!(shown["status"], "unavailable");
         assert_eq!(shown["enabled"], false);
         assert_eq!(
@@ -312,10 +345,41 @@ mod tests {
         );
         let still = Fake::new(NOT_FOUND, Ok(()), NOT_FOUND);
         let failure = register_at_startup(&still);
-        assert_eq!(failure.as_deref(), Some(NOT_FOUND_NOTICE));
+        assert_eq!(failure, Some(Failure::NotFound));
         assert_eq!(
-            report(NOT_FOUND, failure.as_deref(), "x")["notice"],
-            NOT_FOUND_NOTICE
+            report(NOT_FOUND, failure.as_ref(), "x", EN)["notice"],
+            "This build can't find the login service."
+        );
+    }
+
+    /// Ticket 66: the warning is in the app's language, from the catalogs,
+    /// and still carries what only this Mac knows: macOS's own reason, and
+    /// the name Login Items lists the app under.
+    #[test]
+    fn the_warnings_are_in_the_apps_language_with_macos_reason_and_the_apps_name() {
+        let refused = Failure::Refused("Operation not permitted".into());
+        let english = "macOS could not register the login item: Operation not permitted";
+        let approve = "Approve Agent HUD Fork in System Settings → General → Login Items.";
+        for language in Language::ALL {
+            let code = language.code();
+            let shown = report(NOT_FOUND, Some(&refused), "Agent HUD Fork", language);
+            let notice = shown["notice"].as_str().unwrap();
+            assert!(
+                notice.contains("Operation not permitted"),
+                "{code}: {notice}"
+            );
+            assert!(!notice.contains("{{"), "{code}: {notice}");
+            assert_eq!(notice == english, language == EN, "{code}: {notice}");
+            let waiting = report(REQUIRES_APPROVAL, None, "Agent HUD Fork", language);
+            let notice = waiting["notice"].as_str().unwrap();
+            assert!(notice.contains("Agent HUD Fork"), "{code}: {notice}");
+            assert!(!notice.contains("{{"), "{code}: {notice}");
+            assert_eq!(notice == approve, language == EN, "{code}: {notice}");
+        }
+        let chinese = report(NOT_FOUND, Some(&refused), "x", Language::ZhHans);
+        assert_eq!(
+            chinese["notice"],
+            "macOS 无法注册登录项：Operation not permitted"
         );
     }
 
@@ -325,7 +389,7 @@ mod tests {
             let app = Fake::new(before, Ok(()), ENABLED);
             assert_eq!(register_at_startup(&app), None);
             assert_eq!(app.attempts.get(), 1);
-            assert_eq!(report(app.status(), None, "x")["status"], "enabled");
+            assert_eq!(report(app.status(), None, "x", EN)["status"], "enabled");
         }
         for before in [ENABLED, REQUIRES_APPROVAL] {
             let app = Fake::new(before, Err("never asked".into()), before);
@@ -336,10 +400,11 @@ mod tests {
 
     #[test]
     fn not_found_without_a_failed_registration_is_plainly_off() {
-        let shown = report(NOT_FOUND, None, "x");
+        let shown = report(NOT_FOUND, None, "x", EN);
         assert_eq!(shown["status"], "disabled");
         assert_eq!(shown["notice"], Value::Null);
-        let waiting = report(REQUIRES_APPROVAL, Some("old failure"), "Agent HUD Fork");
+        let old = Failure::Refused("old failure".into());
+        let waiting = report(REQUIRES_APPROVAL, Some(&old), "Agent HUD Fork", EN);
         assert_eq!(waiting["status"], "requires-approval");
         assert_eq!(
             waiting["notice"],

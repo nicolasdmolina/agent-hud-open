@@ -56,12 +56,16 @@ export function GeneralPane({ snapshot, action }: SettingsPaneProps) {
     ? undefined
     : t("Launch at login isn't available in this build.");
   // Only states the person can act on; other notices are platform plumbing.
+  // Agent HUD Fork (ticket 43): the host's own words where it has them,
+  // which name the app to approve and give macOS's reason for a refusal.
+  // The host writes them in the app's language, from the catalogs.
   const loginNote = !login?.supported
     ? null
     : login.status === "requires-approval"
-      ? t("Allow it in System Settings → General → Login Items.")
+      ? (login.notice ??
+        t("Allow it in System Settings → General → Login Items."))
       : login.status === "unavailable" && login.notice
-        ? t("This build can't find the login service.")
+        ? login.notice
         : null;
 
   const appearance = (
