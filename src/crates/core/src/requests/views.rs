@@ -224,13 +224,13 @@ fn machine_view(machine: &MachineStatus) -> Value {
 
 /// A machine's state as the machines list says it.
 fn state_text(state: MachineState) -> String {
-    let (zh, en) = match state {
-        MachineState::Connected => ("已连接", "Connected"),
-        MachineState::Connecting => ("正在连接", "Connecting"),
-        MachineState::NotTrusted => ("尚未信任", "Not trusted yet"),
-        MachineState::CannotReach => ("无法连接", "Cannot reach"),
-        MachineState::NotCovered => ("不支持", "Not covered"),
-        MachineState::SameMachine => ("与另一项是同一台机器", "Same machine as another entry"),
-    };
-    crate::l10n::text(zh, en)
+    use crate::l10n::tr;
+    match state {
+        MachineState::Connected => tr!("Connected"),
+        MachineState::Connecting => tr!("Connecting"),
+        MachineState::NotTrusted => tr!("Not trusted yet"),
+        MachineState::CannotReach => tr!("Cannot reach"),
+        MachineState::NotCovered => tr!("Not covered"),
+        MachineState::SameMachine => tr!("Same machine as another entry"),
+    }
 }

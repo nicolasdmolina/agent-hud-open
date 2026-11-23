@@ -38,12 +38,14 @@ fn show_settings(app: &tauri::AppHandle) -> Result<(), String> {
                 .find(|window| window.label == "main")
                 .ok_or("Settings has no window configuration")?;
             // Shown below, once the app has joined the Dock.
-            tauri::WebviewWindowBuilder::from_config(app, config)
-                .and_then(|builder| builder.visible(false).build())
+            let builder = tauri::WebviewWindowBuilder::from_config(app, config)
+                .map_err(|error| format!("Could not configure the Settings window: {error}"))?;
+            crate::appearance::build(app, builder)
                 .map_err(|error| format!("Could not create the Settings window: {error}"))?
         }
     };
-    shell::window_opened(app);
+    shell::window_opened(&window);
+    crate::placement::bring_to_pointer(&window);
     window.unminimize().map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
     activity::notify(app, "main");
@@ -163,6 +165,15 @@ pub(crate) fn take_statistics_target(
         .take()
 }
 
+/// The windows that end their page when closed (Settings, Statistics, the
+/// markup window); the others hide and keep it.
+pub(crate) fn closes(label: &str) -> bool {
+    matches!(
+        label,
+        "main" | "statistics" | crate::inspect::marking::LABEL
+    )
+}
+
 pub(crate) fn show_statistics(app: &tauri::AppHandle) -> Result<(), String> {
     let windows = app.state::<AuxiliaryWindows>();
     let _guard = windows.lock.lock().unwrap_or_else(PoisonError::into_inner);
@@ -179,12 +190,13 @@ pub(crate) fn show_statistics(app: &tauri::AppHandle) -> Result<(), String> {
             .inner_size(1280.0, 820.0)
             .min_inner_size(720.0, 560.0)
             .center();
-            shell::statistics_chrome(builder)
-                .build()
+            // Built hidden; shown below, on the screen under the pointer.
+            crate::appearance::build(app, shell::toolbar_chrome(builder))
                 .map_err(|error| format!("Could not create the Statistics window: {error}"))?
         }
     };
-    shell::window_opened(app);
+    shell::window_opened(&window);
+    crate::placement::bring_to_pointer(&window);
     window.unminimize().map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
     activity::notify(app, "statistics");

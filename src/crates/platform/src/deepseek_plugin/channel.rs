@@ -16,7 +16,7 @@ const LEFTOVER_LIFETIME: Duration = Duration::from_secs(86_400);
 /// The folder the plugin and the app share.
 #[derive(Clone, Debug)]
 pub struct DeepSeekChannel {
-    directory: PathBuf,
+    pub(super) directory: PathBuf,
     prompts: ClaudeChannel,
 }
 
@@ -43,15 +43,37 @@ impl DeepSeekChannel {
     }
 
     /// Leaves `text` for `session` as its next message, under the caller's
-    /// identity `id`. The caller checks the session is loaded first.
+    /// identity `id`, switching the session to `model` first when one is
+    /// named (`{"provider","model"}`). The caller checks the session is
+    /// loaded first, and that its plugin takes a model
+    /// (`channel_version`).
     pub fn leave(
         &self,
         session: &str,
         id: &str,
         text: &str,
+        model: Option<&Value>,
         now: SystemTime,
     ) -> Result<(), Refusal> {
-        self.prompts.leave(session, id, text, false, now)
+        self.prompts
+            .leave_with(session, id, text, false, model, now)
+    }
+
+    /// The channel version of the plugin `session` last checked in from:
+    /// 2 and later choose a model for a message or a new session.
+    pub fn channel_version(&self, session: &str) -> u64 {
+        if !valid_name(session) {
+            return 0;
+        }
+        fs::read(
+            self.directory
+                .join("sessions")
+                .join(format!("{session}.json")),
+        )
+        .ok()
+        .and_then(|data| serde_json::from_slice::<Value>(&data).ok())
+        .and_then(|value| value["channelVersion"].as_u64())
+        .unwrap_or(0)
     }
 
     /// Leaves `text` for a loaded `session`; refused when it is empty or
@@ -124,8 +146,10 @@ impl DeepSeekChannel {
         if !folder.is_absolute() {
             return Err("The plugin folder must be absolute".into());
         }
-        for name in ["", "sessions", "prompts", "calls", "asks"] {
-            crate::os::private_directory(&self.directory.join(name))?;
+        for name in [
+            "", "sessions", "prompts", "calls", "asks", "hosts", "starts",
+        ] {
+            crate::os::channel_directory(&self.directory.join(name))?;
         }
         crate::os::private_directory(folder)?;
         let file = folder.join(file_name());
@@ -139,7 +163,7 @@ impl DeepSeekChannel {
     /// Forgets every check-in, word, note and ask, when the plugin is removed.
     pub fn clear(&self) -> Result<(), String> {
         self.prompts.clear()?;
-        for name in ["calls", "asks"] {
+        for name in ["calls", "asks", "hosts", "starts"] {
             match fs::remove_dir_all(self.directory.join(name)) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -160,6 +184,25 @@ impl DeepSeekChannel {
                     for note in notes.flatten() {
                         if file_age(&note.path(), now) > CALL_LIFETIME {
                             let _ = fs::remove_file(note.path());
+                        }
+                    }
+                }
+                let _ = fs::remove_dir(host.path());
+            }
+        }
+        if let Ok(files) = fs::read_dir(self.directory.join("hosts")) {
+            for file in files.flatten() {
+                if file_age(&file.path(), now) > LEFTOVER_LIFETIME {
+                    let _ = fs::remove_file(file.path());
+                }
+            }
+        }
+        if let Ok(hosts) = fs::read_dir(self.directory.join("starts")) {
+            for host in hosts.flatten() {
+                if let Ok(requests) = fs::read_dir(host.path()) {
+                    for request in requests.flatten() {
+                        if file_age(&request.path(), now) > crate::claude_plugin::PROMPT_LIFETIME {
+                            let _ = fs::remove_file(request.path());
                         }
                     }
                 }

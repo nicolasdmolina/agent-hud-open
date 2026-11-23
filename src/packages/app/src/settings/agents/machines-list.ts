@@ -1,8 +1,6 @@
 // What the machines list shows of each machine, apart from how it is drawn.
 import type { MachineStatus } from "@agent-hud/protocol";
-import { age, type Language } from "@agent-hud/ui/format";
-
-type Text = (en: string, zh: string) => string;
+import { age, type Language, type Translate } from "@agent-hud/ui/format";
 
 /** Whether the list is worth a section: not when it holds only this machine
  * (or nothing) and nothing is wrong with the list itself. */
@@ -19,7 +17,7 @@ export function machineTimes(
   machine: MachineStatus,
   now: number,
   language: Language,
-  t: Text,
+  t: Translate,
 ): string | null {
   if (machine.state !== "connected" || machine.here) return null;
   const since = (at: string | undefined) => {
@@ -31,8 +29,8 @@ export function machineTimes(
   const contact = since(machine.lastContactAt);
   const history = since(machine.historyCheckedAt);
   const parts = [
-    contact && t(`Last contact ${contact}`, `最近联系 ${contact}`),
-    history && t(`History checked ${history}`, `历史检查于 ${history}`),
+    contact && t("Last contact {{age}}", { age: contact }),
+    history && t("History checked {{age}}", { age: history }),
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : null;
 }

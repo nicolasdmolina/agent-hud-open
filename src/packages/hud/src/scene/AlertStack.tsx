@@ -4,7 +4,6 @@ import type {
   RequestDecision,
   Snapshot,
 } from "@agent-hud/protocol";
-import { snapshotLanguage } from "@agent-hud/ui/format";
 import type { useIslandNews } from "../IslandNews";
 import { usePanelServices } from "../PanelContext";
 import { NewsContent } from "../alerts/NewsContent";
@@ -43,7 +42,6 @@ export function AlertStack({
   snapshot: Snapshot;
   botLogos: boolean;
 }) {
-  const zh = snapshotLanguage(snapshot) === "zh";
   const ends = news.ends;
   const services = usePanelServices();
   // Back to the session a request comes from, where Agent HUD can reach it,
@@ -69,7 +67,6 @@ export function AlertStack({
           count={ends.tail.length}
           clear={ends.clear}
           light={light}
-          zh={zh}
         />
       )}
       {request ? (
@@ -81,7 +78,6 @@ export function AlertStack({
           openSettings={openSettings}
           backToSession={backToSession}
           light={light}
-          language={snapshotLanguage(snapshot)}
         />
       ) : event ? (
         <NewsContent
@@ -101,7 +97,6 @@ export function AlertStack({
           select={news.select}
           drop={ends.drop}
           light={light}
-          zh={zh}
         />
       ) : (
         !ends.view && (
@@ -112,7 +107,6 @@ export function AlertStack({
             select={news.select}
             includeRequests={!request}
             light={light}
-            zh={zh}
           />
         )
       )}

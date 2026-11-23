@@ -9,9 +9,10 @@ import { emit, listen } from "@tauri-apps/api/event";
 import type { HUDGuide } from "@agent-hud/hud/GuideDock";
 import type { HUDConfig } from "@agent-hud/hud/model";
 import type { GuideRecord, NativeMethod, Snapshot } from "@agent-hud/protocol";
-import { snapshotLanguage } from "@agent-hud/ui/format";
+import { useT } from "@agent-hud/ui/format-context";
 import { modePatch } from "../lib/mode-patch";
 import { HUDGuideCard } from "./HUDGuideCard";
+import { newsWidth } from "./HUDGuideNews";
 import {
   atStep,
   closed,
@@ -60,8 +61,7 @@ export function useHUDGuide({
   steps: readonly SettingsStep[];
 }): HUDGuide | null {
   const record = snapshot.settings.guide;
-  const chinese = snapshotLanguage(snapshot) === "zh";
-  const t = (en: string, zh: string) => (chinese ? zh : en);
+  const t = useT();
   // The guide's arrow and drag picture move as the HUD does.
   const moving =
     snapshot.settings.animations !== false &&
@@ -183,6 +183,7 @@ export function useHUDGuide({
     setView(null);
   };
   return {
+    width: view.kind === "news" ? newsWidth : undefined,
     onPanel: (panelOpen) => {
       if (view.kind !== "tour" || view.step !== "hud") return;
       if (timer.current) clearTimeout(timer.current);
@@ -205,6 +206,14 @@ export function useHUDGuide({
         next={next}
         back={() => open({ kind: "tour", step: "hud" })}
         close={close}
+        tour={() => {
+          const base = current();
+          if (!base || !version) return;
+          // The news counts as seen; the tour starts beside the HUD.
+          write(atStep(closed(base, version), "hud"));
+          setView({ kind: "tour", step: "hud" });
+          setLooked(false);
+        }}
         resume={() => {
           const step = steps.find((item) => item.id === record?.step);
           void invoke("hud_show_main", { page: step?.page ?? null });

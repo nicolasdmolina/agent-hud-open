@@ -69,18 +69,13 @@ impl crate::AgentHudCore {
                 .extra_sessions(now, 1, &self.known_sessions());
             let mut extras: Vec<Value> = extras
                 .into_iter()
-                .filter(|value| {
-                    self.enabled
-                        .get(value["source"].as_str().unwrap_or(""))
-                        .copied()
-                        .unwrap_or(true)
-                })
+                .filter(|value| self.agent_on(value["source"].as_str().unwrap_or("")))
                 .map(|row| self.protect_claude_project_extra(row))
                 .collect();
             self.carded_hook_rows(&mut extras, now);
             sessions.extend(extras);
         }
-        if self.enabled.get("claude").copied().unwrap_or(true) {
+        if self.client_on(agent_hud_agents::split::CLAUDE_DESKTOP) {
             sessions.extend(self.claude_project_rows().into_iter().filter(|row| {
                 row["lastMessageAt"]
                     .as_str()
@@ -117,7 +112,7 @@ impl crate::AgentHudCore {
         let logs = every
             .iter()
             .copied()
-            .filter(|head| !head.gone && !head.archived && !head.live.is_internal)
+            .filter(|head| projection.lists(head))
             .collect::<Vec<_>>();
         let children = Self::active_subagents(&logs, now);
         let family = session_breakdown::Family::new(&every);

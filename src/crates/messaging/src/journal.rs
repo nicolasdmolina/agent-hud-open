@@ -66,6 +66,11 @@ pub struct Message {
     /// that message's id, never its words.
     #[serde(default)]
     pub replied_by: Option<String>,
+    /// The turn in progress a steer went into (`delivery: steer`). It began
+    /// before the send, so its answer is looked for there, not in a turn
+    /// that began after.
+    #[serde(default)]
+    pub steered_into: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -138,7 +143,10 @@ impl Journal {
                     .as_deref()
                     .and_then(|parent| self.find(parent))
                     .is_some_and(|parent| {
-                        super::same_session(&parent.from.session_id, &message.to.session_id)
+                        super::same_identity(
+                            (&parent.from.client, &parent.from.session_id),
+                            (&message.to.client, &message.to.session_id),
+                        )
                     })
             })
             .map(|message| message.id.clone())

@@ -12,6 +12,9 @@ mod tui;
 
 /// Agent HUD sends to Codex on this host.
 pub(crate) const SUPPORTED: bool = true;
+/// A new thread can start in a named model: the shared CLI daemon runs its
+/// first turn in it (`start_in_daemon`), when no desktop app takes it.
+pub(crate) const MODEL_AT_START: bool = true;
 /// What a send may ask for: start, steer and interrupt through the desktop
 /// app or the CLI daemon, and Codex's queue.
 pub(crate) const OPERATIONS: &[Operation] = &[
@@ -67,14 +70,8 @@ fn enqueue(
             Err(Failure::AcceptanceUncertain)
         }
     };
-    match Cli::connect(
-        &data.join("app-server-control/app-server-control.sock"),
-        timeout,
-    ) {
-        Ok(mut daemon) => {
-            let value = daemon.request("thread/queue/add", params, true)?;
-            accepted(value)?;
-        }
+    match queue_in_daemon(data, params.clone(), timeout) {
+        Ok(value) => accepted(value)?,
         Err(Failure::Unavailable(_)) if queue.is_some() => {
             let route = queue.unwrap();
             let mut server =
@@ -131,11 +128,7 @@ fn create_cli(
         &data.join("app-server-control/app-server-control.sock"),
         timeout,
     )?;
-    let value = connection.request(
-        "thread/start",
-        json!({"cwd":folder,"ephemeral":false}),
-        true,
-    )?;
+    let value = connection.request("thread/start", super::thread_start(folder, request), true)?;
     let thread = value["thread"]["id"]
         .as_str()
         .filter(|id| valid_uuid(id))
@@ -146,7 +139,11 @@ fn create_cli(
         .filter(|id| valid_uuid(id))
         .ok_or(Failure::AcceptanceUncertain)?
         .to_string();
-    let first=connection.request("turn/start",json!({"threadId":thread,"clientUserMessageId":message_id,"input":[{"type":"text","text":request.text,"text_elements":[]}]}),true);
+    let mut turn = json!({"threadId":thread,"clientUserMessageId":message_id,"input":[{"type":"text","text":request.text,"text_elements":[]}]});
+    if let Some(model) = &request.model {
+        turn["model"] = json!(model);
+    }
+    let first = connection.request("turn/start", turn, true);
     // Creating again would duplicate the session even when its first turn failed.
     let reason = match first {
         Ok(value)
@@ -197,14 +194,35 @@ fn enqueue_created(
     message_id: &str,
     timeout: Duration,
 ) -> Result<()> {
-    let mut connection = Cli::connect(
-        &data.join("app-server-control/app-server-control.sock"),
+    let value = queue_in_daemon(
+        data,
+        json!({"threadId":thread,"clientUserMessageId":message_id,"input":[{"type":"text","text":text,"text_elements":[]}]}),
         timeout,
     )?;
-    let value=connection.request("thread/queue/add",json!({"threadId":thread,"clientUserMessageId":message_id,"input":[{"type":"text","text":text,"text_elements":[]}]}),true)?;
     if value["queuedSubmission"].is_object() {
         Ok(())
     } else {
         Err(Failure::AcceptanceUncertain)
+    }
+}
+
+/// Adds to Codex's queue through the shared daemon. The daemon runs a Codex
+/// of its own (`codex app-server daemon version` names it), and a build
+/// without the queue refuses the method by name before queueing anything
+/// (Open #94); such a daemon counts as none, so the message takes the
+/// short-lived app-server instead.
+fn queue_in_daemon(data: &Path, params: Value, timeout: Duration) -> Result<Value> {
+    let mut daemon = Cli::connect(
+        &data.join("app-server-control/app-server-control.sock"),
+        timeout,
+    )?;
+    match daemon.request("thread/queue/add", params, true) {
+        Err(Failure::Rejected(reason))
+            if reason.contains("thread/queue/add")
+                && (reason.contains("unknown variant") || reason.contains("not support")) =>
+        {
+            Err(Failure::Unavailable(reason))
+        }
+        result => result,
     }
 }

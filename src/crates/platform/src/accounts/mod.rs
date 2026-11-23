@@ -1,14 +1,15 @@
 //! Provider account readings on one worker, one at a time, with one result
 //! cache outside the Runtime mutex. A reading holds the collection gate, so it
 //! never overlaps a local pass either.
-//! Cadence follows UsageRefresh: 300s quiet, 150s running, >=60s per account.
+//! Cadence (`schedule`): 240 s quiet, 120 s running, each plus a random spread
+//! of 0–60 s; a few seconds after work finishes; >= 60 s per account.
 //!
 //! Each provider states its own facts (`agents::account::Provider`): how it
 //! is read, whose work spends its windows, what a failure means. Everything
 //! here is the same for every provider: when to read, how long a reading
 //! that missed an answer keeps the last one, how far apart retries are, and
 //! when the vendor's status page is asked.
-use agent_hud_core::l10n;
+use agent_hud_core::l10n::tr;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::{
@@ -145,12 +146,7 @@ impl AccountService {
             .timeout(Duration::from_secs(20))
             .user_agent("AgentHUD/0.1")
             .build()
-            .map_err(|_| {
-                l10n::text(
-                    "账户网络请求无法启动",
-                    "Account HTTP client could not start",
-                )
-            })?;
+            .map_err(|_| tr!("Account HTTP client could not start"))?;
         let restored = restart_copy::load(&data_dir, readers);
         let entries = restored
             .readings
@@ -207,7 +203,7 @@ impl AccountService {
         std::thread::Builder::new()
             .name("agenthud-accounts".into())
             .spawn(move || run(worker_context, worker, worker_gate, readers))
-            .map_err(|_| l10n::text("账户读取线程无法启动", "Account worker could not start"))?;
+            .map_err(|_| tr!("Account worker could not start"))?;
         Ok(Self {
             shared,
             context,

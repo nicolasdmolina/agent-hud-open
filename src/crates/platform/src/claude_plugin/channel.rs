@@ -81,9 +81,9 @@ impl ClaudeChannel {
         if !folder.is_absolute() {
             return Err("The plugin folder must be absolute".into());
         }
-        crate::os::private_directory(&self.directory)?;
-        crate::os::private_directory(&self.directory.join("sessions"))?;
-        crate::os::private_directory(&self.directory.join("prompts"))?;
+        crate::os::channel_directory(&self.directory)?;
+        crate::os::channel_directory(&self.directory.join("sessions"))?;
+        crate::os::channel_directory(&self.directory.join("prompts"))?;
         let channel = serde_json::to_string(&self.directory.to_string_lossy()).unwrap();
         let files = [
             (
@@ -134,15 +134,31 @@ impl ClaudeChannel {
         as_user: bool,
         now: SystemTime,
     ) -> Result<(), Refusal> {
+        self.leave_with(session, id, text, as_user, None, now)
+    }
+
+    /// `leave`, with the model the session goes on in (DeepSeek Harness's
+    /// plugin switches it first), written in the same file so the plugin
+    /// never takes the words without it.
+    pub(crate) fn leave_with(
+        &self,
+        session: &str,
+        id: &str,
+        text: &str,
+        as_user: bool,
+        model: Option<&Value>,
+        now: SystemTime,
+    ) -> Result<(), Refusal> {
         let file = self.prompt(session, id)?;
         if file.exists() {
             return Err(Refusal::IdentityConflict);
         }
         let at = millis(now);
-        write_json(
-            &file,
-            &json!({"id":id,"text":text,"at":at,"expiresAt":at.saturating_add(PROMPT_LIFETIME.as_millis() as u64),"asUser":as_user}),
-        )
+        let mut prompt = json!({"id":id,"text":text,"at":at,"expiresAt":at.saturating_add(PROMPT_LIFETIME.as_millis() as u64),"asUser":as_user});
+        if let Some(model) = model {
+            prompt["model"] = model.clone();
+        }
+        write_json(&file, &prompt)
     }
 
     /// Leaves `text` for `session` as the answer to its question: refused when

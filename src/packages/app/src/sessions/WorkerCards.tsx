@@ -14,8 +14,9 @@ import {
   row,
   type Theme,
 } from "./SessionTheme";
+import { useT } from "@agent-hud/ui/format-context";
 
-/** How much the sub-agents added: the session's own part beside theirs, then each sub-agent as a labelled bar; the bars fill and the figures count up when first drawn. */
+/** How much the sub-agents added: the session's own part beside theirs and Codex's auto-reviews', then each sub-agent as a labelled bar; the bars fill and the figures count up when first drawn. */
 export function SubagentsCard({
   detail,
   theme,
@@ -28,11 +29,12 @@ export function SubagentsCard({
   /** The sub-agent open in the next column. */
   selectedId?: string | null;
 }) {
-  const zh = Boolean(theme.zh);
+  const t = useT();
   const reach = useBarReach();
   const total = detail.usage?.total ?? detail.session.tokens;
   const theirs = detail.subagents?.total ?? 0;
-  const own = detail.own?.total ?? total - theirs;
+  const reviews = detail.reviews?.tokens.total ?? 0;
+  const own = detail.own?.total ?? total - theirs - reviews;
   const children = [...(detail.children ?? [])].sort(
     (a, b) => b.tokens - a.tokens,
   );
@@ -41,31 +43,38 @@ export function SubagentsCard({
   const parts = [
     {
       key: "own",
-      label: zh ? "会话本身" : "This session",
+      label: t("The session itself"),
       value: own,
       color: theme.secondary,
       fade: 1,
     },
     {
       key: "sub",
-      label: zh ? "子 agent" : "Sub-agents",
+      label: t("Sub-agents"),
       value: theirs,
       color: theme.secondary,
       fade: 0.4,
     },
-  ];
+    // Codex's auto-reviews are no sessions to open, so the title's count
+    // leaves them out; their part is named apart.
+    {
+      key: "reviews",
+      label: t("Auto-reviews ({{total}})", {
+        total: detail.reviews?.count ?? 0,
+      }),
+      value: reviews,
+      color: theme.secondary,
+      fade: 0.25,
+    },
+  ].filter((part) => part.key === "own" || part.value > 0);
   return (
     <Card style={{ ...card(theme), gap: 9 }}>
       <CardTitle
-        title={
-          zh
-            ? `子 agent（${children.length}）`
-            : `Sub-agents (${children.length})`
-        }
-        right={zh ? "占会话 Token" : "Of the session's tokens"}
+        title={t("Sub-agents ({{total}})", { total: children.length })}
+        right={t("Of the session's tokens")}
         theme={theme}
       />
-      {theirs > 0 && (
+      {theirs + reviews > 0 && (
         <div style={{ display: "grid", gap: 5 }}>
           <div
             aria-hidden="true"
@@ -92,10 +101,20 @@ export function SubagentsCard({
             ))}
           </div>
           <div
-            style={{ ...row, justifyContent: "space-between", fontSize: 11 }}
+            style={{
+              ...row,
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              columnGap: 12,
+              rowGap: 2,
+              fontSize: 11,
+            }}
           >
             {parts.map((part) => (
-              <span key={part.key} style={{ ...row, gap: 5 }}>
+              <span
+                key={part.key}
+                style={{ ...row, gap: 5, whiteSpace: "nowrap" }}
+              >
                 <span style={{ color: theme.secondary }}>{part.label}</span>
                 <strong style={{ fontWeight: 600, ...numeric }}>
                   <Tween value={part.value} format={tokensAt} />
@@ -149,9 +168,7 @@ export function SubagentsCard({
                       id: "__rest__",
                       label: (
                         <span style={{ color: theme.secondary }}>
-                          {zh
-                            ? `其余 ${rest.length} 个`
-                            : `${rest.length} more`}
+                          {t("{{rest}} more", { rest: rest.length })}
                         </span>
                       ),
                       value: rest.reduce((sum, child) => sum + child.tokens, 0),
@@ -187,7 +204,7 @@ export function ProjectExecutionsCard({
   /** The worker open in the next column. */
   selectedId?: string | null;
 }) {
-  const zh = Boolean(theme.zh);
+  const t = useT();
   const children = [...(detail.children ?? [])].sort(
     (a, b) => b.tokens - a.tokens,
   );
@@ -196,12 +213,8 @@ export function ProjectExecutionsCard({
   return (
     <Card style={{ ...card(theme), gap: 9 }}>
       <CardTitle
-        title={
-          zh
-            ? `本机执行会话（${count}）`
-            : `Local execution sessions (${count})`
-        }
-        right={zh ? "不含 Project 本身" : "Project itself not included"}
+        title={t("Local execution sessions ({{total}})", { total: count })}
+        right={t("Project itself not included")}
         theme={theme}
       />
       {children.map((child) => (
@@ -223,11 +236,10 @@ export function ProjectExecutionsCard({
           }}
         >
           <span style={{ ...clipped, flex: 1, minWidth: 0 }}>
-            {child.title || (zh ? "本机执行会话" : "Local execution session")}
+            {child.title || t("Local execution session")}
           </span>
           <span style={{ ...numeric, color: theme.secondary, flexShrink: 0 }}>
-            <Tween value={child.tokens} format={tokensAt} />{" "}
-            {zh ? "Token" : "tok"}
+            <Tween value={child.tokens} format={tokensAt} /> {t("tok")}
           </span>
           <ChevronRight
             size={10}

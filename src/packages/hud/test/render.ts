@@ -2,6 +2,7 @@
 // source as the app builds it, and React renders it to markup. Not a test
 // file itself (node --test runs *.test.ts only).
 import { dirname } from "node:path";
+import { createElement, type ComponentType, type ReactNode } from "react";
 import { createServer, type ViteDevServer } from "vite";
 
 let server: Promise<ViteDevServer> | null = null;
@@ -24,6 +25,19 @@ export async function load<T>(path: string): Promise<T> {
 export async function close() {
   if (server) await (await server).close();
   server = null;
+}
+
+/** `node` as a window draws it in `language` ("en", "zh-Hans" …): inside
+ * the app's format provider, with that language's catalog loaded. */
+export async function inLanguage(language: string, node: ReactNode) {
+  const { loadCatalog } = await load<{
+    loadCatalog: (language: string) => Promise<void>;
+  }>("@agent-hud/ui/catalogs");
+  const { FormatProvider } = await load<{
+    FormatProvider: ComponentType<{ setting: string; children?: ReactNode }>;
+  }>("@agent-hud/ui/format-context");
+  await loadCatalog(language);
+  return createElement(FormatProvider, { setting: language }, node);
 }
 
 export interface Tag {

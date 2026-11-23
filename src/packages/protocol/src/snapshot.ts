@@ -1,5 +1,10 @@
 // What Core broadcasts, and the methods it answers.
-import type { Account, BillingAccount, Provider } from "./providers.ts";
+import type {
+  Account,
+  BillingAccount,
+  ClientRow,
+  Provider,
+} from "./providers.ts";
 import type { RelaySource } from "./prices-relays.ts";
 import type { Quota } from "./quota.ts";
 import type {
@@ -108,8 +113,9 @@ export interface MachineStatus {
 }
 export interface Snapshot {
   /** The interface language Core resolved from the Language setting and the
-   * system's preferred language; Core writes its own text in it. */
-  language?: "zh" | "en";
+   * system's preferred language, as a code ("en", "zh-Hans", "ja" …); Core
+   * writes its own text in it. Cores before 0.7 wrote "zh". */
+  language?: string;
   status?: { paused?: boolean };
   sourcePreferences?: Record<string, SourcePreferences>;
   islandEvents?: { revision: number; items: IslandEvent[] };
@@ -155,6 +161,8 @@ export interface Snapshot {
   sessions: Session[];
   timeline: TimelinePoint[];
   providers: Provider[];
+  /** From Core: every client, in the agents' order (`ClientRow`). */
+  clients?: ClientRow[];
   accounts?: Account[];
   approvals: Approval[];
   /** Native client receipts; queue acceptance alone is not delivery confirmation. */

@@ -1,3 +1,4 @@
+import { useT } from "@agent-hud/ui/format-context";
 import { Fragment } from "react";
 import { BadgeCheck, Check, LoaderCircle, X } from "lucide-react";
 import type { Approval, RequestDecision } from "@agent-hud/protocol";
@@ -12,17 +13,15 @@ export function PermissionToolCard({
   disabled,
   pending,
   light = false,
-  zh = false,
   answer,
 }: {
   request: Approval;
   disabled: boolean;
   pending: boolean;
   light?: boolean;
-  zh?: boolean;
   answer: (decision: RequestDecision) => void | Promise<void>;
 }) {
-  const t = (en: string, cn: string) => (zh ? cn : en);
+  const t = useT();
   const text = (alpha: number) =>
     light ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
   const secondary = text(0.55);
@@ -40,7 +39,7 @@ export function PermissionToolCard({
     <div style={cardColumn(9)}>
       {request.removed || request.added ? (
         <div
-          aria-label={t("Edit preview", "修改预览")}
+          aria-label={t("Edit preview")}
           style={{
             ...cardColumn(2),
             padding: 9,
@@ -143,7 +142,7 @@ export function PermissionToolCard({
             style={{ flexShrink: 0 }}
           />
           <span style={{ fontSize: 11, color: secondary, flexShrink: 0 }}>
-            {t("Always allow adds", "总是允许会添加")}
+            {t("Always allow adds")}
           </span>
           <span
             style={{
@@ -168,7 +167,7 @@ export function PermissionToolCard({
           gap: 6,
         }}
       >
-        {permissionChoices(request, zh).map((choice, index) => (
+        {permissionChoices(request, t).map((choice, index) => (
           <Fragment key={index}>
             <CardButton
               disabled={disabled}

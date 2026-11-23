@@ -11,7 +11,7 @@ use agent_hud_agents::hermes::{
     gateway::{Ask, Closed, Connection, Effect, Gateway, Input, Pending, Refusal},
     AGENT,
 };
-use agent_hud_core::l10n;
+use agent_hud_core::l10n::tr;
 use serde_json::Value;
 use std::sync::PoisonError;
 
@@ -257,31 +257,16 @@ pub(super) fn unlanded(why: Option<&Refusal>) -> (&'static str, String) {
 
 fn refused(refusal: &Refusal) -> String {
     match refusal {
-        Refusal::InvalidParams => l10n::text(
-            "Hermes 不接受这个回答",
-            "Hermes did not accept that answer.",
-        ),
-        Refusal::PermissionDenied => l10n::text(
-            "Hermes 不允许 Agent HUD 回答这个会话",
-            "Hermes did not let Agent HUD answer this session.",
-        ),
-        _ => l10n::text(
-            "Hermes 暂时无法接收这个回答",
-            "Hermes could not take the answer just now.",
-        ),
+        Refusal::InvalidParams => tr!("Hermes did not accept that answer."),
+        Refusal::PermissionDenied => tr!("Hermes did not let Agent HUD answer this session."),
+        _ => tr!("Hermes could not take the answer just now."),
     }
 }
 
 pub(super) fn unconfirmed() -> String {
-    l10n::text(
-        "Hermes 没有确认收到这个回答",
-        "Hermes did not confirm receipt of the answer.",
-    )
+    tr!("Hermes did not confirm receipt of the answer.")
 }
 
 pub(super) fn too_late() -> String {
-    l10n::text(
-        "Hermes 已不再等待这个回答",
-        "Hermes was no longer waiting for this answer.",
-    )
+    tr!("Hermes was no longer waiting for this answer.")
 }

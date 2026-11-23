@@ -3,7 +3,8 @@ import type { CustomPrice } from "./prices-relays.ts";
 
 export type ApprovalWaitMinutes = 1 | 3 | 5 | 10 | 30 | 60;
 export interface PanelBlockLayout {
-  /** `rings` are concentric (年轮) and `segments` split one ring (分段环), one
+  /**
+   * `rings` are concentric (年轮) and `segments` split one ring (分段环), one
    * per account; a layout saved before them says `ring`, read as `rings`. */
   widget?: "bar" | "rings" | "segments" | "ring" | "number" | "chart";
   hidden?: boolean;
@@ -80,6 +81,20 @@ export interface SourcePreferences {
   reminders?: boolean;
 }
 export interface AppSettings {
+  /** Live status and completion reminders for every client; each client's
+   * own switch holds beneath it. Default on. */
+  liveStatus?: boolean;
+  /** Approval requests and questions answered in the HUD; off, every client
+   * asks by itself. Default on. */
+  answerInHud?: boolean;
+  /** Clients (`ClientRow.id`) whose requests stay with them while answering
+   * in the HUD is on. */
+  answerOff?: string[];
+  /** Permission requests allowed at once, with no card, while answering in
+   * the HUD is on; questions and plans still wait. Default off. */
+  autoApprove?: boolean;
+  /** Clients (`ClientRow.id`) not approved automatically while it is on. */
+  autoApproveOff?: string[];
   /** Display quota percentages as used or available; readings remain usedPercent. */
   quotaDisplay?: "consumed" | "remaining";
   /** Additional Codex CLI homes whose signed-in accounts should be read. */

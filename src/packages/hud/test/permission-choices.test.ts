@@ -2,7 +2,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { addCatalog, translator } from "@agent-hud/ui/format";
 import { permissionChoices } from "../src/permissions/permission-choices.ts";
+
+// The app's text in English and in Simplified Chinese, from its catalogs.
+for (const language of ["en", "zh-Hans"] as const)
+  addCatalog(
+    language,
+    JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, `../../protocol/locales/${language}.json`),
+        "utf8",
+      ),
+    ),
+  );
+const en = translator("en");
+const zh = translator("zh-Hans");
 
 // Cards a client adapter really shows, and the buttons they must get. The
 // Rust test hermes::gateway::tests::buttons checks the same file from the
@@ -18,8 +33,8 @@ const contract = JSON.parse(
     "utf8",
   ),
 );
-const drawn = (card: Parameters<typeof permissionChoices>[0], zh = false) =>
-  permissionChoices(card, zh).map(({ label, decision }) => ({
+const drawn = (card: Parameters<typeof permissionChoices>[0], t = en) =>
+  permissionChoices(card, t).map(({ label, decision }) => ({
     label,
     decision,
   }));
@@ -73,7 +88,7 @@ test("a card with rules Core does not label keeps its one Always allow button", 
       },
     ],
   };
-  assert.deepEqual(permissionChoices(hook), [
+  assert.deepEqual(permissionChoices(hook, en), [
     { tone: "deny", label: "Deny", decision: { kind: "deny" } },
     {
       tone: "lasting",
@@ -94,7 +109,7 @@ test("a card with rules Core does not label keeps its one Always allow button", 
     ["Deny", "Allow this conversation"],
   );
   assert.deepEqual(
-    drawn({ ...native, allowLabel: null }, true).map((c) => c.label),
+    drawn({ ...native, allowLabel: null }, zh).map((c) => c.label),
     ["拒绝", "批准一次"],
   );
 });

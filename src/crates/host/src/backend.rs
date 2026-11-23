@@ -29,6 +29,7 @@ impl Backend {
         app.state::<system::System>().project(&mut value);
         app.state::<system::Sounds>().observe(&value);
         shell::watching(watches(&value));
+        crate::appearance::remember(app, &value["settings"]);
         if let Some(tools) = &self.tools {
             value["connection"]["localTools"] =
                 tools.configure(tools::channel_wanted(&value["settings"]));

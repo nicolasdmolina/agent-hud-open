@@ -7,6 +7,7 @@ import {
   latestNews,
   newsSince,
   nextStep,
+  atStep,
   starAfterMs,
   tourOrder,
   type NewsEntry,
@@ -86,7 +87,7 @@ test("closing keeps the newest version seen, and the menu shows the newest news"
 test("the tour goes from the HUD to each Settings row and ends with the Star", () => {
   const row = (id: string) => ({
     id,
-    page: "agent-plugins",
+    page: "agents",
     anchor: id,
     title: ["", ""] as [string, string],
     body: ["", ""] as [string, string],
@@ -96,4 +97,16 @@ test("the tour goes from the HUD to each Settings row and ends with the Star", (
   assert.equal(nextStep("mode", order), "client-hooks");
   assert.equal(nextStep("star", order), null);
   assert.equal(nextStep("gone", order), null);
+});
+
+test("taking the tour from the news counts the news as seen", () => {
+  const touring = atStep(closed(record({ since: 1 }), "0.6.4"), "hud");
+  assert.deepEqual(guideAtLaunch(touring, "0.6.4", news, now), {
+    kind: "tour",
+    step: "hud",
+  });
+  assert.equal(
+    guideAtLaunch(closed(touring, "0.6.4"), "0.6.4", news, now),
+    null,
+  );
 });

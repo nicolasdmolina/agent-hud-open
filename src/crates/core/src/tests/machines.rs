@@ -314,6 +314,7 @@ fn a_snapshot_no_channel_told_machines_has_exactly_the_keys_it_had() {
             "approvals",
             "billing",
             "capabilities",
+            "clients",
             "connection",
             "generatedAt",
             "indexing",

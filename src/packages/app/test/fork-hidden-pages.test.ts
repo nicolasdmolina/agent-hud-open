@@ -2,17 +2,22 @@
 // pairing page, even when a product page asks to sit before it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { translator } from "@agent-hud/ui/format";
 import { sidebarPages } from "../src/settings/pages.ts";
 
 test("the fork's Settings sidebar has no Local Network page", () => {
-  const ids = sidebarPages([
-    {
-      id: "extra",
-      title: "Extra",
-      before: "local-network",
-      render: () => null,
-    },
-  ]).map((page) => page.id);
+  const ids = sidebarPages(
+    [
+      {
+        id: "extra",
+        title: "Extra",
+        before: "local-network",
+        render: () => null,
+      },
+    ],
+    translator("en"),
+    "en",
+  ).map((page) => page.id);
   assert.ok(!ids.includes("local-network"));
   assert.ok(ids.includes("extra"));
 });

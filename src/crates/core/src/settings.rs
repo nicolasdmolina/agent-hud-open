@@ -97,8 +97,7 @@ impl crate::AgentHudCore {
             self.settings = previous;
             return Err(error);
         }
-        self.requests
-            .set_hold_ms(self.settings["approvalWaitMinutes"].as_u64().unwrap_or(10) * 60_000);
+        self.requests.apply_settings(&self.settings);
         Ok(true)
     }
 
@@ -110,8 +109,11 @@ impl crate::AgentHudCore {
             self.settings = previous;
             return Err(error);
         }
-        if key == "approvalWaitMinutes" {
-            self.requests.set_hold_ms(value.as_u64().unwrap() * 60_000);
+        if matches!(
+            key,
+            "approvalWaitMinutes" | "autoApprove" | "autoApproveOff" | "answerInHud" | "answerOff"
+        ) {
+            self.requests.apply_settings(&self.settings);
         }
         self.apply_user_prices();
         Ok(())
@@ -155,22 +157,16 @@ impl crate::AgentHudCore {
             | "claudeMessages"
             | "deepseekMessages"
             | "readCopilotQuota"
+            | "liveStatus"
+            | "answerInHud"
+            | "autoApprove"
             | "clientHooks"
             | "launchAtLogin"
             | "hudVisible"
             | "sound"
                 if value.is_boolean() => {}
-            // A sound by name, never a path: the host looks it up among the
-            // system's own sounds.
-            "soundNeedsYou" | "soundFinished"
-                if value.as_str().is_some_and(|name| {
-                    !name.is_empty()
-                        && name.trim() == name
-                        && name.len() <= 64
-                        && name
-                            .chars()
-                            .all(|c| c.is_alphanumeric() || " -_".contains(c))
-                }) => {}
+            // A sound by name, never a path.
+            "soundNeedsYou" | "soundFinished" if sound_alerts::names_a_sound(value) => {}
             // Passes in a row agents may message each other before the user
             // looks; null for no limit.
             "agentMessagesLimit"
@@ -179,6 +175,17 @@ impl crate::AgentHudCore {
                 if value
                     .as_u64()
                     .is_some_and(|v| [1, 3, 5, 10, 30, 60].contains(&v)) => {}
+            // Clients whose requests stay with them while answering in the HUD
+            // is on, and those not approved automatically while that is on,
+            // each once.
+            "answerOff" | "autoApproveOff"
+                if value.as_array().is_some_and(|ids| {
+                    ids.iter().enumerate().all(|(index, id)| {
+                        id.as_str()
+                            .is_some_and(|id| agent_hud_agents::split::agent_of(id).is_some())
+                            && !ids[..index].contains(id)
+                    })
+                }) => {}
             // Clients whose approval hook waits for the user to turn it on
             // (agents `Permission::opt_in`), each once.
             "optInApprovals"
@@ -255,13 +262,7 @@ impl crate::AgentHudCore {
                 }
             }
         }
-        self.requests.set_hold_ms(
-            self.settings["approvalWaitMinutes"]
-                .as_u64()
-                .filter(|v| [1, 3, 5, 10, 30, 60].contains(v))
-                .unwrap_or(10)
-                * 60_000,
-        );
+        self.requests.apply_settings(&self.settings);
         self.apply_user_prices();
         let enabled = serde_json::from_value(stored["providers"].clone())
             .map_err(|e| format!("Provider preferences could not be read: {e}"))?;

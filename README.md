@@ -23,7 +23,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/videos/agent-hud-loop.webp" alt="A tour of Agent HUD at a MacBook's notch. The glow breathes in red, yellow and green quota segments. A hover opens the panel on Claude's and Codex's quotas, a DeepSeek balance, the last 24 hours of tokens and the sessions, and a click turns Claude's quotas into burn rates. Claude then asks to run the test suite and is answered with Allow once, and its reply arrives as a New reply reminder whose card offers Return to session" width="640">
+  <img src="docs/videos/agent-hud-loop.webp" alt="A tour of Agent HUD at a MacBook's notch. The glow breathes in red, yellow and green quota segments. A hover opens the panel on Claude's and Codex's quotas, a DeepSeek balance, the last 24 hours of tokens and the sessions, and a click turns Claude's quotas into burn rates. Claude then asks to run the test suite and is answered with Allow once, and its reply arrives as a New reply reminder whose card offers Return to session" width="450"> <img src="docs/videos/simple-mode-tour.webp" alt="A tour of Simple mode on the left edge of a display. Five agent logos sit in quota rings, then show percentages and a balance. Hovering a logo writes that agent's quotas on one line, and a click opens Claude's card with its limits, burn rates and the 24-hour token bars. A permission request is answered with Allow once, a New reply reminder opens with Return to session, and the HUD is dragged to the top edge and back" width="380"><br>
+  <sub>Left: Notch mode at a MacBook's notch · Right: Simple mode on a display's left edge, with Separate agents on · Sample data</sub>
 </p>
 
 <p align="center">If Agent HUD is useful to you, a star helps other people find it.</p>
@@ -46,16 +47,13 @@ npx @agenthud/install
 
 Or download the [release](https://agenthud.app/mac). Either command installs the newest release, betas included, and on a Mac Agent HUD then updates itself. If it is already in `/Applications`, add `--adopt` to the Homebrew command.
 
+New here? Start with [Agents messaging each other](https://agenthud.app/docs/en/mcp/messaging/) and [what works on each platform](docs/platforms.md).
+
 ## On your screen.
 
 **Your agents, at a glance.** You write code, read docs or deal with something else while your agents keep working. The edge of your screen tells you who is still busy, who is done and who is waiting for you.
 
 The details are close at hand, and what needs your approval is answered right there. Every agent's progress, gathered where one glance takes it in.
-
-<p align="center">
-  <img src="docs/videos/simple-mode-tour.webp" alt="A tour of Simple mode on the left edge of a display. Five agent logos sit in quota rings, then show percentages and a balance. Hovering a logo writes that agent's quotas on one line, and a click opens Claude's card with its limits, burn rates and the 24-hour token bars. A permission request is answered with Allow once, a New reply reminder opens with Return to session, and the HUD is dragged to the top edge and back" width="640"><br>
-  <sub>Simple mode on a display's left edge, with Separate agents on · Sample data</sub>
-</p>
 
 - **Glow**: one colour per agent, from its most used quota: green under 70% used, yellow from 70%, red from 90%, with a warning before a quota runs out. It moves faster while an agent works.
 - **Hover**: quotas with their resets or burn rates, balances, the last 24 hours of tokens, and the sessions, those waiting for you first.
@@ -108,8 +106,8 @@ When Claude Code finishes a change, it can ask a Codex session to review it and 
 You can watch who is talking to whom: the sender folds its message into a paper plane and flies it to the receiver's mark, and the answer flies back the same way.
 
 - **A message, not the conversation**: only what the agent writes goes across; its session stays where it is. On one project, the project itself becomes the shared context, and the other agent reads the code for itself.
-- **Twelve agents**: Claude Code, Codex, Antigravity, DeepSeek Harness, Cursor, TRAE, WorkBuddy, ZCode, Qoder, Kimi Code, Pi and OpenCode can message each other, or start a new Claude Code, Codex or Antigravity session.
-- **Never in the way**: a message never interrupts a turn. It waits until its session is idle.
+- **Twelve agents**: Claude Code, Codex, Antigravity, DeepSeek Harness, Cursor, TRAE, WorkBuddy, ZCode, Qoder, Kimi Code, Pi and OpenCode can message each other, or start a new Claude Code, Codex, Antigravity or DeepSeek Harness session.
+- **Never in the way**: a message waits until its session is idle. Only when you ask for it can an agent steer one into a Codex session's turn in progress.
 - **Six are limited**: Cursor, TRAE, WorkBuddy, ZCode, Qoder and Kimi Code take a message only when one of their turns ends, so an idle session gets it after you start another turn there. All but WorkBuddy also cap how many they take in a row.
 
 How to turn it on and use it: [Agents messaging each other](https://agenthud.app/docs/en/mcp/messaging/).
@@ -272,7 +270,9 @@ Install and sign in to the agents you want to follow; Agent HUD finds them by it
 | **Roo&nbsp;Code** | ✓ |  |  |  |  |  |  |  |  |
 | **Goose** | ✓ |  |  |  |  |  |  |  |  |
 
-Also: the **GLM Coding Plan**, **OpenCode Go**, **MiniMax** and **Volcengine Ark** plan quotas. Qoder includes Qoder CN and QoderWork, TRAE includes TRAE CN, and Devin includes the CLI and Devin Desktop. Codex CLI approvals need its hook trusted in Codex (the Codex app's need nothing), DeepSeek Harness approvals and questions need Agent HUD's plugin (Settings → Agent plugins), and Copilot's approvals and quota are each turned on in Settings. Qoder's, WorkBuddy's and TRAE's quotas show once you sign in to the vendor's site in Agent HUD's own window. TRAE reports no tokens, so only its sessions show, and it runs Agent HUD's hooks once you turn on its global hooks. Qoder records tokens, and so its turns, only for a model on your own key or with `QODER_EXPOSE_TOKEN_USAGE` set. A jump back to a terminal pane needs iTerm2, and Cursor opens a cloud agent's chat but only a local chat's folder. An agent marked Limited under [Agent messages](https://agenthud.app/docs/en/mcp/messaging/) takes a message only when one of its turns ends, not while idle, and cannot be started in a new session; only an interactive Qoder CLI session takes one while idle. Agent messages work with OpenCode 1, and Qoder CN and QoderWork take them without sending. Factory Droid's quota needs a Factory API key, and Devin's quotas come from its CLI's local cache. Cursor's tokens come from Cursor 3.27 or later. Grok Bot's bots run on Cursor's servers, which report each bot's daily tokens; an account merged into SuperGrok reports none, so only its sessions show. Grok Bot's weekly quota comes from the same servers when Cursor is signed in to the Bot's account, otherwise from the Bot's own cache, which it refreshes only while in use. An account merged into SuperGrok has one weekly limit for Cursor and Grok Bot, and Cursor's block shows it as Cursor does.
+**Limited** messaging means a message goes in only when one of the session's turns ends: an idle session does not get it until you start another turn there.
+
+Also: the **GLM Coding Plan**, **OpenCode Go**, **MiniMax** and **Volcengine Ark** plan quotas. Qoder includes Qoder CN and QoderWork, TRAE includes TRAE CN, and Devin includes the CLI and Devin Desktop. Codex CLI approvals need its hook trusted in Codex (the Codex app's need nothing), DeepSeek Harness approvals and questions need Agent HUD's plugin (Settings → Agent plugins), and Copilot's approvals and quota are each turned on in Settings. Qoder's, WorkBuddy's and TRAE's quotas show once you sign in to the vendor's site in Agent HUD's own window. TRAE reports no tokens, so only its sessions show, and it runs Agent HUD's hooks once you turn on its global hooks. Qoder records tokens, and so its turns, only for a model on your own key or with `QODER_EXPOSE_TOKEN_USAGE` set. A jump back to a terminal pane needs iTerm2, and Cursor opens a cloud agent's chat but only a local chat's folder. An agent marked Limited under [Agent messages](https://agenthud.app/docs/en/mcp/messaging/) takes a message only when one of its turns ends, not while idle, and cannot be started in a new session; only an interactive Qoder CLI session takes one while idle. OpenCode 2, Qoder CN and QoderWork take agent messages without sending them. Factory Droid's quota needs a Factory API key, and Devin's quotas come from its CLI's local cache. Cursor's tokens come from Cursor 3.27 or later. Grok Bot's bots run on Cursor's servers, which report each bot's daily tokens; an account merged into SuperGrok reports none, so only its sessions show. Grok Bot's weekly quota comes from the same servers when Cursor is signed in to the Bot's account, otherwise from the Bot's own cache, which it refreshes only while in use. An account merged into SuperGrok has one weekly limit for Cursor and Grok Bot, and Cursor's block shows it as Cursor does.
 
 ## Keep your data safe.
 

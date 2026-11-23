@@ -21,6 +21,19 @@ pub(super) fn wait_for_answer(
     if request.requires_user_reviewer && !reviewer::is_user(requests, &request.source, payload) {
         return None;
     }
+    // Approved automatically for its client: the HUD's Allow, with no card.
+    // Questions and plans still wait for the user.
+    if request.kind == "permission"
+        && requests.auto_approves(&request.source, payload[super::CLIENT_KEY].as_str())
+    {
+        // Agent HUD Fork (ticket 66): it showed no card, so it makes no
+        // sound; core is told which session it was allowed in.
+        requests.note_auto_approved(&request.source, &request.session_id, now_ms());
+        return request
+            .response(&serde_json::json!({"kind":"allow"}))
+            .ok()
+            .flatten();
+    }
     reminders.record(source, flag, payload);
     let ticket = requests.register(request, now_ms());
     let response = loop {
@@ -66,4 +79,81 @@ pub(crate) fn settles_in_transcript(source: &str) -> bool {
         .ok()
         .and_then(|(_, hooks)| hooks.permission.as_ref())
         .is_some_and(|permission| permission.settles_in_transcript)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_hud_core::requests::AutoApprove;
+    use serde_json::json;
+
+    fn claude_asks(client: Option<&str>) -> serde_json::Value {
+        let mut payload = json!({"session_id": "s1", "cwd": "/w",
+            "hook_event_name": "PermissionRequest", "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"}});
+        if let Some(client) = client {
+            payload[super::super::CLIENT_KEY] = json!(client);
+        }
+        payload
+    }
+
+    /// Approved automatically: Claude Code hears Allow at once, with no
+    /// card; a client it is off for still waits for the user.
+    #[test]
+    fn an_approved_client_hears_allow_at_once() {
+        let requests = Requests::default();
+        let reminders = reminders::Reminders::default();
+        requests.set_auto_approve(AutoApprove::from_settings(&json!({
+            "autoApprove": true,
+            "autoApproveOff": ["claude-desktop"],
+        })));
+        let ask = |client| {
+            wait_for_answer(
+                &requests,
+                &reminders,
+                "claude",
+                "--permission-hook",
+                &claude_asks(client),
+                || false,
+            )
+        };
+        let reply = ask(Some("claude")).unwrap();
+        assert_eq!(reply["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        // Off for Claude Desktop: no answer comes, the user is asked.
+        assert!(ask(Some("claude-desktop")).is_none());
+        requests.set_auto_approve(AutoApprove::default());
+        assert!(ask(Some("claude")).is_none());
+    }
+
+    /// Agent HUD Fork (ticket 66): a request allowed with no card is told
+    /// to core with its session, so the wait its session shows for a
+    /// moment makes no sound; one that waits for the user is not.
+    #[test]
+    fn an_approved_request_is_noted_with_its_session_for_the_sound_decision() {
+        let requests = Requests::default();
+        let reminders = reminders::Reminders::default();
+        let ask = |client| {
+            wait_for_answer(
+                &requests,
+                &reminders,
+                "claude",
+                "--permission-hook",
+                &claude_asks(client),
+                || false,
+            )
+        };
+        assert!(ask(Some("claude")).is_none());
+        assert!(requests.auto_approved(now_ms()).is_empty());
+        requests.set_auto_approve(AutoApprove::from_settings(&json!({"autoApprove": true})));
+        assert!(ask(Some("claude")).is_some());
+        let noted = requests.auto_approved(now_ms());
+        let session = agent_hud_agents::parse_request("claude", &claude_asks(Some("claude")))
+            .unwrap()
+            .unwrap()
+            .session_id;
+        assert_eq!(
+            noted.keys().collect::<Vec<_>>(),
+            [&format!("claude:{session}")]
+        );
+    }
 }

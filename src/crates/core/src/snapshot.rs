@@ -2,6 +2,7 @@
 //! pass, then sessions, quotas, balances, accounts and providers as of the
 //! metrics clock.
 use super::*;
+use crate::l10n::tr;
 
 mod balances;
 mod card_only_rows;
@@ -45,7 +46,7 @@ pub(crate) struct ListedRows {
     /// Each listed session's row with the log it came from.
     rows: Vec<(PathBuf, Value)>,
     /// Carded sessions' requests before cards hid any (`sound_alerts`).
-    heard: presentation::requests::Heard,
+    pub(crate) heard: presentation::requests::Heard,
 }
 
 impl crate::AgentHudCore {
@@ -111,11 +112,10 @@ impl crate::AgentHudCore {
         }
         self.source_notice = notice.or_else(|| {
             (remaining > 0).then(|| {
-                if l10n::chinese() {
-                    format!("正在索引 {remaining} 个会话日志，索引完成前 Token 合计不完整")
-                } else {
-                    format!("Indexing {remaining} transcript files. Token totals are partial until indexing finishes.")
-                }
+                tr!(
+                    count = remaining,
+                    "Indexing {{count}} transcript files. Token totals are partial until indexing finishes."
+                )
             })
         });
     }
@@ -178,7 +178,9 @@ impl crate::AgentHudCore {
             .selected
             .iter()
             .filter_map(|path| self.logs.get(path))
-            .filter(|head| !head.gone && !head.live.is_internal)
+            .filter(|head| {
+                !head.gone && !head.live.is_internal && !projection.earlier.contains_key(&head.path)
+            })
             .collect::<Vec<_>>();
         let children = Self::active_subagents(&logs, now);
         // Every state change a log can make without a new event falls within
@@ -223,8 +225,9 @@ impl crate::AgentHudCore {
         let presented_at = now;
         let now = wall_clock_ms();
         let sessions = self.session_rows(presented_at, now, at);
-        let approvals = self.requests.views(now);
+        let approvals = self.answered_here(self.requests.views(now), &sessions);
         let providers = self.provider_rows(at);
+        let clients = self.client_rows(&providers, at);
         let pending_meter = self.pending_meter_bounds();
         // Pausing a failed read stops the indexing timer, but does not make
         // its unread history complete. Consumers use this fact, not notices.
@@ -256,19 +259,13 @@ impl crate::AgentHudCore {
         let island_events = self
             .island_events
             .update(&sessions, &quotas, &accounts, &providers, now);
-        let heard = sound_alerts::Heard {
-            sightings: self.listed_rows.as_ref().map(|(_, rows)| &rows.heard),
-            calls: self.requests.calls(),
-        };
-        let sound_alerts =
-            self.sound_alerts
-                .update(&island_events, &sessions, &heard, &self.settings, now);
+        let sound_alerts = self.sound_look(&island_events, &sessions, now);
         self.render.last = Some((self.render_key(), self.render_due(now)));
         let projection = self
             .usage_projection
             .as_ref()
             .expect("usage projection prepared");
-        let mut snapshot = json!({"islandEvents":island_events,"soundAlerts":sound_alerts,"schemaVersion":1,"statisticsRevision":self.statistics.revision,"sessionsRevision":self.sessions_revision,"sessionScope":"recent","indexing":indexing,"generatedAt":Utc::now().to_rfc3339(),"mode":if self.demo{"demo"}else{"live"},"connection":{"status":"connected","platform":self.platform,"message":notice.unwrap_or_else(|| l10n::text("本机会话日志与客户端事件；回调连接状态另行显示", "Local transcripts and client events; hook connection status is reported separately."))},"totals":projection.totals.json(),"quotas":quotas,"accounts":accounts,"sessions":sessions,"timeline":projection.timeline,"providers":providers,"approvals":approvals,"requestDeliveries":deliveries,"settings":self.settings,"language":if crate::l10n::chinese(){"zh"}else{"en"},"capabilities":serde_json::from_str::<Value>(include_str!("../../../packages/protocol/capabilities.json")).expect("checked-in capability manifest"),"billing":billing,"relays":relays});
+        let mut snapshot = json!({"islandEvents":island_events,"soundAlerts":sound_alerts,"schemaVersion":1,"statisticsRevision":self.statistics.revision,"sessionsRevision":self.sessions_revision,"sessionScope":"recent","indexing":indexing,"generatedAt":Utc::now().to_rfc3339(),"mode":if self.demo{"demo"}else{"live"},"connection":{"status":"connected","platform":self.platform,"message":notice.unwrap_or_else(|| tr!("Local transcripts and client events; hook connection status is reported separately."))},"totals":projection.totals.json(),"quotas":quotas,"accounts":accounts,"sessions":sessions,"timeline":projection.timeline,"providers":providers,"clients":clients,"approvals":approvals,"requestDeliveries":deliveries,"settings":self.settings,"language":crate::l10n::current().code(),"capabilities":serde_json::from_str::<Value>(include_str!("../../../packages/protocol/capabilities.json")).expect("checked-in capability manifest"),"billing":billing,"relays":relays});
         self.requests.machines_into(&mut snapshot);
         Ok(snapshot)
     }

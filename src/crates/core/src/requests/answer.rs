@@ -3,7 +3,7 @@
 //! decision passes: a request whose card says its client cannot be
 //! reached (`unreachable`) takes none, and stays as it is.
 use super::{back::Taken, Content, Requests};
-use crate::l10n;
+use crate::l10n::tr;
 use serde_json::Value;
 use std::sync::PoisonError;
 
@@ -14,10 +14,11 @@ impl Requests {
     pub fn checked(&self, id: &str, decision: &Value, now_ms: i64) -> Result<Value, String> {
         self.expire(now_ms);
         let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let item =
-            state.pending.iter().find(|p| p.id == id).ok_or_else(|| {
-                l10n::text("这个请求已不再等待", "This request is no longer waiting")
-            })?;
+        let item = state
+            .pending
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| tr!("This request is no longer waiting"))?;
         let view = match &item.content {
             Content::Hook(request) => request.view(id, item.created_ms),
             Content::Native(view) => view.clone(),
@@ -34,9 +35,7 @@ impl Requests {
                 .pending
                 .iter()
                 .position(|p| p.id == id)
-                .ok_or_else(|| {
-                    l10n::text("这个请求已不再等待", "This request is no longer waiting")
-                })?;
+                .ok_or_else(|| tr!("This request is no longer waiting"))?;
             let response = match &state.pending[index].content {
                 Content::Hook(request) => {
                     validate_native_decision(
@@ -83,9 +82,8 @@ impl Requests {
         if delivered {
             Ok(())
         } else {
-            Err(l10n::text(
-                "客户端在回答送达前已停止等待",
-                "The client stopped waiting before this answer was delivered",
+            Err(tr!(
+                "The client stopped waiting before this answer was delivered"
             ))
         }
     }
@@ -102,10 +100,7 @@ fn reachable(view: &Value, decision: &Value) -> Result<(), String> {
     if decision.get("kind").and_then(Value::as_str) == Some("leave") {
         return Ok(());
     }
-    Err(why.map_or_else(
-        || l10n::text("现在无法送达这个回答", "This cannot be answered right now"),
-        str::to_owned,
-    ))
+    Err(why.map_or_else(|| tr!("This cannot be answered right now"), str::to_owned))
 }
 fn validate_native_decision(view: &Value, decision: &Value) -> Result<(), String> {
     let kind = decision

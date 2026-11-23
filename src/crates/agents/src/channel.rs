@@ -130,8 +130,21 @@ pub struct Channel {
     /// transcript is read, since the transcript can add no second sighting of
     /// what the card already told.
     pub transcript_shows_pending: bool,
+    /// Whether every request it carries waits for the person. Approve
+    /// automatically (`agent_hud_core::requests::AutoApprove`) never
+    /// answers a request of such a client, and Settings offers no switch
+    /// for it there.
+    pub answered_by_hand: bool,
     /// Where it runs. An unsupported OS never starts it.
     pub support: PerOs<()>,
+}
+
+/// Whether the requests of the agent `id` always wait for the person
+/// (`Channel::answered_by_hand`).
+pub fn answered_by_hand(id: &str) -> bool {
+    crate::by_id(id)
+        .and_then(|agent| agent.channel)
+        .is_some_and(|channel| channel.answered_by_hand)
 }
 
 impl Channel {

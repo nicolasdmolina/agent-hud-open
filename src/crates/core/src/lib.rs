@@ -1,6 +1,7 @@
 //! Portable domain engine. No Tauri, Swift, system frameworks or process execution.
 //! Source directories and operating-system actions are supplied by the platform boundary.
 //! Files are streamed and cached by offset; incomplete trailing records are retried.
+use crate::l10n::tr;
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -13,6 +14,8 @@ use std::{
 
 mod accounts;
 mod billing_metrics;
+mod client_spends;
+mod client_switches;
 mod clients;
 mod compressed;
 mod conversation;
@@ -57,7 +60,7 @@ pub(crate) use agent_hud_agents::claude::jobs as claude_jobs;
 pub use agent_hud_agents::grok::cache as grok_cache;
 #[cfg(test)]
 pub(crate) use agent_hud_agents::transcript::live as live_facts;
-pub use agent_hud_agents::{naming, protobuf};
+pub use agent_hud_agents::{naming, protobuf, split};
 pub(crate) use agent_hud_agents::{
     LiveLog, Log, TimelineBucket, Usage, DATA_VERSION, PARSER_VERSION,
 };
@@ -130,6 +133,10 @@ pub struct AgentHudCore {
     /// waiting means the ledger has been read through.
     listed_once: bool,
     discovery: Vec<ProviderDiscovery>,
+    /// What was found of each client an agent is split into (`agents::split`).
+    client_discovery: Vec<ProviderDiscovery>,
+    /// What each client can do with Agent HUD, by client id (platform's).
+    client_features: HashMap<String, Vec<String>>,
     reads: ingestion::Reads,
     usage_projection: Option<UsageProjection>,
     accounts: AccountProjection,
@@ -172,7 +179,7 @@ impl AgentHudCore {
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or(Value::Null);
-        let mut settings = json!({"quotaDisplay":"consumed","codexHomes":[],"claudeHomes":[],"antigravityCliSettings":[],"appearance":"system","appearanceFollowsScreen":false,"language":"system","clientHooks":false,"optInApprovals":[],"readCopilotQuota":false,"approvalWaitMinutes":10,"launchAtLogin":true,"animations":true,"hudVisible":true,"showMenuBarIcon":true,"hudTools":false,"claudeAnswers":true,"agentMessages":false,"agentMessagesAsUser":false,"agentMessagesLimit":10,"claudeMessages":true,"deepseekMessages":true,"relayReading":[],"customPrices":{},"relayMultipliers":{},"localKinds":{},"sound":false,"soundNeedsYou":sound_alerts::NEEDS_YOU_SOUND,"soundFinished":sound_alerts::FINISHED_SOUND,"guide":null});
+        let mut settings = json!({"quotaDisplay":"consumed","codexHomes":[],"claudeHomes":[],"antigravityCliSettings":[],"appearance":"system","appearanceFollowsScreen":false,"language":"system","clientHooks":false,"optInApprovals":[],"readCopilotQuota":false,"approvalWaitMinutes":10,"launchAtLogin":true,"animations":true,"hudVisible":true,"showMenuBarIcon":true,"hudTools":false,"claudeAnswers":true,"agentMessages":false,"agentMessagesAsUser":false,"agentMessagesLimit":10,"claudeMessages":true,"deepseekMessages":true,"liveStatus":true,"answerInHud":true,"answerOff":[],"autoApprove":false,"autoApproveOff":[],"relayReading":[],"customPrices":{},"relayMultipliers":{},"localKinds":{},"sound":false,"soundNeedsYou":sound_alerts::NEEDS_YOU_SOUND,"soundFinished":sound_alerts::FINISHED_SOUND,"guide":null});
         if let Some(values) = stored["settings"].as_object() {
             for (key, value) in values {
                 if settings.get(key).is_some() {
@@ -185,7 +192,7 @@ impl AgentHudCore {
         }
         let enabled = serde_json::from_value(stored["providers"].clone()).unwrap_or_default();
         let opened = database::open(&app_data);
-        let (database, logs, session_map, last_synced_at_ms, storage_issue) = match opened {
+        let (database, mut logs, session_map, last_synced_at_ms, storage_issue) = match opened {
             Ok((database, logs, session_map, last_synced_at_ms)) => {
                 (Some(database), logs, session_map, last_synced_at_ms, None)
             }
@@ -194,24 +201,23 @@ impl AgentHudCore {
                 HashMap::new(),
                 HashMap::new(),
                 0,
-                Some(format!(
-                    "{}{error}",
-                    l10n::text("会话解析进度无法保存：", "Checkpoint storage unavailable: ")
+                Some(tr!(
+                    "Checkpoint storage unavailable: {{error}}",
+                    error = error
                 )),
             ),
         };
         let recorded = database.as_ref().and_then(data_version::recorded);
+        // Logs whose calls the ledger lost are read again, as a run of its own.
+        let lost = database.as_ref().map_or(0, |db| {
+            data_version::mark_lost_calls(db, &mut logs).unwrap_or(0)
+        });
         let indexing_run = database
             .as_ref()
-            .and_then(|_| data_version::run_at_launch(recorded.as_deref(), &logs));
+            .and_then(|_| data_version::run_at_launch(recorded.as_deref(), &logs))
+            .or((lost > 0).then_some(data_version::Run::Again));
         let requests = requests::Requests::default();
-        requests.set_hold_ms(
-            settings["approvalWaitMinutes"]
-                .as_u64()
-                .filter(|v| [1, 3, 5, 10, 30, 60].contains(v))
-                .unwrap_or(10)
-                * 60_000,
-        );
+        requests.apply_settings(&settings);
         Self {
             requests,
             hook_events: hook_events::HookEvidence::default(),
@@ -249,6 +255,8 @@ impl AgentHudCore {
             indexing_run,
             listed_once: false,
             discovery: Vec::new(),
+            client_discovery: Vec::new(),
+            client_features: HashMap::new(),
             reads: Default::default(),
             usage_projection: None,
             accounts: AccountProjection::default(),

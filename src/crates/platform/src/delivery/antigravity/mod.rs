@@ -7,6 +7,9 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 mod cascade_config;
+mod model_list;
+mod picker;
+pub(super) use model_list::models;
 // How a message reaches an existing cascade: straight to the language
 // server on macOS and Linux; to the service that opened the session on
 // Windows, where interrupting is not adapted.
@@ -75,7 +78,13 @@ impl AntigravityTransport for NativeAntigravityTransport {
                     ),
                     Operation::Interrupt => unreachable!(),
                 };
-                transport::send(cascade_id, &request.text, strategy)?;
+                // Says why, when the message went in the default model.
+                let note = transport::send(
+                    cascade_id,
+                    &request.text,
+                    strategy,
+                    request.model.as_deref(),
+                )?;
                 Ok(Receipt {
                     provider: Provider::Antigravity,
                     session_id: target.session_id.clone(),
@@ -88,7 +97,7 @@ impl AntigravityTransport for NativeAntigravityTransport {
                     owner_client_id: None,
                     state,
                     at_ms: millis(SystemTime::now()),
-                    reason: None,
+                    reason: note,
                 })
             }
         }
@@ -121,13 +130,14 @@ pub fn start_cascade(folder: &Path, request: &StartRequest) -> Result<StartRecei
         .filter(|id| valid_uuid(id))
         .ok_or(Failure::AcceptanceUncertain)?
         .to_owned();
+    let (config, _) = resolve_cascade_config(None, request.model.as_deref());
     let sent = call(
         "SendUserCascadeMessage",
         message_body(
             &id,
             &request.text,
             "MESSAGE_DELIVERY_STRATEGY_UNSPECIFIED",
-            false,
+            config,
         ),
     );
     Ok(StartReceipt {
@@ -142,21 +152,7 @@ pub fn start_cascade(folder: &Path, request: &StartRequest) -> Result<StartRecei
     })
 }
 
-fn message_body(cascade_id: &str, text: &str, strategy: &str, existing: bool) -> Value {
-    message_body_with_config(
-        cascade_id,
-        text,
-        strategy,
-        resolve_cascade_config(existing.then_some(cascade_id)),
-    )
-}
-
-fn message_body_with_config(
-    cascade_id: &str,
-    text: &str,
-    strategy: &str,
-    config: Option<Value>,
-) -> Value {
+fn message_body(cascade_id: &str, text: &str, strategy: &str, config: Option<Value>) -> Value {
     let mut body = json!({
         "metadata": metadata(),
         "cascadeId": cascade_id,

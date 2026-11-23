@@ -9,26 +9,40 @@ impl Messaging {
         host: &Host<'_>,
         now: i64,
     ) -> Result<Value> {
-        let zh = language(host.snapshot);
+        let language = language(host.snapshot);
         let client = arguments["client"].as_str().ok_or("client is required")?;
         let text = arguments["text"].as_str().ok_or("text is required")?;
-        if client == "deepseek" {
-            return Ok(refused(&words::deepseek_no_start(zh)));
+        if is_sub_agent(host.snapshot, caller) {
+            return Ok(refused(&words::from_sub_agent(language)));
         }
-        if !matches!(client, "claude" | "codex" | "antigravity") {
-            return Ok(refused(&words::other_client(zh)));
+        let reply_hint = arguments["reply_hint"].as_bool().unwrap_or(true);
+        if !matches!(client, "claude" | "codex" | "antigravity" | "deepseek") {
+            return Ok(refused(&words::other_client(language)));
         }
-        if let Some(reason) = check_text(text, zh) {
+        // "Send messages" off on the Harness plugin's row: the first message
+        // would go in through that plugin.
+        if client == "deepseek" && !self.preferences.deepseek {
+            return Ok(refused(DEEPSEEK_MESSAGES_OFF));
+        }
+        if let Some(reason) = check_text(text, language) {
             return Ok(refused(&reason));
         }
+        let model = match self.named_model(client, arguments, false, language) {
+            Ok(model) => model,
+            Err(reason) => return Ok(refused(&reason)),
+        };
         let provider = provider(client);
         let offers = self.starts.offers_for(&all_sessions(host.snapshot));
         let Some(offer) = offers.iter().find(|offer| offer.provider == provider) else {
-            return Ok(refused(&words::cannot_start(zh, client)));
+            return Ok(refused(&if client == "deepseek" {
+                words::deepseek_cannot_start(language)
+            } else {
+                words::cannot_start(language, client)
+            }));
         };
         let folder = match arguments["folder"].as_str() {
             Some(folder) => folder.to_owned(),
-            None => find(host.snapshot, &caller.session_id)
+            None => find_in(host.snapshot, &caller.client, &caller.session_id)
                 .and_then(|session| session["cwd"].as_str())
                 .and_then(|cwd| self.starts.offered_folder(cwd))
                 .unwrap_or_default(),
@@ -39,7 +53,7 @@ impl Messaging {
             offer.folders.contains(&folder)
         };
         if !offered {
-            return Ok(refused(&words::folder(zh, &folder, &offer.folders)));
+            return Ok(refused(&words::folder(language, &folder, &offer.folders)));
         }
         let (chain, count) = self.next_pass(caller, host, None);
         let sender = party(host.snapshot, &caller.client, &caller.session_id);
@@ -54,12 +68,12 @@ impl Messaging {
             .is_none_or(|left| same_session(&left, &caller.session_id));
         if let Some(limit) = self.preferences.limit.filter(|limit| count > *limit) {
             (self.fly)(flight(&sender, &newcomer, from_left, true, true));
-            return Ok(refused(&words::limit(zh, limit)));
+            return Ok(refused(&words::limit(language, limit)));
         }
         let id = message_id();
         let form = self.form();
         let from = party(host.snapshot, &caller.client, &caller.session_id);
-        let delivered = words::compose(zh, form, &from, client, &id, None, text);
+        let delivered = words::compose(language, form, &from, client, &id, None, reply_hint, text);
         let request_id = uuid::Uuid::new_v4().to_string();
         let receipt = self.starts.start_with(
             StartRequest {
@@ -68,6 +82,7 @@ impl Messaging {
                 text: delivered.clone(),
                 folder,
                 title: Some(text.to_owned()),
+                model,
             },
             &offers,
         );
@@ -116,6 +131,7 @@ impl Messaging {
             turn: None,
             answered: false,
             replied_by: None,
+            steered_into: None,
         });
         let newcomer = Party {
             session_id: session.clone().unwrap_or_default(),

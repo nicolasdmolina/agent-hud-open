@@ -1,13 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { MachineStatus } from "@agent-hud/protocol";
+import { addCatalog, translator } from "@agent-hud/ui/format";
 import {
   machineTimes,
   showsMachines,
 } from "../src/settings/agents/machines-list.ts";
 
-const en = (english: string) => english;
-const zh = (_: string, chinese: string) => chinese;
+// The app's text in English and in Simplified Chinese, from its catalogs.
+for (const language of ["en", "zh-Hans"] as const)
+  addCatalog(
+    language,
+    JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, `../../protocol/locales/${language}.json`),
+        "utf8",
+      ),
+    ),
+  );
+const en = translator("en");
+const zh = translator("zh-Hans");
 const now = Date.parse("2026-11-14T12:00:00Z");
 const far: MachineStatus = {
   id: "a",
@@ -32,7 +46,7 @@ test("a connected far machine shows its two times", () => {
     "Last contact 42s ago · History checked 1h ago",
   );
   assert.equal(
-    machineTimes(far, now, "zh", zh),
+    machineTimes(far, now, "zh-Hans", zh),
     "最近联系 42s 前 · 历史检查于 1h 前",
   );
 });

@@ -3,8 +3,9 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { ReactNode } from "react";
 import type { Snapshot } from "@agent-hud/protocol";
+import type { Translate } from "@agent-hud/ui/format";
 import { Menu, ToggleRow } from "./SettingsControls";
-import { Row, Section, type Text } from "./SettingsPrimitives";
+import { Row, Section } from "./SettingsPrimitives";
 
 export const soundKeys = ["sound", "soundNeedsYou", "soundFinished"];
 
@@ -15,7 +16,7 @@ export function SoundSection({
   problem,
 }: {
   snapshot: Snapshot;
-  t: Text;
+  t: Translate;
   /** Answers whether the setting was saved. */
   save: (key: string, value: unknown) => Promise<boolean>;
   problem: ReactNode;
@@ -45,21 +46,21 @@ export function SoundSection({
   );
 
   return (
-    <Section title={t("Sound", "声音")}>
+    <Section title={t("Sound")}>
       <ToggleRow
-        title={t("Play sounds", "播放声音")}
+        title={t("Play sounds")}
         checked={on}
         disabled={host?.supported === false}
         reason={host?.notice ?? undefined}
         change={(value) => void save("sound", value)}
       />
       {picker(
-        t("Needs you", "需要你时"),
+        t("Needs you [sound]"),
         "soundNeedsYou",
         settings.soundNeedsYou ?? "Glass",
       )}
       {picker(
-        t("Finished", "完成时"),
+        t("Finished [sound]"),
         "soundFinished",
         settings.soundFinished ?? "Hero",
       )}

@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Hand, MessageSquareText } from "lucide-react";
+import { ClipboardCopy, Hand, MessageSquareText } from "lucide-react";
 import type { HUDRect } from "../geometry";
 import { HUD_METRICS, type HUDMode } from "../model";
 import { useGround } from "../ground";
 import { alertInk, alertText } from "../tokens";
 import { endBadge, ringPath, type EndSide } from "./end-geometry";
 import type { EndFade } from "./useParkedEnds";
+import { useT } from "@agent-hud/ui/format-context";
 
 const box = (rect: HUDRect) => ({
   left: rect.x,
@@ -84,9 +85,10 @@ function FadeRing({
 }
 
 /** One end of the dock: a circle with its icon, and how many wait there in a
- * badge on its edge. On a Simple dock the circle has the dock's own ground
- * and hairline; in the notch it has none of its own.
- * The tail's hairline runs down to when its oldest message goes. */
+ * badge on its edge (none at the clipboard's end while its draft is empty).
+ * On a Simple dock the circle has the dock's own ground and hairline; in the
+ * notch it has none of its own. The tail's hairline runs down to when its
+ * oldest message goes, the clipboard's to when its copy's bubble goes. */
 export function EndPill({
   side,
   rect,
@@ -100,7 +102,6 @@ export function EndPill({
   onEnter,
   onLeave,
   onPick,
-  zh,
 }: {
   side: EndSide;
   rect: HUDRect;
@@ -114,14 +115,17 @@ export function EndPill({
   onEnter: (altKey: boolean) => void;
   onLeave: (event: { relatedTarget?: EventTarget | null }) => void;
   onPick: () => void;
-  zh: boolean;
 }) {
+  const t = useT();
   const ground = useGround(light);
   const thick = Math.min(rect.width, rect.height);
   const badge = endBadge(thick, count);
   const head = side === "head";
-  const Icon = head ? Hand : MessageSquareText;
-  const accent = alertText(head ? "warning" : "turn", ground);
+  const clip = side === "clip";
+  const Icon = head ? Hand : clip ? ClipboardCopy : MessageSquareText;
+  const accent = clip
+    ? alertInk(0.86, ground)
+    : alertText(head ? "warning" : "turn", ground);
   const grounded = mode === "simple";
   return (
     <motion.div
@@ -130,12 +134,10 @@ export function EndPill({
       role="button"
       aria-label={
         head
-          ? zh
-            ? `${count} 个请求待处理`
-            : `${count} requests waiting`
-          : zh
-            ? `${count} 条消息`
-            : `${count} messages`
+          ? t("{{count}} requests waiting", { count })
+          : clip
+            ? t("Send what you copied")
+            : t("{{count}} messages", { count })
       }
       // Only opacity and scale move: they run on the compositor, so the pop
       // keeps its pace while the page is busy.
@@ -185,37 +187,39 @@ export function EndPill({
           aria-hidden="true"
         />
       </span>
-      <motion.span
-        key={count}
-        aria-hidden="true"
-        initial={reduceMotion ? false : { scale: 1.35 }}
-        animate={{ scale: 1 }}
-        transition={{ duration: 0.3, ease: HUD_METRICS.ease }}
-        style={{
-          position: "absolute",
-          left: badge.x,
-          top: badge.y,
-          height: badge.size,
-          minWidth: badge.size,
-          translate: "-50% -50%",
-          padding: "0 3px",
-          boxSizing: "border-box",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: badge.size / 2,
-          // The badge wears the dock's own ground and hairline.
-          background: fill,
-          boxShadow: `inset 0 0 0 1px ${outline}`,
-          color: alertInk(0.92, ground),
-          fontSize: badge.font,
-          fontWeight: 400,
-          lineHeight: 1,
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {badge.label}
-      </motion.span>
+      {count > 0 && (
+        <motion.span
+          key={count}
+          aria-hidden="true"
+          initial={reduceMotion ? false : { scale: 1.35 }}
+          animate={{ scale: 1 }}
+          transition={{ duration: 0.3, ease: HUD_METRICS.ease }}
+          style={{
+            position: "absolute",
+            left: badge.x,
+            top: badge.y,
+            height: badge.size,
+            minWidth: badge.size,
+            translate: "-50% -50%",
+            padding: "0 3px",
+            boxSizing: "border-box",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: badge.size / 2,
+            // The badge wears the dock's own ground and hairline.
+            background: fill,
+            boxShadow: `inset 0 0 0 1px ${outline}`,
+            color: alertInk(0.92, ground),
+            fontSize: badge.font,
+            fontWeight: 400,
+            lineHeight: 1,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {badge.label}
+        </motion.span>
+      )}
     </motion.div>
   );
 }

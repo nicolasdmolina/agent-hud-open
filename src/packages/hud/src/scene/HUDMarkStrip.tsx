@@ -4,7 +4,7 @@ import { horizontal, type HUDRect, type stripMetrics } from "../geometry";
 import type { HUDConfig, HUDEdge, HUDVendor } from "../model";
 import { Silhouette } from "./NotchSurface";
 import type { HUDNativePointer } from "./useHUDInteraction";
-import { useFormat } from "@agent-hud/ui/format-context";
+import { useT } from "@agent-hud/ui/format-context";
 import { AgentMark } from "./AgentMark";
 
 export function HUDMarkStrip({
@@ -29,8 +29,6 @@ export function HUDMarkStrip({
   dockMemory,
   nativePointer,
   reduceMotion,
-  hasAlert,
-  suppressHover,
   setHovered,
   forceOpen,
   pin,
@@ -56,27 +54,22 @@ export function HUDMarkStrip({
   dockMemory: MutableRefObject<DockMemory>;
   nativePointer?: HUDNativePointer;
   reduceMotion: boolean;
-  hasAlert: boolean;
-  suppressHover: MutableRefObject<boolean>;
   setHovered: (key: string | null) => void;
   forceOpen: () => void;
   pin: (key?: string) => void;
 }) {
-  const format = useFormat();
-  const zh = format.language === "zh";
+  const t = useT();
 
   return (
     <>
       {config.mode === "notch" ? (
         <div
           className="hud-classic-silhouette"
-          aria-label={zh ? "悬停展开 Agent HUD" : "Hover to expand Agent HUD"}
-          tabIndex={0}
+          aria-label={t("Hover to expand Agent HUD")}
+          tabIndex={-1}
           role="button"
           aria-describedby={`hud-instructions-${id}`}
-          onFocus={() => {
-            if (!hasAlert && !suppressHover.current) forceOpen();
-          }}
+          onFocus={(event) => event.currentTarget.blur()}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") forceOpen();
           }}
@@ -156,10 +149,7 @@ export function HUDMarkStrip({
               dockMemory={dockMemory}
               nativePointer={nativePointer}
               reduceMotion={reduceMotion}
-              hasAlert={hasAlert}
-              suppressHover={suppressHover}
               setHovered={setHovered}
-              forceOpen={forceOpen}
               pin={pin}
             />
           ))}

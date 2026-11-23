@@ -11,6 +11,7 @@ mod files;
 pub mod fixtures;
 mod handoffs;
 mod journal;
+pub mod models;
 pub mod process;
 mod provider;
 mod sending;
@@ -18,6 +19,7 @@ mod service;
 mod setup;
 mod starts;
 mod targets;
+pub mod undelivered;
 // What sending and starting need from the operating system: private files
 // and folders, where apps and command lines are installed, and how a client
 // link opens. macOS and Linux share `unix.rs`.
@@ -45,7 +47,7 @@ pub use codex::{
 pub use deepseek::DeepSeekChannel;
 pub use files::atomic_json;
 pub use handoffs::Handoffs;
-use host::private_dir;
+pub use host::private_dir;
 use serde::{Deserialize, Serialize};
 pub use service::hook_session_key;
 use service::valid_session_id;
@@ -96,11 +98,14 @@ impl From<std::io::Error> for Failure {
 
 /// Why a message does not go into a Claude Code session: the "Send
 /// messages" switch on its Agent HUD plugin's row is off.
-pub const CLAUDE_MESSAGES_OFF: &str =
-    "Sending messages to Claude Code is off (Settings → Agent plugins)";
+pub const CLAUDE_MESSAGES_OFF: &str = "Sending messages to Claude Code is off (Settings → Agents)";
 /// The same, for a DeepSeek Harness session.
 pub const DEEPSEEK_MESSAGES_OFF: &str =
-    "Sending messages to DeepSeek Harness is off (Settings → Agent plugins)";
+    "Sending messages to DeepSeek Harness is off (Settings → Agents)";
+
+/// Why a steer that names no turn was refused: the session has no turn in
+/// progress, so nothing was sent.
+pub const NO_TURN_TO_STEER: &str = "No turn is in progress to steer";
 
 pub use provider::Provider;
 
@@ -161,6 +166,11 @@ pub struct SendRequest {
     #[serde(default)]
     pub operation: Operation,
     pub expected_turn_id: Option<String>,
+    /// The model the session runs from these words on, as `list_models`
+    /// names it; none keeps the client's own choice. Only clients that take
+    /// one with a message do (`models::per_message`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

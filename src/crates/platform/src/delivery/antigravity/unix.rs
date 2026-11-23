@@ -19,10 +19,18 @@ pub(super) fn interrupt(cascade_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn send(cascade_id: &str, text: &str, strategy: &str) -> Result<()> {
+/// Sends a message in the configuration of the cascade's latest turn; the
+/// note says why when it went in the default model instead.
+pub(super) fn send(
+    cascade_id: &str,
+    text: &str,
+    strategy: &str,
+    model: Option<&str>,
+) -> Result<Option<String>> {
+    let (config, note) = resolve_cascade_config(Some(cascade_id), model);
     call(
         "SendUserCascadeMessage",
-        message_body(cascade_id, text, strategy, true),
+        message_body(cascade_id, text, strategy, config),
     )?;
-    Ok(())
+    Ok(note)
 }

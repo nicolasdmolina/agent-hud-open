@@ -1,6 +1,8 @@
 //! How each client starts a session: Claude Code as a background job, Codex
 //! as a new thread with its first message queued, Antigravity as a cascade
-//! on its language server or through its command line.
+//! on its language server or through its command line, DeepSeek Harness
+//! through Agent HUD's plugin in a running Harness host. And the models each
+//! one offers a new session (`delivery::models`).
 use super::super::process::StdioServer;
 use super::handoff::job_state;
 use super::*;
@@ -17,12 +19,14 @@ impl SessionStarts {
             .claude_executable
             .as_ref()
             .ok_or_else(|| Failure::Unavailable("Claude Code executable".into()))?;
-        let output = self.runner.run(&self.plan(
-            executable,
-            vec!["--bg".into(), "--".into(), request.text.clone()],
-            Some(folder),
-            30,
-        ))?;
+        let mut arguments = Vec::new();
+        if let Some(model) = &request.model {
+            arguments.extend(["--model".into(), model.clone()]);
+        }
+        arguments.extend(["--bg".into(), "--".into(), request.text.clone()]);
+        let output = self
+            .runner
+            .run(&self.plan(executable, arguments, Some(folder), 30))?;
         if output.timed_out {
             return Err(Failure::AcceptanceUncertain);
         }
@@ -37,9 +41,16 @@ impl SessionStarts {
             .flat_map(|line| line.split(|c: char| c.is_whitespace() || c == '·'))
             .find(|word| word.len() >= 6 && word.bytes().all(|b| b.is_ascii_hexdigit()));
         if output.code != Some(0) {
-            return Err(Failure::Rejected(
-                "Claude Code refused to start a background session".into(),
-            ));
+            // Claude Code says why, such as a folder it does not trust yet.
+            let why = String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .map(str::trim)
+                .rfind(|line| !line.is_empty())
+                .map(|line| line.chars().take(400).collect::<String>());
+            return Err(Failure::Rejected(match why {
+                Some(why) => format!("Claude Code refused to start a background session: {why}"),
+                None => "Claude Code refused to start a background session".into(),
+            }));
         }
         let job = job.ok_or(Failure::AcceptanceUncertain)?;
         for _ in 0..20 {
@@ -66,6 +77,11 @@ impl SessionStarts {
         request: &StartRequest,
     ) -> Result<StartReceipt> {
         let message_id = format!("agent-hud:{}", request.request_id);
+        if request.model.is_some() && !self.model_at_start(Provider::Codex) {
+            return Err(Failure::Unsupported(
+                "Codex's desktop app runs a new thread's first message in its own model".into(),
+            ));
+        }
         if !self.desktop(Provider::Codex) {
             if let Some(started) = codex::start_in_daemon(
                 &self.config.codex_data,
@@ -88,7 +104,7 @@ impl SessionStarts {
             &environment(&self.config),
             Duration::from_secs(20),
         )?;
-        let value = server.mutation("thread/start", json!({"cwd":folder,"ephemeral":false}))?;
+        let value = server.mutation("thread/start", codex::thread_start(folder, request))?;
         let id = value["thread"]["id"]
             .as_str()
             .filter(|id| valid_uuid(id))
@@ -145,6 +161,13 @@ impl SessionStarts {
     ) -> Result<StartReceipt> {
         match antigravity::start_cascade(folder, request) {
             Ok(receipt) => Ok(receipt),
+            // Its command line names models its own way: a named one is
+            // taken only by the language server.
+            Err(Failure::Unavailable(reason)) if request.model.is_some() => {
+                Err(Failure::Unavailable(format!(
+                    "{reason}; a model can be named only while Antigravity runs"
+                )))
+            }
             Err(Failure::Unavailable(reason)) => {
                 let Some(executable) = self.config.antigravity_executable.as_ref() else {
                     return Err(Failure::Unavailable(reason));
@@ -190,6 +213,59 @@ impl SessionStarts {
                 })
             }
             Err(error) => Err(error),
+        }
+    }
+    pub(super) fn start_deepseek(
+        &self,
+        folder: &Path,
+        request: &StartRequest,
+    ) -> Result<StartReceipt> {
+        let channel = self.deepseek.as_ref().ok_or_else(|| {
+            Failure::Unavailable("Agent HUD's DeepSeek Harness plugin is not installed".into())
+        })?;
+        let open = |link: &str| self.runner.open(link);
+        channel.start(
+            folder,
+            request,
+            self.desktop(Provider::DeepSeek)
+                .then_some(&open as &dyn Fn(&str) -> Result<()>),
+        )
+    }
+}
+
+impl SessionStarts {
+    /// Whether a new session of `provider` can start in a named model here.
+    /// Codex's desktop app runs a new thread's first message (from Codex's
+    /// queue) in the model chosen in the app; only the shared command-line
+    /// daemon runs it in the model the thread was started with.
+    pub fn model_at_start(&self, provider: Provider) -> bool {
+        match provider {
+            Provider::Codex => codex::MODEL_AT_START && !self.desktop(Provider::Codex),
+            Provider::Claude | Provider::Antigravity | Provider::DeepSeek => true,
+            _ => false,
+        }
+    }
+    /// The models `provider` offers now, asked of the client itself: Codex's
+    /// app-server, Antigravity's language server, Harness's plugin; Claude
+    /// Code has no list to ask, so its aliases.
+    pub fn models(&self, provider: Provider) -> Result<models::Models> {
+        match provider {
+            Provider::Claude => Ok(claude::models(&self.config.claude_config)),
+            Provider::Codex => codex::models(&self.config),
+            Provider::Antigravity => antigravity::models(),
+            Provider::DeepSeek => self
+                .deepseek
+                .as_ref()
+                .ok_or_else(|| {
+                    Failure::Unavailable(
+                        "Agent HUD's DeepSeek Harness plugin is not installed".into(),
+                    )
+                })?
+                .models(SystemTime::now()),
+            _ => Err(Failure::Unsupported(format!(
+                "Agent HUD does not start {} sessions",
+                provider.as_str()
+            ))),
         }
     }
 }

@@ -11,8 +11,8 @@ pub fn mark(source: &str) -> String {
         "github-copilot" => "copilot".into(),
         "grok-cli" => "grok".into(),
         "opencode-go" | "opencode-dark" => "opencode".into(),
-        "qoder-cn" | "qoder-work" | "qoderwork" | "qoder-dark" => "qoder".into(),
-        "trae-cn" => "trae".into(),
+        "qoderwork" => "qoder-work".into(),
+        "qoder-dark" => "qoder".into(),
         _ => key,
     }
 }
@@ -109,8 +109,12 @@ pub fn resting_agents(snapshot: &Value, mode: &str, now: i64) -> Vec<String> {
                     let at = chrono::DateTime::parse_from_rfc3339(s["updatedAt"].as_str()?)
                         .ok()?
                         .timestamp_millis();
-                    let live =
-                        snapshot["sourcePreferences"][source_id(snapshot, source)]["live"] != false;
+                    let client = s["clientId"]
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| source_id(snapshot, source));
+                    let live = snapshot["settings"]["liveStatus"] != false
+                        && snapshot["sourcePreferences"][client]["live"] != false;
                     (now <= at + QUEUE_RECENCY_MS && live).then_some((at, source))
                 })
                 .collect();

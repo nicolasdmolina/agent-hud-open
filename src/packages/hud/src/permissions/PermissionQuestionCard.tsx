@@ -1,3 +1,4 @@
+import { useT } from "@agent-hud/ui/format-context";
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, ChevronLeft, LoaderCircle } from "lucide-react";
 import type { Approval, RequestDecision } from "@agent-hud/protocol";
@@ -29,7 +30,6 @@ export function PermissionQuestionCard({
   canDismiss = !disabled,
   pending,
   light = false,
-  zh = false,
   answer,
   openSettings,
 }: {
@@ -39,12 +39,11 @@ export function PermissionQuestionCard({
   canDismiss?: boolean;
   pending: boolean;
   light?: boolean;
-  zh?: boolean;
   answer: (decision: RequestDecision) => void | Promise<void>;
-  /** Settings, on a page such as "agent-plugins"; without it the card only says where to go. */
+  /** Settings, on a page such as "agents/claude"; without it the card only says where to go. */
   openSettings?: (page: string) => void;
 }) {
-  const t = (en: string, cn: string) => (zh ? cn : en);
+  const t = useT();
   const [answers, setAnswers] = useState<Record<string, Draft>>(
     () => drafts.get(request.id)?.answers ?? {},
   );
@@ -122,7 +121,6 @@ export function PermissionQuestionCard({
         request={request}
         disabled={!canDismiss}
         light={light}
-        zh={zh}
         openSettings={openSettings}
         dismiss={() => {
           drafts.delete(request.id);
@@ -201,16 +199,13 @@ export function PermissionQuestionCard({
           {q.question}
         </div>
         {q.multiSelect && (
-          <div style={{ fontSize: 10, color: tertiary }}>
-            {t("Choose any", "可多选")}
-          </div>
+          <div style={{ fontSize: 10, color: tertiary }}>{t("Choose any")}</div>
         )}
         {q.lock && (
           <QuestionLockNote
             lock={q.lock}
             replaced={answered(value)}
             light={light}
-            zh={zh}
           />
         )}
       </div>
@@ -221,7 +216,6 @@ export function PermissionQuestionCard({
         editingCustom={editingCustom}
         disabled={disabled}
         light={light}
-        zh={zh}
         customInputRef={customInputRef}
         changeAnswer={changeAnswer}
         setEditingCustomKey={setEditingCustomKey}
@@ -250,7 +244,7 @@ export function PermissionQuestionCard({
             color={secondary}
           >
             <ArrowRight size={9} strokeWidth={2.6} />
-            {t("Skip", "跳过")}
+            {t("Skip")}
           </CardButton>
         )}
         <span style={{ flex: 1, minWidth: 8 }} />
@@ -265,7 +259,7 @@ export function PermissionQuestionCard({
             color={secondary}
           >
             <ChevronLeft size={9} strokeWidth={2.6} />
-            {t("Back", "返回")}
+            {t("Back")}
           </CardButton>
         )}
         <CardButton
@@ -282,9 +276,7 @@ export function PermissionQuestionCard({
           ) : (
             <Check size={9} strokeWidth={2.6} />
           )}
-          {safePage + 1 < questions.length
-            ? t("Next", "继续")
-            : t("Submit", "提交")}
+          {safePage + 1 < questions.length ? t("Next [question]") : t("Submit")}
         </CardButton>
       </div>
     </div>

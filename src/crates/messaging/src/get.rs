@@ -4,9 +4,11 @@ use super::*;
 impl Messaging {
     pub(crate) fn get(&mut self, id: &str, host: &Host<'_>, now: i64) -> Result<Value> {
         let clients = self.clients.clone();
-        let zh = language(host.snapshot);
+        let language = language(host.snapshot);
         let Some(message) = self.journal.find(id).cloned() else {
-            return Ok(json!({"id":id,"state":"unknown","reason":words::unknown_message(zh)}));
+            return Ok(
+                json!({"id":id,"state":"unknown","reason":words::unknown_message(language)}),
+            );
         };
         let mut message = message;
         let mut state = message.state.clone();
@@ -52,7 +54,7 @@ impl Messaging {
             .filter(|_| state != "done" || answer.is_null())
         {
             state = "replied".into();
-            reason = Some(words::replied(zh, reply));
+            reason = Some(words::replied(language, reply));
         }
         if state == "taken" || state == "queued" {
             // A queued message whose session never took it within the plugin's hour.
@@ -67,7 +69,7 @@ impl Messaging {
             message.reason = reason.clone();
             self.journal.replace(message.clone());
         }
-        let to = find(host.snapshot, &message.to.session_id);
+        let to = find_in(host.snapshot, &message.to.client, &message.to.session_id);
         Ok(json!({
             "id": message.id,
             "state": state,

@@ -13,7 +13,6 @@ pub(super) struct DragState {
     pub(super) config: HudConfig,
     pub(super) display: Display,
     pub(super) edge: Edge,
-    pub(super) mode: Mode,
     pub(super) runs: DragRuns,
     pub(super) grab_fraction: f64,
     pub(super) preview: Option<HudPlacement>,
@@ -87,10 +86,19 @@ pub async fn hud_drag_start(
                 "The HUD placement changed before pickup; measure the current strip again".into(),
             );
         }
-        let viewport = window.inner_size().map_err(|error| error.to_string())?;
-        let scale = window.scale_factor().map_err(|error| error.to_string())?;
-        let width = f64::from(viewport.width) / scale;
-        let height = f64::from(viewport.height) / scale;
+        // The page's coordinates are the canvas's, which a shallow window
+        // shows only part of.
+        let (width, height) = match state.geometry.as_ref() {
+            Some(geometry) => (geometry.canvas.width, geometry.canvas.height),
+            None => {
+                let viewport = window.inner_size().map_err(|error| error.to_string())?;
+                let scale = window.scale_factor().map_err(|error| error.to_string())?;
+                (
+                    f64::from(viewport.width) / scale,
+                    f64::from(viewport.height) / scale,
+                )
+            }
+        };
         if pointer.x < 0.0 || pointer.y < 0.0 || pointer.x > width || pointer.y > height {
             return Err("The pickup point must be inside the HUD viewport".into());
         }
@@ -109,12 +117,23 @@ pub async fn hud_drag_start(
         let display = resolve_display(&app, &config)?;
         ensure_worker(&app, &shared, &mut state)?;
         apply_ignore_cursor(&window, &mut state, false, true)?;
+        // A drag previews across the whole canvas: a shallow window grows to it first.
+        if state.depth.is_some() || !state.depth_asked {
+            configure(
+                &app,
+                config.clone(),
+                &mut state,
+                &shared,
+                display.clone(),
+                true,
+            )?;
+        }
         state.drag = Some(DragState {
             config,
             display,
             edge,
-            // The notch HUD leaves the notch as a Simple dock, and a dock stays one.
-            mode: Mode::Simple,
+            // Where it lands decides the mode: the notch HUD leaves the notch as a
+            // Simple dock, and a Simple dock dropped at the notch becomes the notch HUD.
             runs,
             grab_fraction: (grip / run).clamp(0.0, 1.0),
             preview: None,

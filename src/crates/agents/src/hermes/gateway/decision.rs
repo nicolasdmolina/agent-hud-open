@@ -23,7 +23,7 @@ use super::ask::{Approval, Ask, Batch, Choice, Pending, Question};
 use super::command::Command;
 use super::identity::SessionRef;
 use super::ticket::Scope;
-use crate::l10n;
+use crate::l10n::tr;
 use serde_json::{json, Map, Value};
 
 /// The words that answer one question, never empty: Hermes takes an empty
@@ -147,11 +147,10 @@ impl Pending {
         if kind == "leave" {
             return Ok(None);
         }
-        let empty = || l10n::text("请选择或输入回答", "Choose an option or type an answer.");
+        let empty = || tr!("Choose an option or type an answer.");
         match &self.ask {
-            Ask::Question(_) | Ask::Batch(_) if kind != "answer" => Err(l10n::text(
-                "Hermes 的提问只能回答，不能批准",
-                "Hermes's questions can only be answered, not approved.",
+            Ask::Question(_) | Ask::Batch(_) if kind != "answer" => Err(tr!(
+                "Hermes's questions can only be answered, not approved."
             )),
             Ask::Question(question) => {
                 let answer = written(decision, &question.prompt.id, question.multi_select)
@@ -177,21 +176,11 @@ impl Pending {
                     ("always", None) => Choice::Always,
                     ("always", Some("session")) => Choice::Session,
                     ("always", Some("always")) => Choice::Always,
-                    _ => {
-                        return Err(l10n::text(
-                            "Hermes 的审批只能批准或拒绝",
-                            "Hermes's approvals can only be approved or denied.",
-                        ))
-                    }
+                    _ => return Err(tr!("Hermes's approvals can only be approved or denied.")),
                 };
                 let call = approval
                     .respond(&self.session, choice, scope)
-                    .map_err(|_| {
-                        l10n::text(
-                            "Hermes 没有为这个请求提供该选项",
-                            "Hermes did not offer that choice for this request.",
-                        )
-                    })?;
+                    .map_err(|_| tr!("Hermes did not offer that choice for this request."))?;
                 Ok(Some(Reply::Call(call)))
             }
         }

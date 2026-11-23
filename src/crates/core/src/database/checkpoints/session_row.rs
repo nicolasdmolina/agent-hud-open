@@ -23,11 +23,7 @@ impl LogHead {
         // These are the log's own; `AgentHudCore::session_totals` adds its
         // sub-agents' wherever a session is shown.
         session["usage"] = self.usage.json();
-        if let Some(client) =
-            crate::naming::clients::client_name(&self.source, self.client.as_deref())
-        {
-            session["client"] = json!(client);
-        }
+        crate::client_switches::name_client(&mut session, &self.source, self.client.as_deref());
         // A far machine's sessions name it; this machine's name none.
         if let Some(machine) = &self.machine {
             session["machine"] = json!(machine);

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { createElement as h, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { MachineStatus, Snapshot } from "@agent-hud/protocol";
+import { addCatalog, translator } from "@agent-hud/ui/format";
 import { close, load, machineTags } from "./render.ts";
 
 after(close);
@@ -106,12 +107,21 @@ test("the machines list says each state in Chinese, in core's words", async () =
   }>("/src/settings/agents/MachinesSection.tsx");
   const machines = words.snapshot["zh-CN"] as MachineStatus[];
   const snapshot = {
-    language: "zh",
-    settings: { language: "zh-CN" },
+    language: "zh-Hans",
+    settings: { language: "zh-Hans" },
     machines: { [words.source]: machines },
     machinesNote: { [words.source]: words.listNote },
   } as unknown as Snapshot;
-  const t = (_en: string, zh: string) => zh;
+  addCatalog(
+    "zh-Hans",
+    JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "../../protocol/locales/zh-Hans.json"),
+        "utf8",
+      ),
+    ),
+  );
+  const t = translator("zh-Hans");
   const markup = renderToStaticMarkup(
     h(MachinesSection, { t, snapshot, source: { id: words.source } }),
   );

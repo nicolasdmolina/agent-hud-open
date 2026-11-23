@@ -17,6 +17,9 @@ use requests::Request;
 /// wait its hooks or process report without a card).
 struct Wait {
     requests: Vec<Request>,
+    /// It has no card and passed without a sound, as the wait of a request
+    /// that was allowed automatically: a card that comes in it is new.
+    passed: bool,
 }
 pub(crate) struct Tracker {
     primed: bool,
@@ -137,7 +140,9 @@ impl Tracker {
             }
             let key = format!("{source}:{id}");
             let previous = self.waits.remove(&key);
+            let before = previous.as_ref();
             let mut told = None;
+            let mut passed = false;
             for request in &now_requests {
                 let names: Vec<String> = request
                     .names
@@ -154,7 +159,7 @@ impl Tracker {
                 }
                 // A wait already told without a card is the same wait once
                 // its card comes. The look's first new request names the alert.
-                if new && !previous.as_ref().is_some_and(|p| p.requests.is_empty()) {
+                if new && !before.is_some_and(|p| p.requests.is_empty() && !p.passed) {
                     told.get_or_insert(names[0].clone());
                 }
             }
@@ -166,7 +171,12 @@ impl Tracker {
                     .or(session["updatedAt"].as_str())
                     .unwrap_or("");
                 let identity = format!("needs-you:{source}:{id}:{since}");
-                if self.first(&identity, now) && previous.is_none() {
+                // A wait with no card, just after a permission of the
+                // session was allowed automatically, is that request's: it
+                // showed no card, so it makes no sound for as long as it
+                // goes on with none.
+                passed = heard.approved.contains_key(&key) || before.is_some_and(|p| p.passed);
+                if self.first(&identity, now) && previous.is_none() && !passed {
                     told = Some(identity);
                 }
             }
@@ -182,6 +192,7 @@ impl Tracker {
                 key,
                 Wait {
                     requests: now_requests,
+                    passed,
                 },
             );
         }
@@ -215,6 +226,34 @@ impl Tracker {
             }
         }
         json!({"revision":self.revision,"items":self.items})
+    }
+}
+
+/// Whether a setting names a sound: a name, never a path. The host looks it
+/// up among the system's own sounds.
+pub(crate) fn names_a_sound(value: &Value) -> bool {
+    value.as_str().is_some_and(|name| {
+        !name.is_empty()
+            && name.trim() == name
+            && name.len() <= 64
+            && name
+                .chars()
+                .all(|c| c.is_alphanumeric() || " -_".contains(c))
+    })
+}
+
+impl AgentHudCore {
+    /// This look's alerts, with what the rows no longer show: what cards
+    /// hid, each card's call, and the sessions a permission was just
+    /// allowed in with no card.
+    pub(crate) fn sound_look(&mut self, island: &Value, sessions: &[Value], now: i64) -> Value {
+        let heard = Heard {
+            sightings: self.listed_rows.as_ref().map(|(_, rows)| &rows.heard),
+            calls: self.requests.calls(),
+            approved: self.requests.auto_approved(now),
+        };
+        self.sound_alerts
+            .update(island, sessions, &heard, &self.settings, now)
     }
 }
 

@@ -1,15 +1,18 @@
 //! Codex's quota: its CLI's own `app-server` (account/rateLimits/read and
-//! account/read), and Pi's ChatGPT sign-in, which spends the same plan. The
+//! account/read), the windows Codex's own sessions recorded (the desktop
+//! app's account, which its engine signs in apart from `auth.json`), and Pi's
+//! ChatGPT sign-in, which spends the same plan. The
 //! same app-server also says which of Agent HUD's hooks wait for the user to
 //! allow them (`hook_review`).
 use super::hook_review;
 use super::limits::parse;
 use super::pi_usage::{read_pi, PI_ROUTE};
+use super::session_limits::with_sessions;
 use crate::account::{
-    append_notice, client_home_key, merge, variable, EngineStart, Host, Provider, Reading,
+    append_notice, client_home_key, merge, read_by, variable, EngineStart, Host, Provider, Reading,
     StatusPage, Unread,
 };
-use crate::l10n;
+use crate::l10n::tr;
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,
@@ -35,12 +38,21 @@ pub fn read(host: &dyn Host) -> Result<Reading, Unread> {
     let executable = host.executable("codex");
     let native = match executable.as_deref() {
         Some(executable) => read_native(host, executable),
-        None => Err(Unread::Failed(l10n::text(
-            "安装并登录后即可读取额度",
-            "Install and sign in to read quota",
-        ))),
+        // No engine, as with the desktop app moved away: its sessions' record
+        // is no sign-in to ask for, and without it Codex is to install.
+        None => with_sessions(
+            host,
+            &default_home(host),
+            Err(Unread::SignedOut(String::new())),
+        )
+        .map_err(|_| Unread::Failed(tr!("Install and sign in to read quota"))),
     };
-    let pi = read_pi(host);
+    let pi = read_pi(host).map(|found| {
+        found.map(|mut pi| {
+            read_by(&mut pi, crate::pi::AGENT.id);
+            pi
+        })
+    });
     match (native, pi) {
         (Ok(mut native), Ok(Some(pi))) => {
             // Pi signed in to the same ChatGPT account spends the same windows.
@@ -74,8 +86,13 @@ pub fn read(host: &dyn Host) -> Result<Reading, Unread> {
     }
 }
 
+/// `CODEX_HOME`, else `~/.codex`.
+fn default_home(host: &dyn Host) -> std::path::PathBuf {
+    variable(host, "CODEX_HOME").unwrap_or_else(|| host.home().join(".codex"))
+}
+
 fn read_native(host: &dyn Host, executable: &Path) -> Result<Reading, Unread> {
-    let home = variable(host, "CODEX_HOME").unwrap_or_else(|| host.home().join(".codex"));
+    let home = default_home(host);
     let mut seen = HashSet::new();
     let homes: Vec<_> = std::iter::once(home)
         .chain(host.account_homes("codex"))
@@ -87,14 +104,14 @@ fn read_native(host: &dyn Host, executable: &Path) -> Result<Reading, Unread> {
     let mut failures = Vec::new();
     for home in &homes {
         if host.cancelled() {
-            return Err(l10n::text("账户读取已停止", "Account reading was stopped").into());
+            return Err(tr!("Account reading was stopped").into());
         }
         let prefix = if homes.len() > 1 {
             format!("{}: ", home.display())
         } else {
             String::new()
         };
-        let notice = match read_home(host, executable, home) {
+        let notice = match with_sessions(host, home, read_home(host, executable, home)) {
             Ok(mut account) => {
                 succeeded = true;
                 let notice = account.notice.take();
@@ -196,9 +213,8 @@ fn read_home(host: &dyn Host, executable: &Path, home: &Path) -> Result<Reading,
     if let (None, Some(error)) = (&limits, refused) {
         // No sign-in at all is Codex's own state: the last windows stay.
         if requires_openai_auth == Some(true) && account.is_null() {
-            return Err(Unread::SignedOut(l10n::text(
-                "Codex 尚未登录，运行 codex login 登录 ChatGPT 后即可读取额度",
-                "Codex is not signed in. Run codex login with ChatGPT to read its quota",
+            return Err(Unread::SignedOut(tr!(
+                "Codex is not signed in. Run codex login with ChatGPT to read its quota"
             )));
         }
         return match no_plan_notice(&account, requires_openai_auth) {
@@ -213,15 +229,11 @@ fn read_home(host: &dyn Host, executable: &Path, home: &Path) -> Result<Reading,
     }
     let limits = limits.ok_or_else(|| {
         if process.ended() {
-            Unread::Failed(l10n::text(
-                "Codex 引擎提前退出，请检查本机登录状态",
-                "Codex exited before reporting limits; check local sign-in",
+            Unread::Failed(tr!(
+                "Codex exited before reporting limits; check local sign-in"
             ))
         } else {
-            Unread::transient(l10n::text(
-                "Codex 额度查询超时",
-                "Codex quota query timed out",
-            ))
+            Unread::transient(tr!("Codex quota query timed out"))
         }
     })?;
     parse(
@@ -244,19 +256,16 @@ fn read_home(host: &dyn Host, executable: &Path, home: &Path) -> Result<Reading,
 /// no sign-in at all. None when it does not say.
 fn no_plan_notice(account: &Value, requires_openai_auth: Option<bool>) -> Option<String> {
     match account["type"].as_str() {
-        Some("apiKey") => Some(l10n::text(
-            "Codex 用的是 API key 登录，没有 ChatGPT 套餐额度",
-            "Codex is signed in with an API key, which has no ChatGPT plan limits",
+        Some("apiKey") => Some(tr!(
+            "Codex is signed in with an API key, which has no ChatGPT plan limits"
         )),
-        Some("amazonBedrock") => Some(l10n::text(
-            "Codex 走的是 Amazon Bedrock，没有 ChatGPT 套餐额度",
-            "Codex runs on Amazon Bedrock, which has no ChatGPT plan limits",
+        Some("amazonBedrock") => Some(tr!(
+            "Codex runs on Amazon Bedrock, which has no ChatGPT plan limits"
         )),
         Some(_) => None,
         None => match requires_openai_auth {
-            Some(false) => Some(l10n::text(
-                "Codex 用的是自定义模型服务，没有 ChatGPT 套餐额度",
-                "Codex uses a custom model provider, which has no ChatGPT plan limits",
+            Some(false) => Some(tr!(
+                "Codex uses a custom model provider, which has no ChatGPT plan limits"
             )),
             _ => None,
         },

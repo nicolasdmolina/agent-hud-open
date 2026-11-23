@@ -23,6 +23,9 @@ pub static GATEWAY: Channel = Channel {
     name: "Hermes's local gateway",
     carries: &[Carries::Requests],
     transcript_shows_pending: false,
+    // Hermes's approvals are the person's alone: turning on Approve
+    // automatically for the coding agents never answers one (ticket 66).
+    answered_by_hand: true,
     support: PerOs {
         macos: Support::Verified(()),
         windows: Support::Unsupported(
@@ -87,7 +90,7 @@ static APP_NAVIGATION: crate::discovery::AppNavigation = crate::discovery::AppNa
         windows: Support::Unsupported("Hermes's desktop link is not verified on Windows"),
         linux: Support::Unsupported("Hermes's desktop link is not verified on Linux"),
     },
-    label: Some(("在 Hermes 桌面版中打开", "Open in Hermes desktop")),
+    label: Some(|| crate::l10n::tr("Open in Hermes desktop")),
 };
 static DISCOVERY: Discovery = Discovery {
     storage: &[

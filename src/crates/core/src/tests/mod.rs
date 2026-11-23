@@ -2,7 +2,9 @@
 //! grouped by what they cover.
 use super::*;
 
+mod auto_approved_sound;
 mod claude_desktop;
+mod client_switches;
 mod conversation_feed;
 mod forks;
 mod hermes_custom_roots;

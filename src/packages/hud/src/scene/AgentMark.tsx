@@ -9,6 +9,7 @@ import { useMarkLevelText } from "../ground";
 import {
   markUsed,
   meterLabel,
+  simpleNumberColor,
   vendorKey,
   type HUDConfig,
   type HUDEdge,
@@ -40,10 +41,7 @@ export function AgentMark({
   dockMemory,
   nativePointer,
   reduceMotion,
-  hasAlert,
-  suppressHover,
   setHovered,
-  forceOpen,
   pin,
 }: {
   vendor: HUDVendor;
@@ -63,10 +61,7 @@ export function AgentMark({
   dockMemory: MutableRefObject<DockMemory>;
   nativePointer?: HUDNativePointer;
   reduceMotion: boolean;
-  hasAlert: boolean;
-  suppressHover: MutableRefObject<boolean>;
   setHovered: (key: string | null) => void;
-  forceOpen: () => void;
   pin: (key?: string) => void;
 }) {
   const format = useFormat();
@@ -83,10 +78,10 @@ export function AgentMark({
           setHovered(vendor.key);
         }
       }}
-      onFocus={() => {
-        setHovered(vendor.key);
-        if (!hasAlert && !suppressHover.current) forceOpen();
-      }}
+      // The HUD takes keys only for a text field, so focus here never comes
+      // from the person: let it go, with no ring and nothing opened.
+      tabIndex={-1}
+      onFocus={(event) => event.currentTarget.blur()}
       onClick={() => pin(vendor.key)}
       style={{
         position: "relative",
@@ -225,7 +220,11 @@ export function AgentMark({
         (config.showsNumbers || config.simpleStyle === "numbers") && (
           <span
             style={{
-              color: figureColor(vendor.level),
+              color: simpleNumberColor(
+                config,
+                light,
+                figureColor(vendor.level),
+              ),
               fontSize: metrics.font,
               fontWeight: 400,
               fontVariantNumeric: "tabular-nums",

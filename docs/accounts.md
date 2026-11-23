@@ -10,7 +10,7 @@ The implementation follows the original Swift account readers:
 | Provider     | Existing source                                     | Read operation                                                       |
 | ------------ | --------------------------------------------------- | -------------------------------------------------------------------- |
 | Claude       | Installed Claude Code, its current folder and selected additional folders; Claude Code's own usage record in each folder's `.claude.json`; for the current folder, the Claude desktop app's claude.ai sign-in | The usage record while it is under a minute old; else SDK `get_usage`, hooks disabled, `skip_behaviors`, no prompt; signed out or not installed: claude.ai's usage page with the desktop app's sign-in; when every way fails, the record's windows as old as they are (see [Claude Code's usage record](#claude-codes-usage-record)) |
-| Codex        | Installed Codex, its current home and selected additional homes | `initialize`, `account/rateLimits/read`, `account/read`, no turn |
+| Codex        | Installed Codex, its current home and selected additional homes; each home's newest session logs (`sessions/YYYY/MM/DD`), whose header names the ChatGPT account (`creator_account_id`) | `initialize`, `account/rateLimits/read`, `account/read`, no turn; beside it, the rate limits each account's latest call recorded (`token_count`), as of that call: they stand in when the engine has no sign-in (the Codex desktop app, now the ChatGPT app, signs its engine in with its own ChatGPT session and keeps no `auth.json`), and add an account the engine is not signed in to, named by the client it was used in |
 | Pi / ChatGPT | Existing, unexpired Pi OAuth home                   | Official ChatGPT usage endpoint; no OAuth flow or credential rewrite |
 | Cursor       | Read-only Cursor account SQLite database; a sealed sign-in (`cursor-safe-storage:v1:`) opens with Cursor's "Cursor Safe Storage" keychain item, which macOS asks about once (Electron files it under "Cursor Key", older builds under "Cursor") | Current usage-summary endpoint and billing-cycle reset; for an account merged into SuperGrok (plan `super`), or when the summary is refused, the period Cursor itself shows (`DashboardService/GetCurrentPeriodUsage`): its percentages where it reports them (a merged plan), else the cents spent of each limit (a plan metered in dollars), as Cursor's usage bar works them out; a meter with neither is not shown |
 | Grok Bot     | The Bot's cache (`sand-client-persistence`), and Cursor's sign-in when it is the Bot's account | The Bot's weekly meter (`GetSandUsageStatus`) with Cursor's sign-in to the same account, which also names the account; else the Bot's cache. A server that misses an answer is a passing failure, so the last reading stays rather than an older cache; any other server failure falls back to the cache. Each bot's daily tokens from `GetDailySpendByCategory`, none for a merged account |
@@ -24,9 +24,12 @@ The implementation follows the original Swift account readers:
 | Antigravity  | Connected CLI status-line reports and all running authenticated language servers | Identified quota callbacks, serial loopback `GetUserStatus`, anonymous `/usage` fallback |
 | Factory Droid | A Factory API key only: `FACTORY_API_KEY` in the environment, else in `~/.factory/.env` (CodexBar's place for it); Droid's own sign-in and the web app's cookies are never read. No key leaves a notice, not a sign-out; a key Factory refuses (401/403) is signed out | `GET api.factory.ai/api/billing/limits`, as the CLI's `/usage` does: the share used of the five-hour, weekly and monthly windows of the Standard pool and, where reported, the Droid Core pool (a positive `secondsRemaining` sets the reset, else a future `windowEnd`; a window whose end passed reads as reset), and the extra usage balance in US dollars. A plan with no windows there shows a notice. Shapes follow CodexBar's Factory probe (MIT) |
 | Cline (ClinePass) | Cline's own sign-in in `providers.json` (`providers.cline.settings`, under `CLINE_DATA_DIR`, else `CLINE_DIR`/`~/.cline` `data/settings`): its browser sign-in's access token, sent as `workos:<token>`, else a saved API key, else `CLINE_API_KEY`; never refreshed or rewritten. An expired token keeps the last reading until Cline runs again; a 401 is a sign-out, a 403 or 404 an account with no plan to read | `api.cline.bot/api/v1/users/me/plan/usage-limits`: the 5-hour, weekly and monthly share used and their resets |
-| Qoder        | A sign-in the user makes on qoder.com or qoder.com.cn in Agent HUD's own window (see below); Qoder, Qoder CN and QoderWork spend it. The CLI's and the app's own stored sign-in (`.auth/user`, encrypted) is never read | `GET /api/v2/me/usages/big_model_credits`: the plan's model credits, shared credits added, and their reset |
-| WorkBuddy    | A sign-in the user makes on www.workbuddy.cn in Agent HUD's own window; WorkBuddy's own stored sign-in is encrypted and never read | `POST /billing/meter/get-user-resource-summary`: credits and reward credits left of their cycle, the plan; the reset from the paid, then free, package lists |
-| TRAE         | A sign-in the user makes on www.trae.ai (TRAE) or www.trae.cn (TRAE CN) in Agent HUD's own window; TRAE's own stored sign-in is encrypted and never read | Each reading trades the session for a short-lived token (`POST /cloudide/api/v3/common/GetUserToken`, never kept), then `POST /trae/api/v{1,2}/pay/user_current_entitlement_list` with `Authorization: Cloud-IDE-JWT`, whose answer is counted as TRAE's own client counts it (`ICubeUsageService`): credits as what is left of every pack's `credits_limit` (the remainder TRAE CN's title bar shows; the site's `usage_summary` when no pack has one), else dollar usage as a share of the plan's basic plus bonus allowance, reset a second after the plan's period ends (no reset for credits). The plan is the highest tier among the packs (Ultra, Pro+, Pro, Lite, Free); packages, pay-as-you-go and promo codes are no part of it. A limit of -1 is no limit: the plan shows with no share. International accounts are asked at `ug-normal.trae.ai`, then, if it refuses the session, `ug-normal.us.trae.ai`; TRAE CN at `api.trae.cn` |
+| Qoder, Qoder CN, QoderWork | Separate providers (`qoder`, `qoder-cn`, `qoder-work`). Each reads its own local desktop `auth.v1.dat` (`com.qoder.app.stable`, `com.qoder.cn.stable`, `com.qoder.work.stable`) or IDE `User/globalStorage/state.vscdb` (`secret://aicoding.auth.{userInfo,userPlan,creditUsage}`) in read-only mode, never calling `/api/v1/deviceToken/refresh`; `qoder` and `qoder-cn` also accept a sign-in on `qoder.com` or `qoder.com.cn` in Agent HUD's window as fallback | `GET {openapi}/sash/api/v2/me/usage` (`openapi.qoder.sh`, `openapi.qoder.com.cn`, or `dedicatedOpenapi` from `app.json`) with cached `creditUsage` fallback when the local token is refused; web sign-in fallback reads `GET /api/v2/me/usages/big_model_credits` |
+| WorkBuddy    | Read-only local `CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info` (skipping when `.logged-out` is beside it; `$wbEncrypted` envelopes are opened in memory via `ELECTRON_RUN_AS_NODE=1` on the installed WorkBuddy app without persisting its storage key); else a sign-in on `www.workbuddy.cn` in Agent HUD's window | `POST /billing/meter/get-user-resource-summary` (`copilot.tencent.com` for local tokens, `www.workbuddy.cn` for web sign-in): credits and reward credits left of their cycle, the plan, and the reset from the paid, then free, package lists |
+| CodeBuddy, CodeBuddy CN | Separate providers (`codebuddy`, `codebuddy-cn`). Each reads its own IDE `User/globalStorage/state.vscdb` (`secret://...planning-genie.new.accessToken` or `accessTokencn`) in read-only mode | `/v2/plugin/accounts` for enterprise profile when needed, `POST /v2/billing/meter/get-enterprise-user-usage` for enterprise accounts, and `POST /v2/billing/meter/get-user-resource` (`Response.Data.Accounts`) on `www.codebuddy.ai` (`codebuddy`) or `www.codebuddy.cn` (`codebuddy-cn`) |
+| TRAE, TRAE CN | Separate providers (`trae`, `trae-cn`). Each reads its own `User/globalStorage/storage.json` (`iCubeAuthInfo`, plain or `ByteCrypto` AES-128-CBC) in read-only mode without ever calling `ExchangeToken`; else a sign-in on `www.trae.ai` (`trae`) or `www.trae.cn` (`trae-cn`) in Agent HUD's window | Local sign-ins ask `POST /trae/api/v{1,2}/pay/ide_user_ent_usage` (falling back to `user_current_entitlement_list`) on the account's region host (`growsg-normal.trae.ai` / `ug-normal.trae.ai`, `us.trae.ai`, `myvu.trae.ai`, or `api.trae.cn`), enriched by `ide_user_pay_status`; web sign-ins trade the session via `GetUserToken` and ask `user_current_entitlement_list` |
+| ZCode        | Read-only `~/.zcode/v2/credentials.json` (`ZCODE_DATA_BASE_DIR` or `setting.json` `dataBaseDir`), decrypting `enc:v1:` AES-256-GCM credentials (`zcodejwttoken` and `oauth:*:user_info`) in memory | `GET https://zcode.z.ai/api/v1/zcode-plan/billing/balance?app_version=<version>` (reading the installed `ZCode.app` bundle version on macOS so newer plans and team subscriptions resolve properly): remaining credits and cycle quota |
+| MiniMax Code | Separate provider (`minimax-code`, distinct from the API-key `minimax` Coding Plan). Read-only `~/.minimax/auth/<env>/<region>/mcode-public/auth.json` and `auth-state.json` (`MINIMAX_DATA_DIR` / `MAVIS_DATA_DIR`), never calling `/oauth2/token` | `GET /v1/api/user/info`, `POST /matrix/api/v1/user/get_user_extra_info`, and `POST /matrix/api/v1/commerce/get_membership_info` on `agent.minimax.cn` (or `agent.minimax.io` for global sign-ins): plan tier and credit balance |
 
 Each provider states its own facts in its folder under `src/crates/agents/src/`
 (`agents::account::Provider`, listed in `agents::ACCOUNTS`): how it is read,
@@ -39,6 +42,13 @@ What a 401 means is the provider's to say.
 
 Everything else is the same for every provider:
 
+- A provider is read every 2 minutes while a turn of a session source that
+  spends it runs, every 4 minutes otherwise, each plus a random 0–60 s drawn
+  again after every reading, so providers and vendors are not asked in step.
+  Where this computer's work moves a provider's windows, work that finished
+  since the last reading is read 0–15 s after it ended. No provider is read twice within 60 s, and one reading runs
+  at a time. DeepSeek's balance counts Claude Code, Codex and Pi sessions as
+  its own, since they can spend it through a DeepSeek key.
 - A reading that only missed an answer, while the last good one is under 10
   minutes old, changes nothing on screen. Any other failure shows at once with
   its reason, and the last reading stays, marked stale.
@@ -119,7 +129,10 @@ default account only. The list is saved locally as `settings.codexHomes`.
 The account worker reads the homes sequentially, using the selected
 `CODEX_HOME` only for that child process. It resolves duplicate directories and
 merges repeated subscription identities, including Pi's ChatGPT sign-in. The
-same email in different workspaces remains separate. A failed home reports a
+same email in different workspaces remains separate. When Codex leaves the
+email or the workspace out of a reading, the home's own `auth.json` (its
+tokens' account id and its id token's email) completes them, only where it is
+the same sign-in, so one subscription never appears twice. A failed home reports a
 notice while successful homes still appear; if every reading fails, the last
 reading remains marked stale. Saving a changed list discards readings from the
 previous list, including results still in flight.
@@ -146,7 +159,27 @@ read once, and an account signed in from two folders appears once. A failed
 folder reports a notice while the other folders still appear, with the windows
 Claude Code last recorded in that folder, marked stale; if every reading fails,
 the last reading remains marked stale. The Claude desktop app's sign-in
-stands in only for the default folder, never for an added one. Saving a changed
+stands in only for the default folder, never for an added one. Beside a
+signed-in folder the desktop app's sign-in is read too, every time, and the
+readings are merged by account: the same account shows once, from Claude
+Code's reading unless that is only a stale record, and another account shows
+as its own. A failure of either way says nothing while the other read the same
+account, and a login with no plan limits (an API key, a relay or another
+platform) says nothing once the desktop app's account is read: the command
+line's own page in Settings → Agents shows where its calls went. Codex does
+the same with a home that has no ChatGPT plan beside an account its sessions
+recorded. Each account names the clients whose sign-in read it (`readBy`,
+by client id: `claude`, `claude-desktop`, `codex`, `codex-desktop`, `pi`,
+`antigravity`, `antigravity-ide`, `antigravity-cli`, `cursor`, `grok-bot`);
+one account read through several shows once, marked merged in Settings.
+Antigravity's language servers say which app runs them (their data folder,
+else where they are installed), and its CLI's reports count as the CLI.
+While the CLI is not running, the account its saved sign-in names counts as
+the CLI's too: only the email in `antigravity-cli/antigravity-oauth-token`
+(`id_token_email`), never its tokens.
+Cursor and Grok Bot each check whether the other is signed in to their
+account (Grok Bot's slot names Cursor's user): xAI merges a Cursor account
+into SuperGrok, and then one account serves both. Saving a changed
 list discards readings from the previous list, including results still in
 flight.
 
@@ -209,7 +242,9 @@ The installer currently supports macOS and Linux. On Windows, the connection
 controls report that callbacks are unavailable and leave CLI settings untouched.
 The callback retains only email, plan, quota percentages, reset times and the
 observation time. It does not retain the callback's workspace, conversation or
-transcript fields. No login, credential switching, or model request is needed.
+transcript fields. A current report's email is the account a language server
+reports for that email, whatever team the server adds: it shows once, with the
+CLI's windows. No login, credential switching, or model request is needed.
 
 Each reported email appears as a separate account. Switching accounts in a
 connected CLI retains the earlier account's latest observation; multiple

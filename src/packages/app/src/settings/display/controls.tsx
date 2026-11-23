@@ -3,14 +3,18 @@
  * them. */
 import type { HUDConfig } from "@agent-hud/hud/model";
 import { Slide, ToggleRow } from "../SettingsControls";
-import type { Text } from "../SettingsPrimitives";
+import type { Translate } from "@agent-hud/ui/format";
 
 export interface DisplayProps {
   /** The selected screen's settings, with defaults filled in. */
   config: HUDConfig;
   update: (patch: Partial<HUDConfig>) => void;
-  t: Text;
+  t: Translate;
 }
+
+/** A fade slider's last stop, past 12 seconds: it never goes by itself
+ * (saved as 0). */
+const NEVER = 13;
 
 type KeysOf<T> = {
   [K in keyof HUDConfig]: HUDConfig[K] extends T ? K : never;
@@ -22,9 +26,9 @@ export function displayControls({ config, update, t }: DisplayProps) {
   const ms = (value: number) => `${Math.round(value)} ms`;
   const percent = (value: number) => `${Math.round(value * 100)}%`;
   const seconds = (value: number) =>
-    t(`${value.toFixed(1)} s`, `${value.toFixed(1)} 秒`);
+    t("{{seconds}} s", { seconds: value.toFixed(1) });
   const rows = (value: number) =>
-    t(`${Math.round(value)} rows`, `${Math.round(value)} 排`);
+    t("{{count}} rows", { count: Math.round(value) });
 
   const slider = (
     key: KeysOf<number>,
@@ -54,5 +58,25 @@ export function displayControls({ config, update, t }: DisplayProps) {
     />
   );
 
-  return { slider, toggle, pt, px, ms, percent, seconds, rows };
+  /** How long a bubble at a dock end stays, 3 to 12 seconds or never. */
+  const fadeSlide = (
+    key: "messageFadeSeconds" | "clipboardFadeSeconds",
+    title: string,
+  ) => (
+    <Slide
+      title={title}
+      value={config[key] > 0 ? Math.min(config[key], NEVER - 1) : NEVER}
+      min={3}
+      max={NEVER}
+      step={1}
+      format={(value) =>
+        value >= NEVER
+          ? t("Never")
+          : t("{{seconds}} s", { seconds: Math.round(value) })
+      }
+      change={(value) => update({ [key]: value >= NEVER ? 0 : value })}
+    />
+  );
+
+  return { slider, toggle, fadeSlide, pt, px, ms, percent, seconds, rows };
 }

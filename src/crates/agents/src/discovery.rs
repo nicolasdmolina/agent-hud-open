@@ -9,9 +9,9 @@ pub struct AppNavigation {
     pub kind: &'static str,
     pub url: PerOs<&'static str>,
     /// What the way back is called where it stands in for a session's
-    /// own, in Chinese and in English; None where it is called as any
+    /// own, in the app's language now; None where it is called as any
     /// other way back.
-    pub label: Option<(&'static str, &'static str)>,
+    pub label: Option<fn() -> String>,
 }
 
 /// What tells a client is here.

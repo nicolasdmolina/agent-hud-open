@@ -318,15 +318,17 @@ fn guardian_reviews_count_their_usage_but_list_no_session() {
     let root = temp.path().join(".codex/sessions/2026/10/21");
     fs::create_dir_all(&root).unwrap();
     let at = Utc::now().to_rfc3339();
+    let main = "11111111-1111-4111-8111-111111111111";
     let rollout = |id: &str, source: Value, input: u64| {
+        // A review names the session whose approval request it reviews.
+        let parent = source["subagent"].is_object().then_some(main);
         format!(
             "{}\n{}\n{}\n",
-            json!({"timestamp":at,"type":"session_meta","payload":{"id":id,"timestamp":at,"cwd":"/w/repo","source":source,"originator":"codex_cli_rs"}}),
+            json!({"timestamp":at,"type":"session_meta","payload":{"id":id,"timestamp":at,"cwd":"/w/repo","source":source,"parent_thread_id":parent,"originator":"codex_cli_rs"}}),
             json!({"timestamp":at,"type":"turn_context","payload":{"model":"gpt-5.5"}}),
             json!({"timestamp":at,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":input,"output_tokens":10}}}}),
         )
     };
-    let main = "11111111-1111-4111-8111-111111111111";
     let review = "22222222-2222-4222-8222-222222222222";
     fs::write(
         root.join(format!("rollout-a-{main}.jsonl")),
@@ -366,6 +368,17 @@ fn guardian_reviews_count_their_usage_but_list_no_session() {
         .find(|row| row["id"] == "codex")
         .unwrap();
     assert_eq!(codex["sessions"], 1);
+    // The session's page names the review's part apart from its sub-agents',
+    // which it has none of (#102).
+    let detail = backend
+        .request("session_detail", json!({"id":main}))
+        .unwrap();
+    assert_eq!(detail["usage"]["total"], 170);
+    assert_eq!(detail["own"]["total"], 110);
+    assert_eq!(detail["subagents"], Value::Null);
+    assert_eq!(detail["reviews"]["count"], 1);
+    assert_eq!(detail["reviews"]["tokens"]["total"], 60);
+    assert_eq!(detail["children"], json!([]));
 }
 
 #[test]
@@ -472,6 +485,181 @@ fn archived_codex_threads_count_but_leave_the_list_and_desktop_threads_open_in_c
         listed[0]["navigationTarget"],
         json!({"kind":"codex-thread","id":desktop})
     );
+}
+
+#[test]
+fn a_codex_conversation_split_across_rollouts_counts_every_segment_and_lists_once() {
+    // Codex goes on with a conversation in a new rollout when it rewinds its
+    // history after a stopped turn; each segment holds calls of its own, and
+    // the counts run on from the segment before (#101).
+    let temp = tempfile::tempdir().unwrap();
+    let sessions = temp.path().join(".codex/sessions/2026/10/03");
+    let archived = temp.path().join(".codex/archived_sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    fs::create_dir_all(&archived).unwrap();
+    let now = Utc::now().timestamp_millis();
+    let iso = |minutes_ago: i64| {
+        DateTime::<Utc>::from_timestamp_millis(now - minutes_ago * 60_000)
+            .unwrap()
+            .to_rfc3339()
+    };
+    let id = "01a0fdc1-6ed0-7cf0-a598-909c75581085";
+    let started = |minutes_ago: i64| json!({"timestamp":iso(minutes_ago),"type":"event_msg","payload":{"type":"task_started"}});
+    let model = |minutes_ago: i64| json!({"timestamp":iso(minutes_ago),"type":"turn_context","payload":{"model":"gpt-5.5"}});
+    let count = |minutes_ago: i64, total: [u64; 2], last: [u64; 2]| {
+        json!({"timestamp":iso(minutes_ago),"type":"event_msg","payload":{"type":"token_count","info":{
+            "total_token_usage":{"input_tokens":total[0],"output_tokens":total[1]},
+            "last_token_usage":{"input_tokens":last[0],"output_tokens":last[1]}}}})
+    };
+    // No item id: rows take their ids from where their lines begin.
+    let said = |minutes_ago: i64, role: &str, text: &str| {
+        let kind = if role == "user" {
+            "input_text"
+        } else {
+            "output_text"
+        };
+        json!({"timestamp":iso(minutes_ago),"type":"response_item","payload":{"type":"message",
+            "role":role,"content":[{"type":kind,"text":text}]}})
+    };
+    let first = rollout(
+        id,
+        &iso(120),
+        json!({"source":"vscode","originator":"Codex Desktop"}),
+        &[
+            model(120),
+            started(119),
+            said(119, "user", "Fix the build"),
+            count(118, [100, 10], [100, 10]),
+            count(117, [300, 20], [200, 10]),
+            said(117, "assistant", "Fixed the first part."),
+        ],
+    );
+    let first_name = format!("rollout-2026-10-03T01-55-07-{id}.jsonl");
+    fs::write(sessions.join(&first_name), &first).unwrap();
+    // A copy of it is the same segment, not another one.
+    fs::write(archived.join(&first_name), &first).unwrap();
+    fs::write(
+        sessions.join(format!(
+            "rollout-2026-10-03T22-06-39-{id}_01a10216-a179-7500-b703-d6808442b07f.jsonl"
+        )),
+        rollout(
+            id,
+            &iso(60),
+            json!({"source":"vscode","originator":"Codex Desktop",
+                "history_base":{"thread_id":id,"end_ordinal_exclusive":4,"end_byte_offset":100}}),
+            &[
+                model(60),
+                started(59),
+                said(59, "user", "Go on"),
+                count(58, [450, 30], [150, 10]),
+                count(57, [500, 40], [50, 10]),
+                said(57, "assistant", "All green."),
+            ],
+        ),
+    )
+    .unwrap();
+    let mut backend = fixture(temp.path());
+    backend.provider_roots.push((archived.clone(), "codex"));
+    // Codex's own total for the conversation: 500 in, 40 out.
+    let snapshot = backend.request("snapshot", json!({})).unwrap();
+    assert_eq!(
+        snapshot["totals"]["total"], 540,
+        "every segment counts once"
+    );
+    let listed = snapshot["sessions"].as_array().unwrap();
+    assert_eq!(listed.len(), 1, "the conversation is listed once");
+    assert_eq!(listed[0]["id"], id);
+    assert_eq!(listed[0]["tokens"], 540);
+    let codex = snapshot["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "codex")
+        .unwrap();
+    assert_eq!(codex["sessions"], 1);
+    let all = backend.request("sessions", json!({"scope":"all"})).unwrap();
+    let items = all["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["tokens"], 540);
+    let detail = backend.request("session_detail", json!({"id":id})).unwrap();
+    assert_eq!(detail["session"]["tokens"], 540);
+    assert_eq!(detail["usage"]["total"], 540);
+    assert_eq!(detail["callsTotal"], 4, "the calls of both segments");
+    assert_eq!(
+        detail["session"]["startedAt"]
+            .as_str()
+            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| at.timestamp_millis()),
+        DateTime::parse_from_rfc3339(&iso(120))
+            .ok()
+            .map(|at| at.timestamp_millis()),
+        "it began when its first segment did"
+    );
+    // Its messages read on from the first segment into the second.
+    let texts = |page: &Value| {
+        page["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["text"].as_str().unwrap_or_default().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let whole = [
+        "Fix the build",
+        "Fixed the first part.",
+        "Go on",
+        "All green.",
+    ];
+    assert_eq!(texts(&detail), whole);
+    assert_eq!(detail["messagesComplete"], true);
+    let (mut cursor, mut read, mut ids) = (0, Vec::new(), std::collections::HashSet::new());
+    for _ in 0..10 {
+        let page = backend
+            .request(
+                "session_detail",
+                json!({"id":id,"messageCursor":cursor,"messageLimit":1}),
+            )
+            .unwrap();
+        for row in page["messages"].as_array().unwrap() {
+            let row_id = row["id"].as_str().unwrap().to_owned();
+            assert!(ids.insert(row_id), "each row keeps an id of its own");
+        }
+        read.extend(texts(&page));
+        match page["nextMessageCursor"].as_u64() {
+            Some(next) if page["messagesComplete"] != true => cursor = next,
+            _ => break,
+        }
+    }
+    assert_eq!(
+        read, whole,
+        "a page at a time, each from where the last ended"
+    );
+    let tail = backend
+        .request(
+            "session_detail",
+            json!({"id":id,"messageTail":true,"messageLimit":3}),
+        )
+        .unwrap();
+    assert_eq!(texts(&tail), whole[1..]);
+    assert_eq!(
+        tail["messageCursor"], 0,
+        "the tail reaches back into the first segment"
+    );
+    let statistics = backend
+        .request(
+            "statistics",
+            json!({"from":iso(24 * 60),"to":iso(0),"bucketMinutes":60,
+                "tokenKinds":["input","output"],"costKinds":"all","timeZone":"UTC"}),
+        )
+        .unwrap();
+    assert_eq!(statistics["totals"]["selectedTokens"], 540);
+    assert_eq!(statistics["sessionCount"], 1);
+    let top = statistics["providers"][0]["topSessions"]
+        .as_array()
+        .unwrap();
+    assert_eq!(top.len(), 1, "one row for the conversation");
+    assert_eq!(top[0]["selectedTokens"], 540);
+    assert_eq!(top[0]["session"]["id"], id);
 }
 
 #[test]

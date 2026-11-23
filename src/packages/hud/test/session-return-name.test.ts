@@ -12,7 +12,7 @@ import type {
   Session,
   Snapshot,
 } from "@agent-hud/protocol";
-import { close, load } from "./render.ts";
+import { close, inLanguage, load } from "./render.ts";
 
 after(close);
 
@@ -55,8 +55,14 @@ const hermes = (language: "en" | "zh") =>
 const cursor = () =>
   session("cursor:c1", "cursor", { kind: "cursor-chat", id: "c1" });
 
+/** The interface language each of the two is drawn in. */
+const SETTING = { en: "en", zh: "zh-Hans" } as const;
 const snapshot = (language: "en" | "zh", sessions: Session[]) =>
-  ({ language, sessions, settings: {} }) as unknown as Snapshot;
+  ({
+    language: SETTING[language],
+    sessions,
+    settings: {},
+  }) as unknown as Snapshot;
 
 const request = (of: Session): Approval => ({
   id: `request-${of.id}`,
@@ -90,18 +96,21 @@ async function card(language: "en" | "zh", of: Session) {
     dismiss() {},
   };
   return renderToStaticMarkup(
-    h(
-      PanelServicesProvider,
-      { value: { query: async () => null, openSession: async () => true } },
-      h(AlertStack, {
-        requests: [asked],
-        request: asked,
-        news,
-        handoff() {},
-        light: false,
-        snapshot: snapshot(language, [of]),
-        botLogos: false,
-      }),
+    await inLanguage(
+      SETTING[language],
+      h(
+        PanelServicesProvider,
+        { value: { query: async () => null, openSession: async () => true } },
+        h(AlertStack, {
+          requests: [asked],
+          request: asked,
+          news,
+          handoff() {},
+          light: false,
+          snapshot: snapshot(language, [of]),
+          botLogos: false,
+        }),
+      ),
     ),
   );
 }
@@ -123,11 +132,14 @@ async function alert(language: "en" | "zh", of: Session, listed = true) {
     ...(of.navigationLabel ? { navigationLabel: of.navigationLabel } : {}),
   };
   return renderToStaticMarkup(
-    h(CompletionAlertView, {
-      event,
-      snapshot: snapshot(language, listed ? [of] : []),
-      dismiss() {},
-    }),
+    await inLanguage(
+      SETTING[language],
+      h(CompletionAlertView, {
+        event,
+        snapshot: snapshot(language, listed ? [of] : []),
+        dismiss() {},
+      }),
+    ),
   );
 }
 
