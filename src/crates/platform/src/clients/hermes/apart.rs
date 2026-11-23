@@ -4,7 +4,9 @@
 //! so every other session's cards. Once a poll has found a read that
 //! slow (`polls.rs`), the session gets a lane: a thread and a socket of
 //! its own, on which it is read by itself, again and again, for as long
-//! as the polls would read it. The polls leave it out and stay quick.
+//! as the polls would read it, and no more often than they come: on a
+//! far gateway where nothing moves that is the model's slow pace, as it
+//! is for the polls (ticket 72). The polls leave it out and stay quick.
 //!
 //! A lane only reads. It opens its socket as every socket is opened, asks
 //! the model for a reading of its one session (`Gateway::poll_apart`),
@@ -21,14 +23,14 @@ use super::{
     opening::opened,
     polls::{rounds, stands},
     socket::Socket,
-    Shared,
+    Pace, Shared,
 };
-use agent_hud_agents::hermes::gateway::{Connection, Input, SessionRef};
+use agent_hud_agents::hermes::gateway::{Connection, Gateway, Input, SessionRef};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 /// The most sessions of one gateway read apart at a time. One more that
@@ -38,8 +40,8 @@ const MOST: usize = 4;
 /// session back.
 const QUICK: u32 = 3;
 /// How many polls may go by without wanting the session read before its
-/// lane ends, in the polls' own pace (`Pace::watch`), on top of the time
-/// one call may take.
+/// lane ends, in the polls' own pace (`every`), on top of the time one
+/// call may take.
 const UNWANTED: u32 = 6;
 /// How many times in a row a lane may fail to open its socket.
 const TRIES: u32 = 3;
@@ -100,6 +102,28 @@ impl Lanes {
     }
 }
 
+/// How long between the starts of two polls of the gateway just now, as
+/// `link.rs` paces them: the close watch while the model keeps it, and
+/// the model's own wait otherwise. A lane reads no more often, and is
+/// kept for as many polls, whichever pace they come at. Without this a
+/// session listed as working for days and slow to read was read back to
+/// back while its gateway was polled every ten seconds, and its lane
+/// could end between two such polls.
+fn every(gateway: &Gateway, pace: &Pace) -> Duration {
+    let wait = Duration::from_millis(gateway.poll_ms().max(0) as u64);
+    match gateway.lively() {
+        true => wait.min(pace.watch),
+        false => wait,
+    }
+}
+
+/// Whether a lane no poll has wanted its session read by for `since`
+/// is over, where the polls come `every` so often. A poll can itself
+/// be slow, by as much as a call may take.
+fn unwanted(since: Duration, every: Duration, pace: &Pace) -> bool {
+    since > every * UNWANTED + pace.answer
+}
+
 /// Reads one session, apart, until its lane ends.
 fn work(shared: &Arc<Shared>, session: &SessionRef) {
     let pace = shared.pace;
@@ -110,8 +134,8 @@ fn work(shared: &Arc<Shared>, session: &SessionRef) {
             break "ended";
         }
         let wanted = shared.apart.wanted(session);
-        // A poll can itself be slow, by as much as a call may take.
-        if wanted.is_none_or(|at| at.elapsed() > pace.watch * UNWANTED + pace.answer) {
+        let every = || every(&shared.model().gateway, &pace);
+        if wanted.is_none_or(|at| unwanted(at.elapsed(), every(), &pace)) {
             break "unwanted";
         }
         let instance = match shared.model().gateway.connection() {
@@ -170,8 +194,16 @@ fn work(shared: &Arc<Shared>, session: &SessionRef) {
                 if quick >= QUICK {
                     break "quick";
                 }
-                // No more often than the polls read a busy session.
-                shared.pause(pace.watch.saturating_sub(took));
+                // No more often than the polls come, looked at again
+                // now and then: a gateway where something moves is
+                // polled quickly from that moment, and so is this read.
+                while shared.active() {
+                    let left = every().saturating_sub(began.elapsed());
+                    if left.is_zero() {
+                        break;
+                    }
+                    shared.pause(left.min(pace.gap));
+                }
             }
             Ok(None) if !shared.active() => break "ended",
             // The reading counts no more and was given up. A call of it
@@ -200,5 +232,75 @@ fn work(shared: &Arc<Shared>, session: &SessionRef) {
     if shared.active() {
         let id = session.hud_id();
         shared.log.line(&format!("together session={id} why={why}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_hud_agents::hermes::gateway::{
+        machine_key, GatewayId, Machine, Profile, Step, IDLE_POLL_MS, QUIET_MS, SESSION_AUTHORITY,
+    };
+    use serde_json::json;
+
+    /// A gateway of `machine` that lists one session as working, polled
+    /// at `at` and at each time after it with the session as it was.
+    fn polled(machine: Machine, at: &[i64]) -> Gateway {
+        let mut gateway = Gateway::new(GatewayId::new(machine, Profile::Default));
+        let answer = json!({"runtime_protocol": 1, "state": "ready", "instance_id": "one",
+            "authority_epoch": 1, "api_origin": "http://127.0.0.1:54321",
+            "capabilities": [SESSION_AUTHORITY],
+            "served_profiles": [{"profile_id": "/synthetic", "home": "/synthetic"}]});
+        let (answer, home) = (&answer, "/synthetic");
+        gateway.apply(Input::Identified { answer, home }, 0);
+        for now in at {
+            let mut poll = gateway.poll().expect("a gateway that is ready");
+            let rows = json!({"sessions": [{"id": "s-stuck", "status": "working"}]});
+            let place = json!({"events": [], "replay_epoch": "epoch-1", "last_sequence": 0});
+            for _ in 0..8 {
+                for step in poll.steps() {
+                    let list = matches!(step, Step::List(_));
+                    poll.answer(&step, if list { &rows } else { &place });
+                }
+            }
+            assert!(poll.steps().is_empty());
+            gateway.apply(Input::Polled(poll), *now);
+        }
+        gateway
+    }
+
+    fn far() -> Machine {
+        let install = "0123456789abcdef0123456789abcdef";
+        Machine::Far(machine_key(Some(install), "/Users/USER/.hermes").expect("a made-up identity"))
+    }
+
+    /// A lane reads as often as its gateway is polled: at the close
+    /// watch while something moved lately, and at the model's slow pace
+    /// on a far gateway where nothing has for the quiet time. A gateway
+    /// of this machine keeps its close watch while it lists anything.
+    #[test]
+    fn a_lane_reads_at_the_pace_its_gateway_is_polled_at() {
+        let pace = Pace::default();
+        let slow = Duration::from_millis(IDLE_POLL_MS as u64);
+        assert_eq!(every(&polled(far(), &[0]), &pace), pace.watch);
+        assert_eq!(every(&polled(far(), &[0, QUIET_MS - 1]), &pace), pace.watch);
+        assert_eq!(every(&polled(far(), &[0, QUIET_MS]), &pace), slow);
+        let here = polled(Machine::This, &[0, QUIET_MS]);
+        assert_eq!(every(&here, &pace), pace.watch);
+    }
+
+    /// A lane is kept for six polls and the time one call may take, at
+    /// the pace the polls come at: 9.8 s at the close watch, and 65 s
+    /// where they come ten seconds apart, so that it lives from one such
+    /// poll to the next.
+    #[test]
+    fn a_lane_is_kept_for_six_polls_whichever_pace_they_come_at() {
+        let pace = Pace::default();
+        let (ms, slow) = (Duration::from_millis, Duration::from_secs(10));
+        assert!(!unwanted(ms(9_800), pace.watch, &pace));
+        assert!(unwanted(ms(9_801), pace.watch, &pace));
+        assert!(!unwanted(ms(10_500), slow, &pace), "the next slow poll");
+        assert!(!unwanted(ms(65_000), slow, &pace));
+        assert!(unwanted(ms(65_001), slow, &pace));
     }
 }

@@ -146,6 +146,19 @@ impl Gateway {
         !self.cards.is_empty() || self.listed.keys().any(|at| !self.quiet(at))
     }
 
+    /// The listed sessions of a far gateway nothing has changed in for
+    /// the quiet time, each as it is listed: what a poll that begins now
+    /// asks of them, it asks last (`order.rs`). None on this machine,
+    /// whose polls ask as they did.
+    pub(super) fn stood(&self) -> BTreeMap<SessionRef, Status> {
+        if !matches!(self.id.machine(), Machine::Far(_)) {
+            return BTreeMap::new();
+        }
+        let quiet = |(at, _): &(&SessionRef, &Status)| self.quiet(at);
+        let stood = self.listed.iter().filter(quiet);
+        stood.map(|(at, status)| (at.clone(), *status)).collect()
+    }
+
     /// Takes what a poll that counts says of each session it listed,
     /// after its list replaced the one before: a session listed anew, or
     /// as something else, or whose stream is somewhere else, has moved

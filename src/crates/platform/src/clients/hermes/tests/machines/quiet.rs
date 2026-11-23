@@ -19,17 +19,17 @@ use rusqlite::Connection;
 use serde_json::json;
 use std::time::{Duration, Instant};
 
-const QUIET: Duration = Duration::from_secs(4);
+pub(super) const QUIET: Duration = Duration::from_secs(4);
 /// How long a turn a poll found keeps the history's quick pace here.
-const WORKED: Duration = Duration::from_secs(2);
+pub(super) const WORKED: Duration = Duration::from_secs(2);
 /// The bound of spec section 10 for a card where every listed session
 /// was idle or none was listed.
-const IDLE_CARD: Duration = Duration::from_secs(13);
-const STUCK: &str = "s-stuck";
+pub(super) const IDLE_CARD: Duration = Duration::from_secs(13);
+pub(super) const STUCK: &str = "s-stuck";
 
 /// By the clock: a fifth of a second between two history ticks while a
 /// session works, and ten minutes otherwise, which no test waits out.
-fn paced() -> Pace {
+pub(super) fn paced() -> Pace {
     let history = Plan {
         clock: true,
         first: Duration::from_secs(1),
@@ -47,7 +47,7 @@ fn paced() -> Pace {
     }
 }
 
-fn three(db: &Connection) {
+pub(super) fn three(db: &Connection) {
     for id in ["s-one", "s-two", "s-three"] {
         session(db, id, OLD);
         used(db, id, "model-a", "", 100);
@@ -57,7 +57,7 @@ fn three(db: &Connection) {
 /// What the Mac Mini's default gateway listed on 2026-11-18: one
 /// session as working, whose stream never moves, and its old chats,
 /// idle. None of them ever says a word.
-fn as_the_mini_lists(gateway: &super::Fake) {
+pub(super) fn as_the_mini_lists(gateway: &super::Fake) {
     let mut world = gateway.world();
     for n in 0..10 {
         world.stream_in("default", &format!("s-old-{n}")).epoch = "epoch-1".into();
@@ -68,7 +68,7 @@ fn as_the_mini_lists(gateway: &super::Fake) {
 }
 
 /// How many polls of the gateway ran to their end, by the log.
-fn polls(site: &Site) -> usize {
+pub(super) fn polls(site: &Site) -> usize {
     let log = site.fleet.log();
     log.lines()
         .filter(|line| line.contains(" trace poll ms="))
