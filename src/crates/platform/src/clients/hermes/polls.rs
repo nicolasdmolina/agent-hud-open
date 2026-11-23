@@ -10,7 +10,7 @@
 //! session whose read took long is read apart from then on, on a socket
 //! of its own (`apart.rs`): the polls leave it out, and go on at their
 //! own pace.
-use super::waits::{snapshot, Waits};
+use super::waits::{snapshot, unanswered, Waits};
 use super::{socket::result, socket::Socket, Model, Shared};
 use agent_hud_agents::hermes::gateway::{
     frame, hints, Connection, Failure, Frame, Input, Instance, Poll, Refusal, Scope, SessionRef,
@@ -24,9 +24,9 @@ use std::{
 
 /// More rounds than any poll takes: a list, the reads of one session one
 /// after another (at most sixteen, when it has to search for the oldest
-/// event Hermes still keeps), a snapshot; and as many again for what a
-/// poll asks last (the model's `order.rs`).
-const ROUNDS: usize = 40;
+/// event Hermes still keeps), a snapshot; as many again for the quiet
+/// sessions it reads last, and for its looks (the model's `order.rs`).
+const ROUNDS: usize = 60;
 
 /// One poll that ran to its end.
 pub(super) struct Ran {
@@ -246,16 +246,20 @@ pub(super) fn rounds(
                 _ => {}
             }
         }
-        // Never answered: what they would have told stays unknown. One
-        // that was a session's read held the poll up for as long as a
-        // call may take.
-        for step in asked.into_values() {
+        // Never answered: what they would have told stays unknown. The
+        // first of them is the call the gateway was at, which held the
+        // poll up; the others waited behind it (`waits.rs`). A look
+        // that only waited does not rest. A read is read apart either
+        // way, the slow one first: a card may wait on it.
+        for (place, step) in unanswered(asked).into_iter().enumerate() {
             if let Step::Since { session, .. } = &step {
                 if beside && !slow.contains(session) {
                     slow.push(session.clone());
                 }
             }
-            shared.rests.rest(&step, shared.pace.answer);
+            if place == 0 {
+                shared.rests.rest(&step, shared.pace.answer);
+            }
             poll.failed(&step);
         }
         for step in alone {
@@ -274,11 +278,13 @@ pub(super) fn rounds(
             }
         }
     }
-    // What was not asked stays unknown: the rest of what is asked
-    // first, and then what would have been asked last.
-    for _ in 0..2 {
-        for step in poll.steps() {
-            poll.failed(&step);
+    // What was not asked stays unknown. A quiet session's read that the
+    // short time left unasked is read apart, as one it left unanswered.
+    let cut = beside && waits.over();
+    for step in poll.give_up() {
+        match step {
+            Step::Since { session, .. } if cut && !slow.contains(&session) => slow.push(session),
+            _ => {}
         }
     }
     Ok(Some(Asked {

@@ -25,7 +25,7 @@ use super::{
     socket::Socket,
     Pace, Shared,
 };
-use agent_hud_agents::hermes::gateway::{Connection, Gateway, Input, SessionRef};
+use agent_hud_agents::hermes::gateway::{Connection, Gateway, Input, SessionRef, Status};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
@@ -117,6 +117,20 @@ fn every(gateway: &Gateway, pace: &Pace) -> Duration {
     }
 }
 
+/// How far apart the polls come that would want `session` read, for
+/// how long its lane is kept: as often as the gateway is polled while
+/// a poll would read the session. Once none would (it left the live
+/// list, or is listed idle and shows no card), no poll is waited for,
+/// and the lane ends as it did before the polls could come ten seconds
+/// apart: after six of the close watch (ticket 73). It sends nothing
+/// meanwhile, and held a thread, a socket and a lane's place for 65 s.
+fn kept(gateway: &Gateway, session: &SessionRef, pace: &Pace) -> Duration {
+    match gateway.status(session) {
+        Some(Status::Working | Status::Waiting) => every(gateway, pace),
+        _ => pace.watch,
+    }
+}
+
 /// Whether a lane no poll has wanted its session read by for `since`
 /// is over, where the polls come `every` so often. A poll can itself
 /// be slow, by as much as a call may take.
@@ -135,7 +149,8 @@ fn work(shared: &Arc<Shared>, session: &SessionRef) {
         }
         let wanted = shared.apart.wanted(session);
         let every = || every(&shared.model().gateway, &pace);
-        if wanted.is_none_or(|at| unwanted(at.elapsed(), every(), &pace)) {
+        let kept = || kept(&shared.model().gateway, session, &pace);
+        if wanted.is_none_or(|at| unwanted(at.elapsed(), kept(), &pace)) {
             break "unwanted";
         }
         let instance = match shared.model().gateway.connection() {
@@ -246,6 +261,12 @@ mod tests {
     /// A gateway of `machine` that lists one session as working, polled
     /// at `at` and at each time after it with the session as it was.
     fn polled(machine: Machine, at: &[i64]) -> Gateway {
+        listing(machine, at, "working")
+    }
+
+    /// The same, with the session listed as `status` at the last poll,
+    /// or with no session listed at it where `status` is empty.
+    fn listing(machine: Machine, at: &[i64], status: &str) -> Gateway {
         let mut gateway = Gateway::new(GatewayId::new(machine, Profile::Default));
         let answer = json!({"runtime_protocol": 1, "state": "ready", "instance_id": "one",
             "authority_epoch": 1, "api_origin": "http://127.0.0.1:54321",
@@ -253,9 +274,13 @@ mod tests {
             "served_profiles": [{"profile_id": "/synthetic", "home": "/synthetic"}]});
         let (answer, home) = (&answer, "/synthetic");
         gateway.apply(Input::Identified { answer, home }, 0);
-        for now in at {
+        for (n, now) in at.iter().enumerate() {
             let mut poll = gateway.poll().expect("a gateway that is ready");
-            let rows = json!({"sessions": [{"id": "s-stuck", "status": "working"}]});
+            let rows = match (n + 1 == at.len(), status) {
+                (true, "") => json!({"sessions": []}),
+                (true, status) => json!({"sessions": [{"id": "s-stuck", "status": status}]}),
+                _ => json!({"sessions": [{"id": "s-stuck", "status": "working"}]}),
+            };
             let place = json!({"events": [], "replay_epoch": "epoch-1", "last_sequence": 0});
             for _ in 0..8 {
                 for step in poll.steps() {
@@ -287,6 +312,40 @@ mod tests {
         assert_eq!(every(&polled(far(), &[0, QUIET_MS]), &pace), slow);
         let here = polled(Machine::This, &[0, QUIET_MS]);
         assert_eq!(every(&here, &pace), pace.watch);
+    }
+
+    /// A lane lives from one slow poll to the next only while a poll
+    /// would read its session. Once the session has left the list, or is
+    /// listed idle with no card, the lane ends after six polls of the
+    /// close watch, as it did before a gateway could be polled every
+    /// ten seconds: on this machine too, whose polls slow down when the
+    /// list empties.
+    #[test]
+    fn a_lane_no_poll_would_read_the_session_of_ends_at_the_close_watch() {
+        let pace = Pace::default();
+        let slow = Duration::from_millis(IDLE_POLL_MS as u64);
+        let at = |gateway: &Gateway| gateway.session(&Profile::Default, "s-stuck").unwrap();
+        let kept = |gateway: &Gateway| kept(gateway, &at(gateway), &pace);
+        // Listed as working on a far gateway where nothing moves: the
+        // polls that want it read come ten seconds apart.
+        let quiet = polled(far(), &[0, QUIET_MS]);
+        assert_eq!((every(&quiet, &pace), kept(&quiet)), (slow, slow));
+        assert!(!unwanted(Duration::from_secs(65), kept(&quiet), &pace));
+        // Gone from the list: the gateway is polled as slowly, on this
+        // machine too, and no poll is coming that would want it read.
+        for machine in [far(), Machine::This] {
+            let left = listing(machine, &[0, QUIET_MS, QUIET_MS + 10_000], "");
+            assert_eq!(every(&left, &pace), slow);
+            assert_eq!(kept(&left), pace.watch);
+            assert!(unwanted(Duration::from_millis(9_801), kept(&left), &pace));
+        }
+        // Listed idle, with no card: no poll reads it either.
+        let idle = listing(far(), &[0, QUIET_MS, QUIET_MS + 10_000], "idle");
+        assert_eq!(kept(&idle), pace.watch);
+        // Waiting, where it worked: read, and kept, at the quick pace.
+        let waits = listing(far(), &[0, QUIET_MS, QUIET_MS + 10_000], "waiting");
+        assert_eq!(kept(&waits), pace.watch);
+        assert!(!unwanted(Duration::from_millis(9_800), kept(&waits), &pace));
     }
 
     /// A lane is kept for six polls and the time one call may take, at
