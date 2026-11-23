@@ -3,6 +3,7 @@
 //! answered by hand (Hermes), or leave a session it approved in without
 //! a note for the sound decision.
 use super::super::{auto, AutoApprove, Requests};
+use super::{APPROVED_KEPT, APPROVED_KEPT_MS};
 use serde_json::{json, Value};
 
 const WHY: &str = "The client cannot be reached right now.";
@@ -53,7 +54,7 @@ fn approve_automatically_never_decides_a_request_marked_unreachable() {
     );
     assert_eq!(shown(&requests), ["marked"]);
     // It was not noted as approved, and takes no decision by hand either.
-    assert_eq!(requests.auto_approved().len(), 1, "only the plain one");
+    assert_eq!(requests.auto_approved(1_000).len(), 1, "only the plain one");
     assert_eq!(
         requests.answer("marked", &json!({"kind": "allow"}), 1_500),
         Err(WHY.to_owned())
@@ -87,7 +88,7 @@ fn approve_automatically_never_answers_a_hermes_request() {
         "a Hermes approval was answered"
     );
     assert_eq!(shown(&requests), ["hermes:1"]);
-    assert!(requests.auto_approved().is_empty());
+    assert!(requests.auto_approved(1_000).is_empty());
     // By hand it is answered as ever.
     assert!(requests
         .answer("hermes:1", &json!({"kind": "allow"}), 1_500)
@@ -107,30 +108,36 @@ fn only_hermes_is_answered_by_hand() {
 }
 
 /// A request allowed with no card is kept for the sound decision under
-/// its own names, from either way in, until that decision has looked at
-/// its session. No clock ends it.
+/// its own names, from either way in, and ends by its name only: when the
+/// sound decision says the wait that went by it is over.
 #[test]
-fn an_automatic_approval_is_kept_by_its_names_until_its_session_is_looked_at() {
+fn an_automatic_approval_is_kept_by_its_names_and_ended_by_them() {
     let requests = approving();
     let mut card = permission("codex", Some("codex-desktop"));
     card["callId"] = json!("call-7");
     let ticket = requests.register_native("p".into(), card, 10_000).unwrap();
     assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
-    requests.note_auto_approved("claude", "s9", Some("toolu_9"));
-    requests.note_auto_approved("claude", "s9", None);
-    let kept = requests.auto_approved();
+    requests.note_auto_approved("claude", "s9", Some("toolu_9"), 10_000);
+    // A hook's request that names no tool call has nothing to be known by.
+    requests.note_auto_approved("claude", "s9", None, 10_000);
+    let kept = requests.auto_approved(10_000);
     assert_eq!(kept["codex:s1"], ["p", "call:call-7"]);
     assert_eq!(kept["claude:s9"], ["call:toolu_9"]);
     assert_eq!(kept.len(), 2);
-    // Time passing ends nothing: only a look at the session does.
-    requests.expire(10_000_000);
-    assert_eq!(requests.auto_approved(), kept);
-    requests.auto_approved_seen(["codex:s1", "codex:another"]);
-    let kept = requests.auto_approved();
-    assert!(!kept.contains_key("codex:s1"));
-    assert!(kept.contains_key("claude:s9"));
-    requests.auto_approved_seen(["claude:s9"]);
-    assert!(requests.auto_approved().is_empty());
+    // A second approval in the same session, after the first was read.
+    let other = permission("codex", Some("codex-desktop"));
+    let ticket = requests
+        .register_native("p2".into(), other, 10_001)
+        .unwrap();
+    assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
+    // Ending what was read ends that request and no other, though they
+    // share a session: by one of its names, either of them.
+    requests.auto_approved_ended(&["call:call-7".to_owned(), "unknown".to_owned()]);
+    let kept = requests.auto_approved(10_002);
+    assert_eq!(kept["codex:s1"], ["p2"]);
+    assert_eq!(kept["claude:s9"], ["call:toolu_9"]);
+    requests.auto_approved_ended(&[]);
+    assert_eq!(requests.auto_approved(10_002), kept);
     // A question is never approved, so never kept.
     let question = json!({"source": "codex", "client": "codex-desktop",
         "sessionId": "s2", "kind": "question"});
@@ -138,5 +145,71 @@ fn an_automatic_approval_is_kept_by_its_names_until_its_session_is_looked_at() {
         .register_native("q".into(), question, 20_000)
         .unwrap();
     assert!(ticket.response.try_recv().is_err());
-    assert!(requests.auto_approved().is_empty());
+    assert!(!requests.auto_approved(20_000).contains_key("codex:s2"));
+}
+
+/// What is kept is bounded, in time and in number, so that a request whose
+/// wait is never seen to end cannot make the list grow. Ten minutes, and
+/// 512 requests, the oldest going first.
+#[test]
+fn what_is_kept_of_approved_requests_is_bounded_in_time_and_number() {
+    let requests = approving();
+    assert_eq!(APPROVED_KEPT_MS, 600_000);
+    assert_eq!(APPROVED_KEPT, 512);
+    requests.note_auto_approved("claude", "s1", Some("old"), 1_000);
+    requests.note_auto_approved("claude", "s1", Some("new"), 2_000);
+    assert_eq!(
+        requests.auto_approved(1_000 + APPROVED_KEPT_MS - 1)["claude:s1"],
+        ["call:old", "call:new"]
+    );
+    assert_eq!(
+        requests.auto_approved(1_000 + APPROVED_KEPT_MS)["claude:s1"],
+        ["call:new"]
+    );
+    assert!(requests.auto_approved(2_000 + APPROVED_KEPT_MS).is_empty());
+    for index in 0..APPROVED_KEPT + 3 {
+        requests.note_auto_approved("claude", "s2", Some(&format!("c{index}")), 5_000);
+    }
+    let kept = &requests.auto_approved(5_000)["claude:s2"];
+    assert_eq!(kept.len(), APPROVED_KEPT);
+    assert_eq!(kept[0], "call:c3");
+}
+
+/// A wait names its requests only where every reader that lists the
+/// session names them: a session any reader lists with none is waiting on
+/// something more, and is known by no request.
+#[test]
+fn a_wait_is_for_its_requests_only_where_every_reader_names_them() {
+    let requests = Requests::default();
+    let waits = |list: &[(&str, &[&str])]| -> Vec<(String, Vec<String>)> {
+        list.iter()
+            .map(|(session, ids)| {
+                let ids = ids.iter().map(|id| (*id).to_owned()).collect();
+                ((*session).to_owned(), ids)
+            })
+            .collect()
+    };
+    requests.set_native_waits("codex", "one", &waits(&[("s1", &["r1"]), ("s2", &[])]));
+    let named = requests.native_wait_requests();
+    assert_eq!(named["codex:s1"], ["r1"]);
+    assert!(!named.contains_key("codex:s2"), "a wait that names none");
+    assert!(requests.native_waiting_sessions()["codex"].contains("s2"));
+    // A second reader lists s1 too: with its own request, then with none.
+    requests.set_native_waits("codex", "two", &waits(&[("s1", &["r2"])]));
+    let mut both = requests.native_wait_requests()["codex:s1"].clone();
+    both.sort();
+    assert_eq!(both, ["r1", "r2"]);
+    requests.set_native_waiting("codex", "two", &["s1".to_owned()], 0);
+    assert!(!requests.native_wait_requests().contains_key("codex:s1"));
+    // That reader ends: the first one's word stands again.
+    requests.end_native_reader("codex", "two");
+    assert_eq!(requests.native_wait_requests()["codex:s1"], ["r1"]);
+    // The same list told again changes nothing; a new name does.
+    let revision = requests.revision();
+    requests.set_native_waits("codex", "one", &waits(&[("s1", &["r1"]), ("s2", &[])]));
+    assert_eq!(requests.revision(), revision);
+    requests.set_native_waits("codex", "one", &waits(&[("s1", &["r3"]), ("s2", &[])]));
+    assert_ne!(requests.revision(), revision);
+    requests.set_native_waiting("codex", "one", &[], 0);
+    assert!(requests.native_wait_requests().is_empty());
 }

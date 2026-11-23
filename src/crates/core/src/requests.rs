@@ -24,6 +24,7 @@ mod unreachable_tests;
 mod views;
 
 pub use auto::AutoApprove;
+pub use auto_limits::{APPROVED_KEPT, APPROVED_KEPT_MS};
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
 
@@ -59,8 +60,8 @@ struct State {
     machines: BTreeMap<String, Machines>,
     /// Which clients' permission requests are allowed at once.
     auto: AutoApprove,
-    /// The requests allowed with no card that the sound decision has not
-    /// looked at the session of yet (`auto_limits.rs`).
+    /// The requests allowed with no card, kept for the sound decision
+    /// (`auto_limits.rs`).
     approved: VecDeque<auto_limits::Approved>,
 }
 pub use native::{NativeReadings, NativeStates, LIVE_STATES_MS};
@@ -181,7 +182,7 @@ impl Requests {
             // A permission its client approves automatically: allowed at
             // once, with no card, and never shown again (`auto_limits.rs`
             // says which never are).
-            if state.approved_at_once(&id, &view) {
+            if state.approved_at_once(&id, &view, now_ms) {
                 let _ = sender.send(Some(auto::allow()));
                 let wait = state.begin_wait();
                 return Some(Ticket {

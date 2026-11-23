@@ -77,7 +77,10 @@ fn approve_automatically_never_answers_a_hermes_approval() {
     std::thread::sleep(Duration::from_millis(1500));
     assert_eq!(gateway.world().calls("approval.respond").len(), 0);
     assert_eq!(lab.card()["id"], card["id"]);
-    assert!(lab.requests.auto_approved().is_empty());
+    assert!(lab
+        .requests
+        .auto_approved(crate::hooks::now_ms())
+        .is_empty());
     // Pressed by hand, it is answered as ever.
     let id = card["id"].as_str().unwrap();
     lab.requests

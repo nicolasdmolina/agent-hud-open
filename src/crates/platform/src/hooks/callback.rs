@@ -37,6 +37,7 @@ pub(super) fn wait_for_answer(
             &request.source,
             &request.session_id,
             request.call_id.as_deref(),
+            now_ms(),
         );
         return request
             .response(&serde_json::json!({"kind":"allow"}))
@@ -152,7 +153,7 @@ mod tests {
             )
         };
         assert!(ask(Some("claude")).is_none());
-        assert!(requests.auto_approved().is_empty());
+        assert!(requests.auto_approved(now_ms()).is_empty());
         requests.set_auto_approve(AutoApprove::from_settings(&json!({"autoApprove": true})));
         let mut asked = claude_asks(Some("claude"));
         asked["tool_use_id"] = json!("toolu_66");
@@ -171,7 +172,7 @@ mod tests {
             .session_id;
         // Kept under the tool call it names, by its session.
         assert_eq!(
-            requests.auto_approved(),
+            requests.auto_approved(now_ms()),
             std::collections::HashMap::from([(
                 format!("claude:{session}"),
                 vec!["call:toolu_66".to_owned()]
@@ -183,7 +184,7 @@ mod tests {
     fn droid_asks(cwd: &std::path::Path, mode: &str, command: &str, risk: &str) -> Value {
         json!({"session_id": "s1", "cwd": cwd.to_str().unwrap(),
             "permission_mode": mode, "hook_event_name": "PreToolUse",
-            "tool_name": "Execute",
+            "tool_name": "Execute", "tool_use_id": format!("call-{command}"),
             "tool_input": {"command": command, "riskLevel": risk}})
     }
 
@@ -216,7 +217,7 @@ mod tests {
         ));
         assert_eq!(ruled[mark], true, "the screen marks what a rule asks about");
         // One no rule names, which Droid asks about by its level.
-        let mut plain = droid_asks(&work, "off", "synthetic-build", "high");
+        let mut plain = droid_asks(&work, "off", "plain", "high");
         assert!(super::super::policy::screen(
             "droid",
             &mut plain,
@@ -268,7 +269,13 @@ mod tests {
             "an explicit ask rule was allowed: {reply:?}"
         );
         assert_eq!(held.get(), 1, "it waits as a card");
-        // Only the plain one was kept as allowed with no card.
-        assert_eq!(requests.auto_approved().len(), 1);
+        // Only the plain one was kept as allowed with no card, under the
+        // tool call it names.
+        let kept: Vec<String> = requests
+            .auto_approved(now_ms())
+            .into_values()
+            .flatten()
+            .collect();
+        assert_eq!(kept, ["call:call-plain"]);
     }
 }

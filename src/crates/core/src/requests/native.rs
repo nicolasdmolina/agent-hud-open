@@ -77,6 +77,11 @@ impl NativeReadings {
 #[derive(Default)]
 pub(super) struct Readers {
     waiting: HashMap<String, BTreeMap<String, HashSet<String>>>,
+    /// The requests a reader says a session's wait is for, where it says
+    /// (`set_native_waits`): by source and reader, then by session. A
+    /// session a reader lists with none is waiting on something it does
+    /// not name.
+    named: HashMap<(String, String), HashMap<String, Vec<String>>>,
     states: NativeReadings,
 }
 
@@ -117,7 +122,31 @@ impl Readers {
         }
         true
     }
+    /// Which requests `reader` says each session's wait is for; whether
+    /// that changed.
+    fn set_named(
+        &mut self,
+        source: &str,
+        reader: &str,
+        next: HashMap<String, Vec<String>>,
+    ) -> bool {
+        let key = (source.to_owned(), reader.to_owned());
+        if self
+            .named
+            .get(&key)
+            .map_or(next.is_empty(), |old| *old == next)
+        {
+            return false;
+        }
+        if next.is_empty() {
+            self.named.remove(&key);
+        } else {
+            self.named.insert(key, next);
+        }
+        true
+    }
     fn end_waiting(&mut self, source: &str, reader: &str) -> bool {
+        self.set_named(source, reader, HashMap::new());
         let Some(readers) = self.waiting.get_mut(source) else {
             return false;
         };
@@ -172,7 +201,52 @@ impl Requests {
             .filter(|id| !id.is_empty())
             .cloned()
             .collect();
-        self.native(|readers| readers.set_waiting(source, reader, next));
+        self.native(|readers| {
+            let named = readers.set_named(source, reader, HashMap::new());
+            readers.set_waiting(source, reader, next) || named
+        });
+    }
+    /// The same whole list, each session with the requests its wait is for
+    /// (the ids they were registered under), where the channel can tell:
+    /// a wait for a request it handed to `register_native`. A session with
+    /// none waits on something the channel does not name. The sound
+    /// decision matches an automatically approved request to its wait by
+    /// these ids, and by nothing else (`sound_alerts`).
+    pub fn set_native_waits(&self, source: &str, reader: &str, waits: &[(String, Vec<String>)]) {
+        let waits = waits.iter().filter(|(id, _)| !id.is_empty());
+        let next: HashSet<String> = waits.clone().map(|(id, _)| id.clone()).collect();
+        let named: HashMap<String, Vec<String>> = waits
+            .filter(|(_, requests)| !requests.is_empty())
+            .cloned()
+            .collect();
+        self.native(|readers| {
+            let named = readers.set_named(source, reader, named);
+            readers.set_waiting(source, reader, next) || named
+        });
+    }
+    /// The requests each waiting session's wait is for, by `source:session`:
+    /// only where every reader that lists the session names them. A session
+    /// any reader lists with none is left out: its wait is not only theirs.
+    pub fn native_wait_requests(&self) -> HashMap<String, Vec<String>> {
+        let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let native = &state.native;
+        let mut all: HashMap<String, Option<Vec<String>>> = HashMap::new();
+        for (source, readers) in &native.waiting {
+            for (reader, sessions) in readers {
+                let named = native.named.get(&(source.clone(), reader.clone()));
+                for session in sessions {
+                    let told = named.and_then(|named| named.get(session));
+                    let entry = all.entry(format!("{source}:{session}"));
+                    match (entry.or_insert_with(|| Some(Vec::new())), told) {
+                        (Some(requests), Some(told)) => requests.extend(told.iter().cloned()),
+                        (requests, _) => *requests = None,
+                    }
+                }
+            }
+        }
+        all.into_iter()
+            .filter_map(|(key, requests)| Some((key, requests?)))
+            .collect()
     }
     /// What `reader`, one of `source`'s native channels, says each live
     /// session is doing, whole, as of `states.read_ms`: a session it leaves

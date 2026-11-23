@@ -12,6 +12,7 @@ mod pending;
 mod reply;
 mod stream;
 mod turns;
+mod waits;
 pub(crate) use daemon::daemon_tui_port_for as daemon_tui_port;
 
 use super::desktop_io::{endpoint, DesktopIpc, IpcError, ShutdownHandle};
@@ -212,16 +213,15 @@ impl Shared {
                 .iter()
                 .filter_map(|(thread, known)| {
                     let status = &known.state["threadRuntimeStatus"];
-                    (status["type"] == "active"
-                        && status["activeFlags"].as_array().is_some_and(|flags| {
-                            flags.iter().any(|flag| {
-                                matches!(
-                                    flag.as_str(),
-                                    Some("waitingOnApproval" | "waitingOnUserInput")
-                                )
-                            })
-                        }))
-                    .then(|| thread.clone())
+                    let flags = status["activeFlags"].as_array()?;
+                    let on = |flag: &str| flags.iter().any(|told| told == flag);
+                    let (approval, input) = (on("waitingOnApproval"), on("waitingOnUserInput"));
+                    // Agent HUD Fork (ticket 66): with the requests the wait
+                    // is for, where each part of it has one (`waits.rs`).
+                    (status["type"] == "active" && (approval || input)).then(|| {
+                        let named = waits::named(&state.pending, thread, approval, input);
+                        (thread.clone(), named)
+                    })
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -231,7 +231,7 @@ impl Shared {
         // Keep this complete-list replacement ordered with disconnect/stop. The
         // Requests owner changes phase only; this creates no actionable request.
         self.requests
-            .set_native_waiting(AGENT.id, SOLE_READER, &sessions, crate::hooks::now_ms());
+            .set_native_waits(AGENT.id, SOLE_READER, &sessions);
     }
 }
 

@@ -1,8 +1,9 @@
 //! Approve automatically against the fork's sound rule, through the whole
-//! core (ticket 66): a permission allowed with no card makes no
-//! `needs-you`, though its channel tells the session as waiting for a
-//! moment; the same wait with nothing approved sounds, and so does a card
-//! that shows afterwards.
+//! core (ticket 66). A permission allowed with no card makes no
+//! `needs-you` where its channel says the session's wait is for that
+//! request, by its id. Nothing else is silent: a wait that names no
+//! request always sounds, as before the sync, though a request was just
+//! approved. Each case of the two verifiers is a test here.
 use super::*;
 use crate::requests::AutoApprove;
 use agent_hud_agents::SOLE_READER;
@@ -69,8 +70,8 @@ impl Lab {
         std::mem::forget(ticket);
         allowed
     }
-    /// The channel tells the session as waiting, as it does while its
-    /// client asks.
+    /// The channel tells the session as waiting and names no request: all
+    /// a channel knows of a wait it has no card for.
     fn told_waiting(&self) {
         self.core.requests().set_native_waiting(
             "codex",
@@ -78,6 +79,29 @@ impl Lab {
             &[THREAD.to_owned()],
             self.now,
         );
+    }
+    /// The channel tells the session as waiting for these requests, by the
+    /// ids it registered them under, as Codex Desktop's does.
+    fn told_waiting_for(&self, requests: &[&str]) {
+        let requests = requests.iter().map(|id| (*id).to_owned()).collect();
+        self.core.requests().set_native_waits(
+            "codex",
+            SOLE_READER,
+            &[(THREAD.to_owned(), requests)],
+        );
+    }
+    /// The channel says the session waits no more.
+    fn not_waiting(&self) {
+        self.core
+            .requests()
+            .set_native_waiting("codex", SOLE_READER, &[], self.now);
+    }
+    /// The names of the approved requests core still keeps.
+    fn kept(&self) -> Vec<String> {
+        let kept = self.core.requests().auto_approved(self.now);
+        let mut names: Vec<String> = kept.into_values().flatten().collect();
+        names.sort();
+        names
     }
     /// One look: (the session's state, cards shown, `needs-you` alerts).
     fn look(&mut self) -> (String, usize, usize) {
@@ -105,6 +129,8 @@ impl Lab {
     }
 }
 
+const A: &str = "codex-desktop-permission:approved";
+
 /// The control: a wait its channel tells, with no card and nothing
 /// approved, sounds once.
 #[test]
@@ -121,13 +147,15 @@ fn a_wait_told_with_no_card_sounds_where_nothing_was_approved() {
 fn a_permission_that_shows_its_card_sounds() {
     let mut lab = Lab::new(false);
     lab.look();
-    assert!(!lab.card("codex-desktop-permission:1", "permission"));
-    lab.told_waiting();
+    assert!(!lab.card(A, "permission"));
+    lab.told_waiting_for(&[A]);
     assert_eq!(lab.look(), ("waiting".into(), 1, 1));
 }
 
+/// The rule: the channel says the wait is for the request that was
+/// allowed, so it is known to be that request's, and is silent.
 #[test]
-fn a_permission_allowed_automatically_shows_no_card_and_plays_no_sound() {
+fn a_permission_allowed_automatically_shows_no_card_and_its_wait_plays_no_sound() {
     let mut lab = Lab::new(true);
     assert_eq!(
         lab.core
@@ -137,10 +165,8 @@ fn a_permission_allowed_automatically_shows_no_card_and_plays_no_sound() {
             .approves("codex", Some("codex-desktop"))
     );
     assert_eq!(lab.look(), ("running".into(), 0, 0));
-    // Its client asks: the channel tells the wait and hands the card over,
-    // which is allowed at once.
-    lab.told_waiting();
-    assert!(lab.card("codex-desktop-permission:1", "permission"));
+    assert!(lab.card(A, "permission"));
+    lab.told_waiting_for(&[A]);
     assert_eq!(
         lab.look(),
         ("waiting".into(), 0, 0),
@@ -150,21 +176,179 @@ fn a_permission_allowed_automatically_shows_no_card_and_plays_no_sound() {
     lab.later(6_000);
     assert_eq!(lab.look(), ("waiting".into(), 0, 0));
     // A question then asked shows its card, and that sounds.
-    assert!(!lab.card("codex-desktop-question:2", "question"));
+    let question = "codex-desktop-question:2";
+    assert!(!lab.card(question, "question"));
+    lab.told_waiting_for(&[A, question]);
     assert_eq!(lab.look(), ("waiting".into(), 1, 1));
 }
 
-/// The same from a hook's callback, which tells core the session it
-/// allowed in (`platform/src/hooks/callback.rs`).
+/// Round 1's first probe, with the wait named: the app first sees the
+/// approved request's wait five seconds and a millisecond after allowing
+/// it, and a minute after. No clock makes it sound.
 #[test]
-fn a_permission_a_hook_allowed_automatically_plays_no_sound() {
+fn the_approved_requests_wait_is_silent_however_late_it_is_first_seen() {
+    for late in [5_001, 60_000] {
+        let mut lab = Lab::new(true);
+        assert_eq!(lab.look(), ("running".into(), 0, 0));
+        assert!(lab.card(A, "permission"));
+        lab.told_waiting_for(&[A]);
+        lab.later(late);
+        assert_eq!(lab.look(), ("waiting".into(), 0, 0), "seen {late} ms late");
+    }
+}
+
+/// Round 1's second probe. After the approval the session is seen at
+/// work, with nothing waiting. A wait it then reports, naming no request,
+/// is another wait and sounds though it has no card yet.
+#[test]
+fn a_separate_wait_after_an_automatic_approval_still_sounds() {
+    let mut lab = Lab::new(true);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    assert!(lab.card(A, "permission"));
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    lab.told_waiting();
+    assert_eq!(
+        lab.look(),
+        ("waiting".into(), 0, 1),
+        "a new wait was taken for the approved request's"
+    );
+}
+
+/// Round 2's first probe. The approved request's wait comes and goes
+/// before any look, and another wait, for input the channel has no card
+/// for, begins. The first look finds only that one. It sounds, whenever
+/// the look comes: once, and not again when its card arrives.
+#[test]
+fn a_distinct_wait_that_names_no_request_sounds_before_the_first_look() {
+    for first_look_after in [200, 6_000] {
+        let mut lab = Lab::new(true);
+        assert_eq!(lab.look(), ("running".into(), 0, 0));
+        assert!(lab.card(A, "permission"));
+        lab.told_waiting_for(&[A]);
+        lab.later(100);
+        lab.not_waiting();
+        lab.later(100);
+        lab.told_waiting();
+        lab.later(first_look_after - 200);
+        let at = format!("first look at {first_look_after} ms");
+        assert_eq!(lab.look(), ("waiting".into(), 0, 1), "{at}");
+        lab.later(15_000);
+        assert_eq!(lab.look(), ("waiting".into(), 0, 1), "{at}, 15 s on");
+        assert!(!lab.card("codex-desktop-question:late-card", "question"));
+        assert_eq!(lab.look(), ("waiting".into(), 1, 1), "{at}, its card");
+    }
+}
+
+/// Round 2's second probe. A wait the app already sees has sounded, and a
+/// later answer cannot take that back: one sound, not two, whether or not
+/// the channel then names the request.
+#[test]
+fn a_wait_seen_before_its_request_was_approved_has_sounded_once() {
+    for named in [false, true] {
+        let mut lab = Lab::new(true);
+        assert_eq!(lab.look(), ("running".into(), 0, 0));
+        lab.told_waiting();
+        assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+        lab.later(100);
+        assert!(lab.card(A, "permission"));
+        if named {
+            lab.told_waiting_for(&[A]);
+        }
+        assert_eq!(lab.look(), ("waiting".into(), 0, 1), "named: {named}");
+        lab.later(6_000);
+        assert_eq!(lab.look(), ("waiting".into(), 0, 1), "named: {named}");
+    }
+}
+
+/// Round 2's third probe. Codex Desktop registers a request and then
+/// publishes its wait; a look lands between the two. The request is still
+/// kept after that look, so the wait that names it is silent.
+#[test]
+fn a_look_between_an_approval_and_the_publication_of_its_wait_stays_silent() {
+    let mut lab = Lab::new(true);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    assert!(lab.card(A, "permission"));
+    assert_eq!(lab.kept(), [A]);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    assert_eq!(lab.kept(), [A], "a look that saw no wait of it ended it");
+    lab.later(100);
+    lab.told_waiting_for(&[A]);
+    assert_eq!(
+        lab.look(),
+        ("waiting".into(), 0, 0),
+        "the approved request's own wait made a sound"
+    );
+}
+
+/// Round 2's fourth probe, by the calls a look makes. The look reads the
+/// approved requests, another is approved in the same session while it
+/// decides, and then it says which waits it saw end. Only those go.
+#[test]
+fn an_approval_made_during_a_look_is_kept() {
+    let lab = Lab::new(true);
+    let requests = lab.core.requests();
+    let session = format!("codex:{THREAD}");
+    let first = "codex-desktop-permission:first";
+    let second = "codex-desktop-permission:second";
+    assert!(lab.card(first, "permission"));
+    let read = requests.auto_approved(lab.now);
+    assert_eq!(read[&session], [first]);
+    assert!(lab.card(second, "permission"));
+    requests.auto_approved_ended(&read[&session]);
+    assert_eq!(requests.auto_approved(lab.now)[&session], [second]);
+}
+
+/// A request is kept until a look sees the wait that names it end.
+#[test]
+fn an_approved_request_is_kept_until_a_look_sees_its_wait_end() {
+    let mut lab = Lab::new(true);
+    lab.look();
+    assert!(lab.card(A, "permission"));
+    lab.told_waiting_for(&[A]);
+    assert_eq!(lab.look(), ("waiting".into(), 0, 0));
+    assert_eq!(lab.kept(), [A]);
+    lab.later(1_000);
+    lab.not_waiting();
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    assert!(lab.kept().is_empty());
+}
+
+/// What changed in round 3. A wait that names no request always sounds,
+/// as it did before the sync, though a request was just approved in its
+/// session: nothing says the wait is that request's. An extra sound for an
+/// approved request is the lesser fault; a silent wait is not.
+#[test]
+fn a_wait_that_names_no_request_sounds_though_a_request_was_just_approved() {
+    let mut lab = Lab::new(true);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    assert!(lab.card(A, "permission"));
+    lab.told_waiting();
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+}
+
+/// A wait for the approved request and for something else beside it is
+/// not only the request's: it sounds.
+#[test]
+fn a_wait_for_the_approved_request_and_another_sounds() {
+    let mut lab = Lab::new(true);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    assert!(lab.card(A, "permission"));
+    lab.told_waiting_for(&[A, "codex-desktop-permission:no-card-yet"]);
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+}
+
+/// The same from a hook's callback (`platform/src/hooks/callback.rs`). A
+/// hook's request is known by its tool call, and the wait a hook reports
+/// names none, so it sounds: the changed expectation of round 3 again.
+#[test]
+fn the_wait_a_hook_reports_after_an_automatic_approval_names_no_request_and_sounds() {
     let mut lab = Lab::new(true);
     lab.look();
     lab.core
         .requests()
-        .note_auto_approved("codex", THREAD, Some("call-66"));
+        .note_auto_approved("codex", THREAD, Some("call-66"), lab.now);
     lab.told_waiting();
-    assert_eq!(lab.look(), ("waiting".into(), 0, 0));
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
 }
 
 /// Upstream's "Answer in the HUD", turned off: the card is left out of the
@@ -181,39 +365,4 @@ fn a_request_answered_in_its_own_client_still_sounds() {
     assert!(!lab.card("codex-desktop-permission:1", "permission"));
     lab.told_waiting();
     assert_eq!(lab.look(), ("waiting".into(), 0, 1));
-}
-
-/// The verifier's first probe (round 2). The app first sees the approved
-/// request's wait five seconds and a millisecond after allowing it: no
-/// look came in between. It is still that request's wait, however late it
-/// is seen, and makes no sound.
-#[test]
-fn a_wait_first_seen_long_after_its_automatic_approval_plays_no_sound() {
-    let mut lab = Lab::new(true);
-    assert_eq!(lab.look(), ("running".into(), 0, 0));
-    assert!(lab.card("codex-desktop-permission:1", "permission"));
-    lab.told_waiting();
-    lab.later(5_001);
-    assert_eq!(
-        lab.look(),
-        ("waiting".into(), 0, 0),
-        "a request that showed no card made a sound, seen late"
-    );
-}
-
-/// The verifier's second probe. After the approval the session is seen at
-/// work, with nothing waiting. A wait it then reports is another wait, not
-/// the approved request's, and sounds though it has no card yet.
-#[test]
-fn a_separate_wait_after_an_automatic_approval_still_sounds() {
-    let mut lab = Lab::new(true);
-    assert_eq!(lab.look(), ("running".into(), 0, 0));
-    assert!(lab.card("codex-desktop-permission:1", "permission"));
-    assert_eq!(lab.look(), ("running".into(), 0, 0));
-    lab.told_waiting();
-    assert_eq!(
-        lab.look(),
-        ("waiting".into(), 0, 1),
-        "a new wait was taken for the approved request's"
-    );
 }

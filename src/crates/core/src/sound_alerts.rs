@@ -9,6 +9,7 @@
 use super::*;
 
 mod kept;
+mod look;
 mod requests;
 pub(crate) use requests::Heard;
 use requests::Request;
@@ -17,9 +18,13 @@ use requests::Request;
 /// wait its hooks or process report without a card).
 struct Wait {
     requests: Vec<Request>,
-    /// It has no card and passed without a sound, as the wait of a request
-    /// that was allowed automatically: a card that comes in it is new.
-    passed: bool,
+    /// The automatically approved requests its channel said the wait was
+    /// for, by their ids.
+    approved: Vec<String>,
+    /// It had no card and was for approved requests alone, so it passed
+    /// without a sound: a card that comes in it is new, and so is a wait
+    /// that names no request.
+    silent: bool,
 }
 pub(crate) struct Tracker {
     primed: bool,
@@ -32,6 +37,9 @@ pub(crate) struct Tracker {
     /// keeps them across a relaunch was last told (`kept.rs`).
     changed: bool,
     kept: Option<kept::Kept>,
+    /// The approved requests whose wait the last look saw end, by their
+    /// ids, until core is told (`take_ended`).
+    ended: Vec<String>,
     revision: u64,
     items: VecDeque<Value>,
 }
@@ -62,6 +70,7 @@ impl Tracker {
             decided: HashMap::new(),
             changed: false,
             kept: None,
+            ended: Vec::new(),
             revision: 0,
             items: VecDeque::new(),
         }
@@ -137,8 +146,8 @@ impl Tracker {
             let key = format!("{source}:{id}");
             // A request allowed automatically showed no card: whatever goes
             // by its names is decided, and so makes no sound.
-            let approved = heard.approved.get(&key);
-            for name in approved.into_iter().flatten() {
+            let allowed = heard.approved.get(&key);
+            for name in allowed.into_iter().flatten() {
                 self.first(&format!("needs-you:{source}:{id}:{name}"), now);
             }
             let now_requests = requests::requests(session, source, id, heard);
@@ -148,7 +157,22 @@ impl Tracker {
             let previous = self.waits.remove(&key);
             let before = previous.as_ref();
             let mut told = None;
-            let mut passed = false;
+            // The requests its channel says the wait is for, and which of
+            // them were allowed automatically: by their ids, now or at the
+            // look before, and by nothing else.
+            let named = heard.waits.get(&key).map_or(&[][..], Vec::as_slice);
+            let is_approved = |request: &String| {
+                allowed.is_some_and(|names| names.contains(request))
+                    || before.is_some_and(|p| p.approved.contains(request))
+            };
+            let approved: Vec<String> = named.iter().filter(|r| is_approved(r)).cloned().collect();
+            let over = before.into_iter().flat_map(|p| &p.approved);
+            self.ended
+                .extend(over.filter(|r| !approved.contains(r)).cloned());
+            // A wait with no card, for approved requests alone, is theirs:
+            // it makes no sound. One that names no request always sounds.
+            let silent =
+                now_requests.is_empty() && !named.is_empty() && approved.len() == named.len();
             for request in &now_requests {
                 let names: Vec<String> = request
                     .names
@@ -165,7 +189,7 @@ impl Tracker {
                 }
                 // A wait already told without a card is the same wait once
                 // its card comes. The look's first new request names the alert.
-                if new && !before.is_some_and(|p| p.requests.is_empty() && !p.passed) {
+                if new && !before.is_some_and(|p| p.requests.is_empty() && !p.silent) {
                     told.get_or_insert(names[0].clone());
                 }
             }
@@ -177,12 +201,7 @@ impl Tracker {
                     .or(session["updatedAt"].as_str())
                     .unwrap_or("");
                 let identity = format!("needs-you:{source}:{id}:{since}");
-                // A wait with no card, at the first look at its session
-                // since a permission was allowed there automatically, is
-                // that request's: it showed no card, so it makes no sound
-                // for as long as it goes on with none.
-                passed = approved.is_some() || before.is_some_and(|p| p.passed);
-                if self.first(&identity, now) && previous.is_none() && !passed {
+                if !silent && self.first(&identity, now) && before.is_none_or(|p| p.silent) {
                     told = Some(identity);
                 }
             }
@@ -198,11 +217,15 @@ impl Tracker {
                 key,
                 Wait {
                     requests: now_requests,
-                    passed,
+                    approved,
+                    silent,
                 },
             );
         }
-        self.waits = waits;
+        // A session that waits no more: what its wait was for is over.
+        let gone = std::mem::replace(&mut self.waits, waits);
+        self.ended
+            .extend(gone.into_values().flat_map(|wait| wait.approved));
         let decided = self.decided.len();
         self.decided.retain(|_, at| now - *at < KEPT_MS);
         self.changed |= self.decided.len() != decided;
@@ -246,36 +269,6 @@ pub(crate) fn names_a_sound(value: &Value) -> bool {
                 .chars()
                 .all(|c| c.is_alphanumeric() || " -_".contains(c))
     })
-}
-
-impl AgentHudCore {
-    /// This look's alerts, with what the rows no longer show: what cards
-    /// hid, each card's call, and the requests allowed with no card since
-    /// their session was last looked at. A session this look lists has
-    /// been looked at: what was kept of it is over.
-    pub(crate) fn sound_look(&mut self, island: &Value, sessions: &[Value], now: i64) -> Value {
-        let heard = Heard {
-            sightings: self.listed_rows.as_ref().map(|(_, rows)| &rows.heard),
-            calls: self.requests.calls(),
-            approved: self.requests.auto_approved(),
-        };
-        let alerts = self
-            .sound_alerts
-            .update(island, sessions, &heard, &self.settings, now);
-        let listed: HashSet<String> = sessions
-            .iter()
-            .filter_map(|row| {
-                Some(format!(
-                    "{}:{}",
-                    row["source"].as_str()?,
-                    row["id"].as_str()?
-                ))
-            })
-            .collect();
-        let seen = heard.approved.keys().filter(|key| listed.contains(*key));
-        self.requests.auto_approved_seen(seen.map(String::as_str));
-        alerts
-    }
 }
 
 #[cfg(test)]
