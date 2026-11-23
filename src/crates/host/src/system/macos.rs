@@ -383,6 +383,40 @@ mod tests {
         );
     }
 
+    /// Ticket 66, round 3 (the verifier's probe): the status is kept once
+    /// read, words and all, so a change of the app's language must read it
+    /// again, or the warning stays in the old language. The same language
+    /// reads nothing again.
+    #[test]
+    fn a_change_of_language_words_the_kept_warning_again() {
+        let failure = Failure::Refused("Operation not permitted".into());
+        let worded = |language| {
+            let login = report(NOT_FOUND, Some(&failure), "Agent HUD Fork", language);
+            json!({"launchAtLogin": login})
+        };
+        let notice = |language| worded(language)["launchAtLogin"]["notice"].clone();
+        let system = super::super::System::new("test".to_owned());
+        let reads = std::cell::Cell::new(0);
+        let shown = |language: Language| {
+            let mut snapshot = json!({"settings": {}, "connection": {}});
+            system.project_in(&mut snapshot, language, || {
+                reads.set(reads.get() + 1);
+                Some(worded(language))
+            });
+            snapshot["connection"]["system"]["launchAtLogin"]["notice"].clone()
+        };
+        assert_eq!(shown(EN), notice(EN));
+        assert_eq!(shown(EN), notice(EN));
+        assert_eq!(reads.get(), 1, "the same language read the status again");
+        assert_ne!(notice(Language::Fr), notice(EN));
+        assert_eq!(shown(Language::Fr), notice(Language::Fr), "a stale warning");
+        assert_eq!(reads.get(), 2);
+        assert_eq!(shown(Language::Fr), notice(Language::Fr));
+        assert_eq!(reads.get(), 2);
+        assert_eq!(shown(EN), notice(EN));
+        assert_eq!(reads.get(), 3);
+    }
+
     #[test]
     fn launch_registers_from_not_registered_or_not_found_only() {
         for before in [NOT_REGISTERED, NOT_FOUND] {

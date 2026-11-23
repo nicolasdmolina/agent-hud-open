@@ -2,6 +2,7 @@
 //! constructing this owner. There are no system notifications: the HUD island
 //! is the alert surface on every platform, and `sound` plays Core's sound
 //! alerts where the host can.
+use agent_hud_runtime::l10n::{self, Language};
 use serde_json::{json, Value};
 use std::sync::{Mutex, PoisonError};
 use tauri::Manager;
@@ -44,7 +45,10 @@ pub(crate) use target::{
 
 pub struct System {
     identifier: String,
-    cached: Mutex<Option<Value>>,
+    /// The status as last read, with the language its words were made in
+    /// (a login item's warning is worded when it is read). A snapshot in
+    /// another language reads it again (Agent HUD Fork, ticket 66).
+    cached: Mutex<Option<(Language, Value)>>,
 }
 impl System {
     pub fn new(identifier: String) -> Self {
@@ -59,19 +63,36 @@ impl System {
         }
     }
     fn refresh(&self) -> Result<Value, String> {
+        let language = l10n::current();
         let status = target::status(&self.identifier)?;
-        *self.cached.lock().unwrap_or_else(PoisonError::into_inner) = Some(status.clone());
+        self.keep(language, &status);
         Ok(status)
     }
+    fn keep(&self, language: Language, status: &Value) {
+        let mut cached = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
+        *cached = Some((language, status.clone()));
+    }
     pub fn project(&self, snapshot: &mut Value) {
-        let mut status = self
+        self.project_in(snapshot, l10n::current(), || self.refresh().ok());
+    }
+    /// The same, for a snapshot shown in `language`, reading the status
+    /// with `read` where none is held in that language.
+    fn project_in(
+        &self,
+        snapshot: &mut Value,
+        language: Language,
+        read: impl FnOnce() -> Option<Value>,
+    ) {
+        let cached = self
             .cached
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        if status.is_none() {
-            status = self.refresh().ok();
-        }
+        let status = match cached {
+            Some((made_in, status)) if made_in == language => Some(status),
+            // None yet, or one worded in another language.
+            _ => read().inspect(|status| self.keep(language, status)),
+        };
         if let Some(status) = status {
             if let Some(enabled) = status["launchAtLogin"]["enabled"].as_bool() {
                 if status["launchAtLogin"]["status"] != "disabled" {
