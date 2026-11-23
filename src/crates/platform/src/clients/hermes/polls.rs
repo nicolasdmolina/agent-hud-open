@@ -2,19 +2,20 @@
 //! and hand the whole poll back. The steps of one round do not depend on
 //! each other, so they go out together and their replies are taken as they
 //! come. A snapshot goes on a socket of its own (`visit.rs`). The model is
-//! locked to begin the poll and to give it back, never in between.
+//! locked to begin the poll and to give it back, never in between. How
+//! long a round and a snapshot are waited for is in `waits.rs`.
 //!
 //! A session whose events take long to read would hold every poll up, and
 //! with it every other session's cards. So each read is timed, and a
 //! session whose read took long is read apart from then on, on a socket
 //! of its own (`apart.rs`): the polls leave it out, and go on at their
 //! own pace.
-use super::{socket::result, socket::Socket, visit::Visit, Model, Shared};
+use super::waits::{snapshot, unanswered, Waits};
+use super::{socket::result, socket::Socket, Model, Shared};
 use agent_hud_agents::hermes::gateway::{
     frame, hints, Connection, Failure, Frame, Input, Instance, Poll, Refusal, Scope, SessionRef,
     Step,
 };
-use serde_json::Value;
 use std::{
     collections::HashMap,
     sync::{atomic::Ordering, Arc},
@@ -23,8 +24,9 @@ use std::{
 
 /// More rounds than any poll takes: a list, the reads of one session one
 /// after another (at most sixteen, when it has to search for the oldest
-/// event Hermes still keeps), a snapshot.
-const ROUNDS: usize = 24;
+/// event Hermes still keeps), a snapshot; as many again for the quiet
+/// sessions it reads last, and for its looks (the model's `order.rs`).
+const ROUNDS: usize = 60;
 
 /// One poll that ran to its end.
 pub(super) struct Ran {
@@ -151,11 +153,17 @@ pub(super) fn rounds(
     beside: bool,
 ) -> Result<Option<Asked>, Failure> {
     let (mut calls, mut snapshots, mut slow) = (0, 0, Vec::new());
+    let mut waits = Waits::of(beside);
     for _ in 0..ROUNDS {
         let steps = poll.steps();
         if steps.is_empty() {
             break;
         }
+        // What a poll asks last has a short time, all of it together;
+        // what is left of it then is not asked.
+        let Some(until) = waits.round(&shared.pace, poll) else {
+            break;
+        };
         let mut asked: HashMap<u64, Step> = HashMap::new();
         let mut alone = Vec::new();
         for step in steps {
@@ -186,7 +194,6 @@ pub(super) fn rounds(
             }
         }
         calls += asked.len();
-        let until = Instant::now() + shared.pace.answer;
         // Each reply is timed from the one before it: a gateway answers
         // the calls of one socket in turn, so the wait for a reply is the
         // time its own call took.
@@ -239,16 +246,20 @@ pub(super) fn rounds(
                 _ => {}
             }
         }
-        // Never answered: what they would have told stays unknown. One
-        // that was a session's read held the poll up for as long as a
-        // call may take.
-        for step in asked.into_values() {
+        // Never answered: what they would have told stays unknown. The
+        // first of them is the call the gateway was at, which held the
+        // poll up; the others waited behind it (`waits.rs`). A look
+        // that only waited does not rest. A read is read apart either
+        // way, the slow one first: a card may wait on it.
+        for (place, step) in unanswered(asked).into_iter().enumerate() {
             if let Step::Since { session, .. } = &step {
                 if beside && !slow.contains(session) {
                     slow.push(session.clone());
                 }
             }
-            shared.rests.rest(&step, shared.pace.answer);
+            if place == 0 {
+                shared.rests.rest(&step, shared.pace.answer);
+            }
             poll.failed(&step);
         }
         for step in alone {
@@ -261,14 +272,20 @@ pub(super) fn rounds(
             // a moment to open, and the model may know more by then.
             let reading: &Poll = poll;
             let still = move |model: &Model| beside || model.gateway.counts(reading);
-            match snapshot(shared, instance, &step, &still) {
+            match snapshot(shared, instance, &step, &waits, &still) {
                 Some(told) => poll.answer(&step, &told),
                 None => poll.failed(&step),
             }
         }
     }
-    for step in poll.steps() {
-        poll.failed(&step);
+    // What was not asked stays unknown. A quiet session's read that the
+    // short time left unasked is read apart, as one it left unanswered.
+    let cut = beside && waits.over();
+    for step in poll.give_up() {
+        match step {
+            Step::Since { session, .. } if cut && !slow.contains(&session) => slow.push(session),
+            _ => {}
+        }
     }
     Ok(Some(Asked {
         calls,
@@ -280,21 +297,4 @@ pub(super) fn rounds(
 /// Whether the model would still take `poll`, asked under its lock.
 fn counts(shared: &Shared, poll: &Poll) -> bool {
     shared.model().gateway.counts(poll)
-}
-
-/// Everything that waits in one session, from a visit that ends at once.
-/// `still` is asked under the model's lock before anything subscribes.
-fn snapshot(
-    shared: &Shared,
-    instance: &Instance,
-    step: &Step,
-    still: &dyn Fn(&Model) -> bool,
-) -> Option<Value> {
-    let Step::Snapshot(session) = step else {
-        return None;
-    };
-    let wait = shared.pace.answer * 2;
-    let (visit, told) = Visit::begin_while(shared, instance, session, wait, &|| true, still)?;
-    visit.end();
-    Some(told)
 }

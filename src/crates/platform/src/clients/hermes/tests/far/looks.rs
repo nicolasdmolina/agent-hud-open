@@ -2,9 +2,15 @@
 //! turns (ticket 33): what they ask of the gateway, and that a look
 //! which is slow holds the polls up once and no more.
 use super::{far_lab, pace, until, FarLab};
-use crate::clients::hermes::{tests_unix::fake::Fake, Pace};
+use crate::clients::hermes::{
+    tests_unix::fake::{Fake, Hold},
+    Pace,
+};
 use serde_json::Value;
-use std::time::Duration;
+use std::{
+    sync::{atomic::Ordering, Arc},
+    time::{Duration, Instant},
+};
 
 const PROFILE: &str = "default";
 
@@ -184,4 +190,70 @@ fn a_look_that_is_never_answered_rests_its_session_and_the_polls_go_on() {
         far.log().contains("turn ended session=")
     });
     assert!(far.log().contains("turn=epoch-1:2"), "{}", far.log());
+}
+
+/// A look that only waited behind a slow one does not rest (ticket 73).
+/// A gateway answers the calls of one socket in turn, so when the time
+/// for what a poll asks last is up, every look sent after the slow one
+/// is unanswered too. Only the one the gateway was at was slow. The
+/// others are looked at again at the next poll, and a turn that ended
+/// in one of them is told then, not a rest later.
+#[test]
+#[ignore = "starts processes: run by the_lab_tests_pass"]
+fn a_look_that_only_waited_behind_a_slow_one_does_not_rest() {
+    // What is asked last has half a second. A call may take two, so a
+    // session rests twelve.
+    let pace = Pace {
+        answer: Duration::from_secs(2),
+        still: Duration::from_millis(500),
+        trace: true,
+        ..pace()
+    };
+    let Some((far, gateway)) = following(pace) else {
+        return;
+    };
+    // The one that is held sorts first: its look is asked first.
+    idle(&gateway, "s-a-held");
+    idle(&gateway, "s-b-behind");
+    until("both are looked at", || reads(&gateway).len() >= 4);
+    let of = |gateway: &Fake, session: &str| {
+        let its = |(id, _): &(String, Option<u64>)| id == session;
+        reads(gateway).into_iter().filter(its).count()
+    };
+    let ended = |far: &FarLab| far.log().matches(" trace poll ms=").count();
+
+    // The gateway holds its answer to the next look at the first, and
+    // with it the answer to the look at the second, sent in the same
+    // round. A turn runs in the second meanwhile.
+    let held = Arc::new(Hold::default());
+    {
+        let mut world = gateway.world();
+        world.slow_replay = Some(("s-a-held".into(), Duration::ZERO));
+        world.hold_next = Some(("slow-probe", held.clone()));
+    }
+    until("the look is held", || held.entered.load(Ordering::Acquire));
+    let polled = ended(&far);
+    gateway.tells_of_turn(PROFILE, "s-b-behind", "message.start", 2);
+    gateway.tells_of_turn(PROFILE, "s-b-behind", "message.complete", 2);
+    until("the poll gives the looks up", || ended(&far) > polled);
+    let looked = of(&gateway, "s-a-held");
+    held.released.store(true, Ordering::Release);
+    let released = Instant::now();
+
+    until("the turn is told", || {
+        far.log().contains("turn ended session=")
+    });
+    let told = released.elapsed();
+    println!(
+        "a turn behind a look that was held: told {} ms after",
+        told.as_millis()
+    );
+    assert!(
+        told < Duration::from_secs(6),
+        "told {} ms after: its session rested",
+        told.as_millis()
+    );
+    assert!(far.log().contains("turn=epoch-1:2"), "{}", far.log());
+    // The one the gateway was at does rest.
+    assert_eq!(of(&gateway, "s-a-held"), looked, "it rests");
 }

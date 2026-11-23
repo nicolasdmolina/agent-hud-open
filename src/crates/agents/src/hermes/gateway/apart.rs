@@ -105,6 +105,7 @@ impl Gateway {
             apart: Some(Box::new(apart)),
             turns: self.turns.watch(),
             places: BTreeMap::new(),
+            still: BTreeMap::new(),
         })
     }
 

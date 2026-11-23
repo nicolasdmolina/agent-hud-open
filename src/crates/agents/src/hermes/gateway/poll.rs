@@ -5,8 +5,9 @@
 //! whole poll goes to the model as `Input::Polled`.
 //!
 //! A poll lists the sessions of every served profile, then reads each
-//! session that works, waits or shows a card (`read.rs`). What a far
-//! session has used is asked apart from the polls (`sample.rs`).
+//! session that works, waits or shows a card (`read.rs`), in the order
+//! `order.rs` gives. What a far session has used is asked apart from the
+//! polls (`sample.rs`).
 use super::command::{active_list, events_since, resume, stats, Command};
 use super::effect::Status;
 use super::fold::{batches, prompts, requested, Reading};
@@ -112,6 +113,9 @@ pub struct Poll {
     pub(super) turns: Option<super::turns::Watch>,
     /// Where each stream it read or looked at is (`quiet.rs`).
     pub(super) places: BTreeMap<SessionRef, super::quiet::Place>,
+    /// The sessions of a far gateway nothing had changed in for the quiet
+    /// time when the poll began, each as it was listed (`order.rs`).
+    pub(super) still: BTreeMap<SessionRef, Status>,
 }
 
 impl Poll {
@@ -132,6 +136,7 @@ impl Poll {
             apart: None,
             turns: None,
             places: BTreeMap::new(),
+            still: BTreeMap::new(),
         }
     }
 
@@ -139,23 +144,6 @@ impl Poll {
     /// apart from the polls.
     pub fn apart(&self) -> Option<&SessionRef> {
         self.apart.as_ref().map(|apart| &apart.session)
-    }
-
-    /// What to ask now. Their order does not matter and they may be asked
-    /// at once. Empty when the poll has run to its end.
-    pub fn steps(&self) -> Vec<Step> {
-        let lists = self
-            .profiles
-            .iter()
-            .filter(|(_, listed)| listed.is_none())
-            .map(|(profile, _)| Step::List(profile.clone()));
-        let reads = self.sessions.values().filter_map(|look| match &look.read {
-            Read::Wanted { step, .. } => Some(step.clone()),
-            _ => None,
-        });
-        // After the reads the cards wait on, which so go out first.
-        let looks = self.turns.iter().flat_map(|watch| watch.steps());
-        lists.chain(reads).chain(looks).collect()
     }
 
     /// The `result` of the reply to `step`.
