@@ -22,9 +22,9 @@ use std::time::{Duration, Instant};
 
 /// How long a poll takes that one slow call held up, at the least: every
 /// other poll here takes a few milliseconds.
-const HELD: Duration = Duration::from_millis(1_500);
+pub(super) const HELD: Duration = Duration::from_millis(1_500);
 
-fn app() -> Pace {
+pub(super) fn app() -> Pace {
     Pace {
         quiet: QUIET,
         history: paced().history,
@@ -38,7 +38,7 @@ fn app() -> Pace {
 /// sort after the stuck session's: a gateway answers the calls of one
 /// socket in turn, so which side of a slow call a session's own read
 /// falls on is not left to its name.
-fn listed(gateway: &super::Fake) {
+pub(super) fn listed(gateway: &super::Fake) {
     as_the_mini_lists(gateway);
     let mut world = gateway.world();
     for n in 0..3 {
@@ -63,7 +63,7 @@ fn quiet_site() -> Option<Site> {
 }
 
 /// How long each poll took that ran to its end, by the log.
-fn took(site: &Site) -> Vec<u64> {
+pub(super) fn took(site: &Site) -> Vec<u64> {
     let log = site.fleet.log();
     log.lines()
         .filter_map(|line| line.split(" trace poll ms=").nth(1))
@@ -72,7 +72,7 @@ fn took(site: &Site) -> Vec<u64> {
 }
 
 /// How often the log says `what`.
-fn said(site: &Site, what: &str) -> usize {
+pub(super) fn said(site: &Site, what: &str) -> usize {
     site.fleet.log().matches(what).count()
 }
 

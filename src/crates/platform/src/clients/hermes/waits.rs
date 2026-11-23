@@ -21,9 +21,22 @@
 //! Every other call keeps the long wait: a session that just asked is
 //! read for as long as any read may take. A reading of one session
 //! apart is no poll, and is never cut short.
+//!
+//! When the time for a round is up, several of its calls may be
+//! unanswered, and only one of them was slow (ticket 73). A gateway
+//! answers the calls of one socket in turn, so the first of them is the
+//! call it was at, and every one sent after it only waited behind it
+//! (`unanswered`). A look that only waited does not rest: its session is
+//! looked at again at the next poll, and a turn that ended in it is told
+//! then. A session's read that only waited is read apart all the same,
+//! after the slow one, and so is a quiet session's read the short time
+//! left unasked: a set of questions may wait in it, and on a socket of
+//! its own its card shows now, where the next poll is ten seconds away
+//! and would wait behind the slow call again.
 use super::{visit::Visit, Model, Pace, Shared};
 use agent_hud_agents::hermes::gateway::{Instance, Poll, Step};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// The waits of one poll, or of one reading of a session apart.
@@ -51,6 +64,12 @@ impl Waits {
         (now < cut).then_some(cut.min(now + pace.answer))
     }
 
+    /// Whether the short time for what is asked last is up: what is
+    /// left of the poll was cut short by it.
+    pub(super) fn over(&self) -> bool {
+        self.cut.is_some_and(|cut| Instant::now() >= cut)
+    }
+
     /// How long a snapshot may take to answer: twice what a call may,
     /// or, of a session that is asked last, what is left of that time.
     fn snapshot(&self, pace: &Pace) -> Duration {
@@ -58,6 +77,15 @@ impl Waits {
         let left = |cut: Instant| cut.saturating_duration_since(Instant::now());
         self.cut.map_or(whole, |cut| whole.min(left(cut)))
     }
+}
+
+/// The calls of one round that were never answered, by the ids their
+/// replies would have carried, in the order they were asked: the first
+/// is the call the gateway was at when the time was up.
+pub(super) fn unanswered(asked: HashMap<u64, Step>) -> Vec<Step> {
+    let mut left: Vec<(u64, Step)> = asked.into_iter().collect();
+    left.sort_by_key(|(id, _)| *id);
+    left.into_iter().map(|(_, step)| step).collect()
 }
 
 /// Everything that waits in one session, from a visit that ends at once.
@@ -85,7 +113,7 @@ pub(super) fn snapshot(
 mod tests {
     use super::*;
     use agent_hud_agents::hermes::gateway::{
-        machine_key, Gateway, GatewayId, Input, Machine, Profile, SESSION_AUTHORITY,
+        machine_key, Gateway, GatewayId, Input, Machine, Profile, SessionRef, SESSION_AUTHORITY,
     };
     use serde_json::json;
 
@@ -150,6 +178,8 @@ mod tests {
         let mut over = Waits { poll, cut };
         assert_eq!(over.round(&pace, &listed(far())), None);
         assert!(over.snapshot(&pace).is_zero());
+        assert!(over.over(), "the time is up");
+        assert!(!waits.over() && !Waits::of(true).over(), "and not before");
         // A call may never take longer for it than any call may.
         let brief = Pace {
             answer: Duration::from_secs(5),
@@ -157,6 +187,23 @@ mod tests {
         };
         let until = Waits::of(true).round(&brief, &listed(far()));
         assert!(until.expect("asked") <= Instant::now() + brief.answer);
+    }
+
+    /// Replies come back in the order the calls went out, so of the
+    /// calls never answered the earliest asked is the one that was slow.
+    #[test]
+    fn the_calls_never_answered_are_told_in_the_order_they_were_asked() {
+        let gateway = GatewayId::new(far(), Profile::Default);
+        let look = |n: u64| Step::Watch {
+            session: SessionRef::new(gateway.clone(), Profile::Default, &format!("s-{n}"))
+                .expect("a session's id"),
+            cursor: None,
+        };
+        // Ids as a socket gives them out, kept in no order.
+        let asked: HashMap<u64, Step> = (40..72).map(|id| (id, look(id))).collect();
+        let left = unanswered(asked);
+        assert_eq!(left, (40..72).map(look).collect::<Vec<_>>());
+        assert!(unanswered(HashMap::new()).is_empty());
     }
 
     #[test]
