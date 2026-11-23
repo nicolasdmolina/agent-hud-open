@@ -1043,6 +1043,7 @@
   "Some local transcripts could not be read": "일부 로컬 대화 기록을 읽을 수 없습니다",
   "Some recorded requests have no price in this currency": "기록된 일부 요청에 이 통화의 가격이 없습니다",
   "Sound": "사운드",
+  "Sound isn't played on this system yet.": "이 시스템에서는 아직 사운드를 재생할 수 없습니다.",
   "Star it on GitHub": "GitHub에서 Star 누르기",
   "Star on GitHub": "GitHub에서 Star 누르기",
   "Start a new {{client}} session and ask it to change the HUD.": "{{client}}에서 새 세션을 시작하고 HUD를 바꿔 달라고 요청하세요.",

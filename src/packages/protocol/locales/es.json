@@ -1061,6 +1061,7 @@
   "Some local transcripts could not be read": "No se pudieron leer algunas transcripciones locales",
   "Some recorded requests have no price in this currency": "Algunas solicitudes registradas no tienen precio en esta moneda",
   "Sound": "Sonido",
+  "Sound isn't played on this system yet.": "Todavía no se reproducen sonidos en este sistema.",
   "Star it on GitHub": "Dale una estrella en GitHub",
   "Star on GitHub": "Estrella en GitHub",
   "Start a new {{client}} session and ask it to change the HUD.": "Inicia una nueva sesión de {{client}} y pídele que cambie el HUD.",

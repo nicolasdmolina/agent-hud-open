@@ -137,4 +137,9 @@ fn the_tooltip_names_this_app_in_every_language() {
             assert!(shown.ends_with("62%"), "{code}: {shown}");
         }
     }
+    // The first tooltip, before any snapshot, is the same text with no
+    // figure yet (ticket 66, round 2).
+    let first = tooltip(&Presentation::default(), "Agent HUD Fork", "—");
+    assert!(first.starts_with("Agent HUD Fork · "), "{first}");
+    assert!(first.ends_with("—"), "{first}");
 }

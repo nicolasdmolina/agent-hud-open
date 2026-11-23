@@ -1043,6 +1043,7 @@
   "Some local transcripts could not be read": "部分本機工作階段無法讀取",
   "Some recorded requests have no price in this currency": "部分已記錄的請求在此幣別下沒有價格",
   "Sound": "聲音",
+  "Sound isn't played on this system yet.": "此系統暫不支援播放聲音。",
   "Star it on GitHub": "去 GitHub 點個 Star",
   "Star on GitHub": "去 GitHub 點個 Star",
   "Start a new {{client}} session and ask it to change the HUD.": "在 {{client}} 裡新開一個工作階段，說「把 HUD 改成……」。",

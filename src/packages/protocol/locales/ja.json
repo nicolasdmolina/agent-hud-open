@@ -1043,6 +1043,7 @@
   "Some local transcripts could not be read": "一部のローカルのトランスクリプトを読み取れませんでした",
   "Some recorded requests have no price in this currency": "記録された一部のリクエストには、この通貨での価格がありません",
   "Sound": "サウンド",
+  "Sound isn't played on this system yet.": "このシステムではまだサウンドを再生できません。",
   "Star it on GitHub": "GitHub で Star する",
   "Star on GitHub": "GitHub で Star する",
   "Start a new {{client}} session and ask it to change the HUD.": "{{client}} で新しいセッションを開始し、HUD の変更を頼んでください。",

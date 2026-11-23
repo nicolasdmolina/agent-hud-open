@@ -6,6 +6,7 @@ import type { Snapshot } from "@agent-hud/protocol";
 import type { Translate } from "@agent-hud/ui/format";
 import { Menu, ToggleRow } from "./SettingsControls";
 import { Row, Section } from "./SettingsPrimitives";
+import { soundReason } from "./sound-reason";
 
 export const soundKeys = ["sound", "soundNeedsYou", "soundFinished"];
 
@@ -51,7 +52,7 @@ export function SoundSection({
         title={t("Play sounds")}
         checked={on}
         disabled={host?.supported === false}
-        reason={host?.notice ?? undefined}
+        reason={soundReason(host, t)}
         change={(value) => void save("sound", value)}
       />
       {picker(

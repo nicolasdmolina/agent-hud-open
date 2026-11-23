@@ -25,7 +25,7 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
         .icon(status_icon(&initial))
         .icon_as_template(false)
         .title(" —")
-        .tooltip(format!("{} · highest usage", app.package_info().name))
+        .tooltip(tooltip(&initial, &app.package_info().name, "—"))
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {

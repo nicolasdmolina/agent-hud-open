@@ -1043,6 +1043,7 @@
   "Some local transcripts could not be read": "部分本地会话无法读取",
   "Some recorded requests have no price in this currency": "部分已记录的请求在此币种下没有价格",
   "Sound": "声音",
+  "Sound isn't played on this system yet.": "此系统暂不支持播放声音。",
   "Star it on GitHub": "去 GitHub 点个 Star",
   "Star on GitHub": "去 GitHub 点个 Star",
   "Start a new {{client}} session and ask it to change the HUD.": "在 {{client}} 里新开一个会话，说“把 HUD 改成……”。",
