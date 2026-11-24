@@ -217,3 +217,36 @@ fn a_wait_is_for_its_requests_only_where_every_reader_names_them() {
     requests.set_native_waiting("codex", "one", &[], 0);
     assert!(requests.native_wait_requests().is_empty());
 }
+
+/// An approval is only as good as its answer. Where the channel reports
+/// that the automatic answer did not arrive, or that nobody confirmed it,
+/// the request is no longer among the approved: it is among those still
+/// waiting, in its own source and session, until its wait is seen to end.
+#[test]
+fn an_automatic_approval_whose_answer_did_not_arrive_is_approved_no_more() {
+    for (receipt, still_approved) in [("failed", false), ("uncertain", false), ("confirmed", true)]
+    {
+        let requests = approving();
+        let card = permission("codex", Some("codex-desktop"));
+        let ticket = requests.register_native("p".into(), card, 1_000).unwrap();
+        assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
+        // Another session's receipt for the same id says nothing of this one.
+        requests.note_native_delivery("p", "codex", "another", "failed", None, 1_500);
+        requests.note_native_delivery("p", "claude", "s1", "failed", None, 1_500);
+        assert_eq!(requests.auto_approved(1_500)["codex:s1"], ["p"]);
+        assert!(requests.auto_unanswered(1_500).is_empty());
+
+        requests.note_native_delivery("p", "codex", "s1", receipt, None, 2_000);
+        let approved = requests.auto_approved(2_000).contains_key("codex:s1");
+        let unanswered = requests.auto_unanswered(2_000).contains_key("codex:s1");
+        assert_eq!(
+            (approved, unanswered),
+            (still_approved, !still_approved),
+            "{receipt}"
+        );
+        // Either way it ends by its name, in its session.
+        requests.auto_approved_ended("codex:s1", &["p".to_owned()]);
+        assert!(requests.auto_approved(2_000).is_empty(), "{receipt}");
+        assert!(requests.auto_unanswered(2_000).is_empty(), "{receipt}");
+    }
+}

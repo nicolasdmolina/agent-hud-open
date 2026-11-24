@@ -7,6 +7,9 @@ use std::{
     os::unix::net::{UnixListener, UnixStream},
 };
 
+// Agent HUD Fork (ticket 66): an automatic answer the owner did not take.
+mod auto_answer;
+
 const THREAD: &str = "00000000-0000-4000-8000-000000000001";
 fn permission(connector: &str, persist: Value) -> Value {
     json!({"id":7,"method":"mcpServer/elicitation/request","params":{"threadId":THREAD,"turnId":"turn-fixture","mode":"form","_meta":{"codex_approval_kind":"mcp_tool_call","connector_id":connector,"persist":persist,"tool_params":{"app":"com.example.Fixture","origin":"https://fixture.invalid"},"tool_name":"access_browser_origin"}}})

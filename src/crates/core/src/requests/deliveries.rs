@@ -25,6 +25,11 @@ impl Requests {
             .map(|date| date.to_rfc3339());
         {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+            // Agent HUD Fork (ticket 66): an automatic answer that did not
+            // arrive leaves its request waiting for the person.
+            if delivery != "confirmed" {
+                state.answer_did_not_arrive(&format!("{source}:{session}"), id);
+            }
             state.deliveries.retain(|row| row["id"] != id);
             state.deliveries.push_back(serde_json::json!({"id":id,"source":source,"sessionId":session,"state":delivery,"reason":reason,"at":at}));
             while state.deliveries.len() > 256 {

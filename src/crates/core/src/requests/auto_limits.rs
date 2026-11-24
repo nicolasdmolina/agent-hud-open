@@ -19,6 +19,9 @@
 //!   is inferred from the order of things or from a clock: a wait that
 //!   names no request always sounds, though it may be an approved
 //!   request's. An extra sound is the lesser fault; a silent wait is not.
+//!   And an approval is only as good as its answer: where the channel
+//!   reports that the answer did not arrive, or that nobody confirmed it,
+//!   the request is not taken as approved any more and its wait sounds.
 use super::{Requests, State};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -41,6 +44,10 @@ pub(super) struct Approved {
     /// tool call it names, as the sound decision names a card's.
     names: Vec<String>,
     at_ms: i64,
+    /// Its channel reported that the automatic answer did not arrive, or
+    /// that nobody confirmed it: the request still waits for the person in
+    /// its client, and is not taken as approved any more.
+    unanswered: bool,
 }
 
 /// Whether the requests of `agent` always wait for the person.
@@ -90,9 +97,23 @@ impl State {
             session: format!("{source}:{session}"),
             names,
             at_ms: now_ms,
+            unanswered: false,
         });
         while self.approved.len() > APPROVED_KEPT {
             self.approved.pop_front();
+        }
+    }
+}
+
+impl State {
+    /// The automatic answer to the request `id` of `session`
+    /// (`source:session`) did not arrive, or was not confirmed.
+    pub(super) fn answer_did_not_arrive(&mut self, session: &str, id: &str) {
+        let named = |approved: &&mut Approved| {
+            approved.session == session && approved.names.iter().any(|name| name == id)
+        };
+        for approved in self.approved.iter_mut().filter(named) {
+            approved.unanswered = true;
         }
     }
 }
@@ -110,15 +131,28 @@ impl Requests {
             .note_approved(source, session, None, call, now_ms);
     }
 
-    /// The requests allowed with no card that are still kept at `now_ms`:
-    /// by `source:session`, the names each goes by.
+    /// The requests allowed with no card that are still kept at `now_ms`
+    /// and still count as approved: by `source:session`, the names each
+    /// goes by.
     pub fn auto_approved(&self, now_ms: i64) -> HashMap<String, Vec<String>> {
+        self.kept(now_ms, false)
+    }
+
+    /// Those whose automatic answer did not arrive (`note_native_delivery`
+    /// told `failed` or `uncertain`): the same shape. The sound decision no
+    /// longer takes a wait that names one as an approved request's.
+    pub fn auto_unanswered(&self, now_ms: i64) -> HashMap<String, Vec<String>> {
+        self.kept(now_ms, true)
+    }
+
+    fn kept(&self, now_ms: i64, unanswered: bool) -> HashMap<String, Vec<String>> {
         let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
         state
             .approved
             .retain(|approved| now_ms.saturating_sub(approved.at_ms) < APPROVED_KEPT_MS);
         let mut kept: HashMap<String, Vec<String>> = HashMap::new();
-        for approved in &state.approved {
+        let of_kind = |approved: &&Approved| approved.unanswered == unanswered;
+        for approved in state.approved.iter().filter(of_kind) {
             let names = kept.entry(approved.session.clone()).or_default();
             names.extend(approved.names.iter().cloned());
         }

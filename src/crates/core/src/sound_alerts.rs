@@ -170,9 +170,11 @@ impl Tracker {
             // them were allowed automatically: by their ids, now or at the
             // look before, and by nothing else.
             let named = heard.waits.get(&key).map_or(&[][..], Vec::as_slice);
+            let unanswered = heard.unanswered.get(&key);
             let is_approved = |request: &String| {
-                allowed.is_some_and(|names| names.contains(request))
-                    || before.is_some_and(|p| p.approved.contains(request))
+                !unanswered.is_some_and(|names| names.contains(request))
+                    && (allowed.is_some_and(|names| names.contains(request))
+                        || before.is_some_and(|p| p.approved.contains(request)))
             };
             let approved: Vec<String> = named.iter().filter(|r| is_approved(r)).cloned().collect();
             let over = before.into_iter().flat_map(|p| &p.approved);

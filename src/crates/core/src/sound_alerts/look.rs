@@ -21,6 +21,7 @@ impl AgentHudCore {
             sightings: self.listed_rows.as_ref().map(|(_, rows)| &rows.heard),
             calls: self.requests.calls(),
             approved: self.requests.auto_approved(now),
+            unanswered: self.requests.auto_unanswered(now),
             waits: self.requests.native_wait_requests(),
         };
         let alerts = self

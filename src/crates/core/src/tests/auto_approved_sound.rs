@@ -447,3 +447,65 @@ fn ending_an_approved_request_ends_it_in_its_own_session_only() {
     assert_eq!(kept.get("claude:second"), Some(&vec![reused.to_owned()]));
     assert!(!kept.contains_key(&first));
 }
+
+/// The round 4 verifier's delivery probes, at core. A permission is allowed
+/// automatically and its wait passes in silence. Then its channel reports
+/// what became of the answer. One that did not arrive (`failed`), or that
+/// nobody confirmed (`uncertain`), leaves the request as it was in its
+/// client: still waiting for the person. It is no longer taken as approved,
+/// and its wait sounds, once. One that was confirmed stays silent.
+#[test]
+fn an_automatic_answer_that_did_not_arrive_lets_the_wait_sound() {
+    for (receipt, sounds) in [("failed", 1), ("uncertain", 1), ("confirmed", 0)] {
+        let mut lab = Lab::new(true);
+        assert_eq!(lab.look(), ("running".into(), 0, 0));
+        assert!(lab.card(A, "permission"));
+        lab.told_waiting_for(&[A]);
+        assert_eq!(lab.look(), ("waiting".into(), 0, 0), "{receipt}");
+        lab.later(500);
+        let why = (receipt != "confirmed").then(|| "the fixture's reason".to_owned());
+        lab.core
+            .requests()
+            .note_native_delivery(A, "codex", THREAD, receipt, why, lab.now);
+        assert_eq!(lab.look(), ("waiting".into(), 0, sounds), "{receipt}");
+        lab.later(500);
+        assert_eq!(
+            lab.look(),
+            ("waiting".into(), 0, sounds),
+            "{receipt}, again"
+        );
+        // It is kept as approved only where its answer was confirmed.
+        assert_eq!(
+            lab.kept().len(),
+            usize::from(receipt == "confirmed"),
+            "{receipt}"
+        );
+    }
+}
+
+/// The receipt comes before any look has seen the wait: the same.
+#[test]
+fn an_answer_that_did_not_arrive_before_the_wait_was_seen_lets_it_sound() {
+    let mut lab = Lab::new(true);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    assert!(lab.card(A, "permission"));
+    lab.core.requests().note_native_delivery(
+        A,
+        "codex",
+        THREAD,
+        "failed",
+        Some("the fixture's reason".to_owned()),
+        lab.now,
+    );
+    lab.told_waiting_for(&[A]);
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+    // Another session's receipt for the same id changes nothing here.
+    let mut lab = Lab::new(true);
+    lab.look();
+    assert!(lab.card(A, "permission"));
+    lab.core
+        .requests()
+        .note_native_delivery(A, "codex", "another-thread", "failed", None, lab.now);
+    lab.told_waiting_for(&[A]);
+    assert_eq!(lab.look(), ("waiting".into(), 0, 0));
+}

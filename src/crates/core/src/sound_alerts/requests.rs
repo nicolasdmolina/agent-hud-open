@@ -18,6 +18,9 @@ pub(crate) struct Heard<'a> {
     /// The requests allowed automatically, with no card: by
     /// `source:session`, the names each goes by (`Requests::auto_approved`).
     pub approved: HashMap<String, Vec<String>>,
+    /// Those of them whose automatic answer did not arrive: the same shape
+    /// (`Requests::auto_unanswered`). Such a request still waits.
+    pub unanswered: HashMap<String, Vec<String>>,
     /// The requests each session's wait is for, by `source:session`, where
     /// its channel names them all (`Requests::native_wait_requests`).
     pub waits: HashMap<String, Vec<String>>,

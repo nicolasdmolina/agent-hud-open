@@ -301,3 +301,32 @@ fn an_approved_requests_id_silences_no_other_sessions_or_sources_wait() {
     let alerts = look_with(&mut tracker, &rows, &[(S1, &["shared-id"])], &waits, T + 1);
     assert_eq!(alerts, [needs_you("s2"), needs_you("s1")]);
 }
+
+/// The approved request's wait passes in silence. Then its answer is found
+/// not to have arrived: the wait that still names it sounds, once, though
+/// the request was approved at the look before.
+#[test]
+fn a_wait_for_a_request_whose_automatic_answer_did_not_arrive_sounds() {
+    let mut tracker = started();
+    let sessions = [told_waiting("s1")];
+    let named = [(S1, &["r1"][..])];
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &named, &named, T + 1),
+        []
+    );
+    let look = |tracker: &mut Tracker, unanswered: &[&str], now: i64| {
+        let before = tracker.items.len();
+        let names = |list: &[&str]| list.iter().map(|name| (*name).to_owned()).collect();
+        let heard = Heard {
+            unanswered: [(S1.to_owned(), names(unanswered))].into(),
+            waits: [(S1.to_owned(), names(&["r1"]))].into(),
+            ..Heard::default()
+        };
+        let out = tracker.update(&no_events(), &sessions, &heard, &on(), now);
+        out["items"].as_array().unwrap().len() - before
+    };
+    assert_eq!(look(&mut tracker, &["r1"], T + 2), 1);
+    assert_eq!(tracker.take_ended(), [(S1.to_owned(), "r1".to_owned())]);
+    // Core has ended it by now: the same wait, already told.
+    assert_eq!(look(&mut tracker, &[], T + 3), 0);
+}
