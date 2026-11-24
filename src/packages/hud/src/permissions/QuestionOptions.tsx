@@ -5,6 +5,7 @@ import { alertFill, onAlertFill } from "../tokens";
 import { useGround } from "../ground";
 import { cardColumn } from "../card-column";
 import type { Draft } from "./question-answers";
+import { typedEnter } from "./enter-submit";
 
 /** A question's offered answers, to pick one or several, and the field for
  * an answer in one's own words. */
@@ -172,15 +173,12 @@ export function QuestionOptions({
               });
             }}
             onKeyDown={(e) => {
-              // Return while an input method is composing belongs to it.
-              if (
-                e.key === "Enter" &&
-                !e.nativeEvent.isComposing &&
-                e.keyCode !== 229
-              ) {
+              // Return while an input method is composing belongs to it, and
+              // a held Return's repeats send nothing more.
+              if (typedEnter(e.nativeEvent)) {
                 e.preventDefault();
                 advanceOrSubmit();
-              }
+              } else if (e.key === "Enter" && e.repeat) e.preventDefault();
             }}
             style={{
               flex: 1,

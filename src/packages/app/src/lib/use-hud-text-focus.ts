@@ -62,7 +62,7 @@ export function useHUDTextFocus(
     // leaves the panel's opening and closing alone.
     let selecting = false,
       pressed = false;
-    // A question card's offered answer just pressed, which also takes the
+    // A question card's offered answer just chosen, which also takes the
     // keyboard so Enter can submit it. Like a selection, it leaves the
     // panel's opening and closing alone and ends when the pointer leaves.
     let choice: Element | null = null;
@@ -213,16 +213,25 @@ export function useHUDTextFocus(
       pressed = true;
       const target = editable(event.target);
       if (!target || !verified(target)) {
+        // A press on an offered answer takes the keyboard only once it
+        // chooses the answer (`chosen`); a press dragged off takes nothing.
         const option = pressedChoice(
           event.target instanceof Element ? event.target : null,
         );
-        if (option && verified(option)) return holdChoice(option);
+        if (option && verified(option)) return;
         // A press may start a new selection: a selection's keys wait for it
         // to end rather than going back mid-drag.
         if (!selecting) release();
         return;
       }
       acquire(target, true);
+    };
+    const chosen = (event: MouseEvent) => {
+      if (!event.isTrusted) return;
+      const option = pressedChoice(
+        event.target instanceof Element ? event.target : null,
+      );
+      if (option && verified(option)) holdChoice(option);
     };
     const pointerUp = (event: PointerEvent) => {
       if (!event.isTrusted || event.button !== 0) return;
@@ -248,6 +257,7 @@ export function useHUDTextFocus(
     const changed = new MutationObserver(owner.verify);
     document.addEventListener("pointerdown", pointerDown, true);
     document.addEventListener("pointerup", pointerUp, true);
+    document.addEventListener("click", chosen, true);
     document.addEventListener("selectionchange", selectionChange);
     document.addEventListener("focusin", focusIn, true);
     document.addEventListener("focusout", focusOut, true);
@@ -259,6 +269,7 @@ export function useHUDTextFocus(
       changed.disconnect();
       document.removeEventListener("pointerdown", pointerDown, true);
       document.removeEventListener("pointerup", pointerUp, true);
+      document.removeEventListener("click", chosen, true);
       document.removeEventListener("selectionchange", selectionChange);
       document.removeEventListener("focusin", focusIn, true);
       document.removeEventListener("focusout", focusOut, true);

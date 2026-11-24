@@ -7,7 +7,7 @@ import { alertFill, onAlertFill, permissionColors } from "../tokens";
 import { useGround } from "../ground";
 import { cardColumn } from "../card-column";
 import { CardButton } from "./CardButton";
-import { holdEnter } from "./enter-submit";
+import { holdEnter, typedEnter } from "./enter-submit";
 
 /** Whether the user is writing what a plan should change, and what they wrote
  * so far, by request: the island redraws its cards as the pointer comes and
@@ -136,14 +136,13 @@ export function PermissionPlanCard({
               disabled={disabled}
               onChange={(e) => setFeedback(e.target.value)}
               onKeyDown={(e) => {
-                // Return while an input method is composing belongs to it.
-                if (
-                  e.key === "Enter" &&
-                  !e.nativeEvent.isComposing &&
-                  e.keyCode !== 229
-                ) {
+                // Return while an input method is composing belongs to it,
+                // and a held Return's repeats send nothing more.
+                if (typedEnter(e.nativeEvent)) {
                   e.preventDefault();
                   sendBack();
+                } else if (e.key === "Enter" && e.repeat) {
+                  e.preventDefault();
                 } else if (e.key === "Escape") {
                   setNoting(false);
                 }
@@ -208,6 +207,7 @@ export function PermissionPlanCard({
               onClick={() =>
                 void answer({ kind: "approve_plan", acceptEdits: false })
               }
+              onKeyDown={holdEnter}
               fill={allow}
               color={onAllow}
             >

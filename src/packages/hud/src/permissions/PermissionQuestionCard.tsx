@@ -8,7 +8,7 @@ import { CardButton } from "./CardButton";
 import { QuestionAnswerElsewhere } from "./QuestionAnswerElsewhere";
 import { QuestionOptions } from "./QuestionOptions";
 import { QuestionLockNote } from "./QuestionLockNote";
-import { useEnterSubmit } from "./enter-submit";
+import { holdRepeat, useEnterSubmit } from "./enter-submit";
 import {
   canGoOn,
   isAnswered as answered,
@@ -275,6 +275,7 @@ export function PermissionQuestionCard({
         <CardButton
           disabled={disabled || !isAnswered}
           onClick={advanceOrSubmit}
+          onKeyDown={holdRepeat}
           fill={allow}
           color={onAllow}
           style={{ opacity: isAnswered ? 1 : 0.45 }}

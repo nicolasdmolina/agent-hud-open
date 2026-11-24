@@ -16,3 +16,22 @@ export function mayDecide(
 ): boolean {
   return !outOfReach(request) || decision.kind === "leave";
 }
+
+/** One decision per card: none while one is on its way, and none after one
+ * went, until delivery fails (the person may then act again) or the card
+ * changes (a new card has a new gate). Leaving the card alone sends nothing
+ * to the client and still may once an answer went. */
+export function decisionGate() {
+  let state: "open" | "sending" | "sent" = "open";
+  return {
+    begin(decision: RequestDecision): boolean {
+      if (state === "sending") return false;
+      if (state === "sent" && decision.kind !== "leave") return false;
+      state = "sending";
+      return true;
+    },
+    end(delivered: boolean) {
+      state = delivered ? "sent" : "open";
+    },
+  };
+}
