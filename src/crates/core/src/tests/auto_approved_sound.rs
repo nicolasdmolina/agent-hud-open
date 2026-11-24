@@ -115,13 +115,15 @@ impl Lab {
             .unwrap_or("absent")
             .to_owned();
         let cards = snapshot["approvals"].as_array().unwrap().len();
-        let needs = snapshot["soundAlerts"]["items"]
+        // As the host plays them: each alert once, by its id.
+        let needs: HashSet<&str> = snapshot["soundAlerts"]["items"]
             .as_array()
             .unwrap()
             .iter()
             .filter(|alert| alert["kind"] == "needs-you")
-            .count();
-        (state, cards, needs)
+            .filter_map(|alert| alert["id"].as_str())
+            .collect();
+        (state, cards, needs.len())
     }
     fn later(&mut self, ms: i64) {
         self.now += ms;
@@ -365,4 +367,53 @@ fn a_request_answered_in_its_own_client_still_sounds() {
     assert!(!lab.card("codex-desktop-permission:1", "permission"));
     lab.told_waiting();
     assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+}
+
+/// The round 3 verifier's four looks. A wait that names no request sounds.
+/// The session is seen at work. An approved request's wait then passes in
+/// silence. A new wait that names no request begins, with nothing new in
+/// the transcript, so the time it would be known by is the first wait's.
+/// It is another wait, seen to begin after the first was seen to end: it
+/// sounds, a second time.
+#[test]
+fn a_later_wait_that_names_no_request_sounds_though_nothing_new_was_written() {
+    let mut lab = Lab::new(true);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    lab.told_waiting();
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+    lab.later(100);
+    lab.not_waiting();
+    assert_eq!(lab.look(), ("running".into(), 0, 1));
+    lab.later(100);
+    assert!(lab.card(A, "permission"));
+    lab.told_waiting_for(&[A]);
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+    lab.later(100);
+    lab.not_waiting();
+    lab.told_waiting();
+    assert_eq!(
+        lab.look(),
+        ("waiting".into(), 0, 2),
+        "a new wait was taken for one that had ended"
+    );
+    // The same wait at the next look: no third sound.
+    lab.later(100);
+    assert_eq!(lab.look(), ("waiting".into(), 0, 2));
+}
+
+/// The same with no approval in it at all: a wait, the session seen at
+/// work, a wait again, and nothing new written between. Two waits, two
+/// sounds. A wait that only goes on sounds once.
+#[test]
+fn a_wait_seen_to_end_and_begin_again_sounds_again() {
+    let mut lab = Lab::new(false);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    lab.told_waiting();
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+    lab.later(100);
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+    lab.not_waiting();
+    assert_eq!(lab.look(), ("running".into(), 0, 1));
+    lab.told_waiting();
+    assert_eq!(lab.look(), ("waiting".into(), 0, 2));
 }

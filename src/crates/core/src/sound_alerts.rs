@@ -8,6 +8,7 @@
 //! them is decided then, so none sounds on its own later.
 use super::*;
 
+mod bare;
 mod kept;
 mod look;
 mod requests;
@@ -25,6 +26,14 @@ struct Wait {
     /// without a sound: a card that comes in it is new, and so is a wait
     /// that names no request.
     silent: bool,
+    /// The name it was decided under while it had no card, where that name
+    /// is only the time of the session's last event and not a time of the
+    /// wait's own (a channel's waiting flag has none). Once the wait is
+    /// seen to end the name is marked as over, and the next wait goes by
+    /// the name after it, so it is new though nothing was written between
+    /// the two. The host plays an alert once by its name: the same name
+    /// again would never be heard.
+    lent: Option<String>,
 }
 pub(crate) struct Tracker {
     primed: bool,
@@ -193,15 +202,15 @@ impl Tracker {
                     told.get_or_insert(names[0].clone());
                 }
             }
-            if now_requests.is_empty() {
-                let facts = &session["liveFacts"];
-                let since = [&facts["attention"]["at"], &facts["observedAt"]]
-                    .into_iter()
-                    .find_map(Value::as_str)
-                    .or(session["updatedAt"].as_str())
-                    .unwrap_or("");
-                let identity = format!("needs-you:{source}:{id}:{since}");
-                if !silent && self.first(&identity, now) && before.is_none_or(|p| p.silent) {
+            // The name a wait with no card had here goes on with the wait.
+            let mut lent = before.and_then(|p| p.lent.clone());
+            if silent {
+                // The approved requests' wait: the one before it is over.
+                self.over(lent.take(), now);
+            } else if now_requests.is_empty() {
+                let (identity, borrowed) = self.bare_name(session, source, id);
+                lent = borrowed.then(|| identity.clone());
+                if self.first(&identity, now) && before.is_none_or(|p| p.silent) {
                     told = Some(identity);
                 }
             }
@@ -219,13 +228,16 @@ impl Tracker {
                     requests: now_requests,
                     approved,
                     silent,
+                    lent,
                 },
             );
         }
-        // A session that waits no more: what its wait was for is over.
-        let gone = std::mem::replace(&mut self.waits, waits);
-        self.ended
-            .extend(gone.into_values().flat_map(|wait| wait.approved));
+        // A session that waits no more: what its wait was for is over, and
+        // so is the name it borrowed.
+        for (_, wait) in std::mem::replace(&mut self.waits, waits) {
+            self.ended.extend(wait.approved);
+            self.over(wait.lent, now);
+        }
         let decided = self.decided.len();
         self.decided.retain(|_, at| now - *at < KEPT_MS);
         self.changed |= self.decided.len() != decided;

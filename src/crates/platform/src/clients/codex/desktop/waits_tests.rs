@@ -149,8 +149,11 @@ impl Replay {
         let state = row["state"].as_str().unwrap().to_owned();
         let cards = snapshot["approvals"].as_array().unwrap().len();
         let alerts = snapshot["soundAlerts"]["items"].as_array().unwrap();
+        // As the host plays them: each alert once, by its id.
         let needs = alerts.iter().filter(|item| item["kind"] == "needs-you");
-        (state, cards, needs.count())
+        let ids: std::collections::HashSet<&str> =
+            needs.filter_map(|item| item["id"].as_str()).collect();
+        (state, cards, ids.len())
     }
 }
 

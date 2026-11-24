@@ -122,6 +122,31 @@ fn a_wait_that_names_no_request_after_the_approved_one_is_new_and_sounds() {
     assert_eq!(look_with(&mut tracker, &sessions, &named, &[], T + 3), []);
 }
 
+/// A wait that names no request sounds; the approved request's wait takes
+/// its place, in silence; then the session waits on something unnamed
+/// again, all without being seen at work and with nothing new written.
+/// The first wait ended when the second took its place, so the third is
+/// new: it sounds, a second time.
+#[test]
+fn a_wait_that_names_no_request_sounds_again_after_an_approved_ones_took_its_place() {
+    let mut tracker = started();
+    let sessions = [told_waiting("s1")];
+    let named = [(S1, &["r1"][..])];
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &[], &[], T + 1),
+        [needs_you("s1")]
+    );
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &named, &named, T + 2),
+        []
+    );
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &named, &[], T + 3),
+        [needs_you("s1")]
+    );
+    assert_eq!(look_with(&mut tracker, &sessions, &named, &[], T + 4), []);
+}
+
 /// A wait already told, then found to be an approved request's: it has
 /// sounded once, and sounds no second time while it goes on.
 #[test]
