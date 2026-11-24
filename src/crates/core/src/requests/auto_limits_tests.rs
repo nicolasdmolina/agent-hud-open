@@ -132,11 +132,15 @@ fn an_automatic_approval_is_kept_by_its_names_and_ended_by_them() {
     assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
     // Ending what was read ends that request and no other, though they
     // share a session: by one of its names, either of them.
-    requests.auto_approved_ended(&["call:call-7".to_owned(), "unknown".to_owned()]);
+    let ended = ["call:call-7".to_owned(), "unknown".to_owned()];
+    // Not in another session, though the name is the same.
+    requests.auto_approved_ended("claude:s9", &ended);
+    assert_eq!(requests.auto_approved(10_002)["codex:s1"].len(), 3);
+    requests.auto_approved_ended("codex:s1", &ended);
     let kept = requests.auto_approved(10_002);
     assert_eq!(kept["codex:s1"], ["p2"]);
     assert_eq!(kept["claude:s9"], ["call:toolu_9"]);
-    requests.auto_approved_ended(&[]);
+    requests.auto_approved_ended("codex:s1", &[]);
     assert_eq!(requests.auto_approved(10_002), kept);
     // A question is never approved, so never kept.
     let question = json!({"source": "codex", "client": "codex-desktop",

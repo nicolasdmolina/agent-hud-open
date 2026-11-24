@@ -6,7 +6,7 @@ use serde_json::Value;
 
 impl Tracker {
     /// The approved requests whose wait a look saw end, once.
-    pub(crate) fn take_ended(&mut self) -> Vec<String> {
+    pub(crate) fn take_ended(&mut self) -> Vec<(String, String)> {
         std::mem::take(&mut self.ended)
     }
 }
@@ -26,8 +26,9 @@ impl AgentHudCore {
         let alerts = self
             .sound_alerts
             .update(island, sessions, &heard, &self.settings, now);
-        self.requests
-            .auto_approved_ended(&self.sound_alerts.take_ended());
+        for (session, request) in self.sound_alerts.take_ended() {
+            self.requests.auto_approved_ended(&session, &[request]);
+        }
         alerts
     }
 }

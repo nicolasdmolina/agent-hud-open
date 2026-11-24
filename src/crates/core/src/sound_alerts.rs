@@ -47,8 +47,8 @@ pub(crate) struct Tracker {
     changed: bool,
     kept: Option<kept::Kept>,
     /// The approved requests whose wait the last look saw end, by their
-    /// ids, until core is told (`take_ended`).
-    ended: Vec<String>,
+    /// `source:session` and id, until core is told (`take_ended`).
+    ended: Vec<(String, String)>,
     revision: u64,
     items: VecDeque<Value>,
 }
@@ -176,8 +176,8 @@ impl Tracker {
             };
             let approved: Vec<String> = named.iter().filter(|r| is_approved(r)).cloned().collect();
             let over = before.into_iter().flat_map(|p| &p.approved);
-            self.ended
-                .extend(over.filter(|r| !approved.contains(r)).cloned());
+            let over = over.filter(|r| !approved.contains(r));
+            self.ended.extend(over.map(|r| (key.clone(), r.clone())));
             // A wait with no card, for approved requests alone, is theirs:
             // it makes no sound. One that names no request always sounds.
             let silent =
@@ -234,8 +234,10 @@ impl Tracker {
         }
         // A session that waits no more: what its wait was for is over, and
         // so is the name it borrowed.
-        for (_, wait) in std::mem::replace(&mut self.waits, waits) {
-            self.ended.extend(wait.approved);
+        for (key, wait) in std::mem::replace(&mut self.waits, waits) {
+            let over = wait.approved.into_iter();
+            self.ended
+                .extend(over.map(|request| (key.clone(), request)));
             self.over(wait.lent, now);
         }
         let decided = self.decided.len();

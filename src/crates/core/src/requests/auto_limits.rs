@@ -125,17 +125,19 @@ impl Requests {
         kept
     }
 
-    /// The sound decision saw the waits that went by these names end: the
-    /// requests they belong to are over. Only those: a request approved
-    /// since the names were read is kept, whatever its session.
-    pub fn auto_approved_ended(&self, names: &[String]) {
+    /// The sound decision saw the waits of `session` (`source:session`)
+    /// that went by these names end: the requests they belong to are over.
+    /// Only those, and only there: a request approved since the names were
+    /// read is kept, and so is one of another source or session that goes
+    /// by the same name.
+    pub fn auto_approved_ended(&self, session: &str, names: &[String]) {
         if names.is_empty() {
             return;
         }
         let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state
-            .approved
-            .retain(|approved| !approved.names.iter().any(|name| names.contains(name)));
+        state.approved.retain(|approved| {
+            approved.session != session || !approved.names.iter().any(|name| names.contains(name))
+        });
     }
 }
 

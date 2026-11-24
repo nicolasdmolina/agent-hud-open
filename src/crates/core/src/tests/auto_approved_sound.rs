@@ -296,7 +296,7 @@ fn an_approval_made_during_a_look_is_kept() {
     let read = requests.auto_approved(lab.now);
     assert_eq!(read[&session], [first]);
     assert!(lab.card(second, "permission"));
-    requests.auto_approved_ended(&read[&session]);
+    requests.auto_approved_ended(&session, &read[&session]);
     assert_eq!(requests.auto_approved(lab.now)[&session], [second]);
 }
 
@@ -416,4 +416,34 @@ fn a_wait_seen_to_end_and_begin_again_sounds_again() {
     assert_eq!(lab.look(), ("running".into(), 0, 1));
     lab.told_waiting();
     assert_eq!(lab.look(), ("waiting".into(), 0, 2));
+}
+
+/// The round 3 verifier's acknowledgment probe. A look read an approved
+/// request of one session. Before it says that request's wait ended,
+/// another source registers a request under the very same id, in a session
+/// of its own, and it is allowed too. Ending the first ends it in its own
+/// source and session only: the second, which no look has seen, is kept.
+#[test]
+fn ending_an_approved_request_ends_it_in_its_own_session_only() {
+    let lab = Lab::new(true);
+    let requests = lab.core.requests();
+    let first = format!("codex:{THREAD}");
+    let reused = "fixture-native-id";
+    assert!(lab.card(reused, "permission"));
+    let read = requests.auto_approved(lab.now);
+    assert_eq!(read[&first], [reused]);
+    requests.settle_native(reused);
+    let other = json!({"source":"claude","sessionId":"second","kind":"permission"});
+    let ticket = requests
+        .register_native(reused.to_owned(), other, lab.now + 1)
+        .unwrap();
+    assert!(ticket.response.try_recv().ok().flatten().is_some());
+    assert_eq!(
+        requests.auto_approved(lab.now + 1)["claude:second"],
+        [reused]
+    );
+    requests.auto_approved_ended(&first, &read[&first]);
+    let kept = requests.auto_approved(lab.now + 1);
+    assert_eq!(kept.get("claude:second"), Some(&vec![reused.to_owned()]));
+    assert!(!kept.contains_key(&first));
 }

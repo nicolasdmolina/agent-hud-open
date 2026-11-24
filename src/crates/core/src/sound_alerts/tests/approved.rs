@@ -206,14 +206,14 @@ fn the_look_says_which_approved_requests_waits_ended() {
         &[(S1, &["r1", "r2"])],
         T + 1,
     );
-    assert_eq!(tracker.take_ended(), Vec::<String>::new());
+    assert_eq!(tracker.take_ended(), []);
     // The channel names r1 no more; r2's wait goes on.
     look_with(&mut tracker, &sessions, &approved, &[(S1, &["r2"])], T + 2);
-    assert_eq!(tracker.take_ended(), ["r1"]);
-    assert_eq!(tracker.take_ended(), Vec::<String>::new());
+    assert_eq!(tracker.take_ended(), [(S1.to_owned(), "r1".to_owned())]);
+    assert_eq!(tracker.take_ended(), []);
     // The session is at work again.
     look_with(&mut tracker, &[running("s1")], &approved, &[], T + 3);
-    assert_eq!(tracker.take_ended(), ["r2"]);
+    assert_eq!(tracker.take_ended(), [(S1.to_owned(), "r2".to_owned())]);
 }
 
 /// What goes by an approved request's own names never sounds: here a
