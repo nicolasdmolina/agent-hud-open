@@ -36,15 +36,17 @@ pub(crate) struct Demo {
 impl Runtime {
     /// A demo in `data_dir`, which is emptied first, playing `script` if any.
     pub fn demo(data_dir: PathBuf, script: Option<DemoScript>) -> Result<Self, String> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_millis() as i64);
-        Self::demo_at(data_dir, script, now)
+        Self::demo_at(data_dir, script, None)
     }
 
-    /// The demo as if launched at `now`, in milliseconds since the epoch: its
-    /// year of tokens, quotas and requests all count back from it.
-    fn demo_at(data_dir: PathBuf, script: Option<DemoScript>, now: i64) -> Result<Self, String> {
+    /// The demo as if launched at `at`, in milliseconds since the epoch, or
+    /// now once it is set up: its year of tokens, quotas and requests all
+    /// count back from it.
+    fn demo_at(
+        data_dir: PathBuf,
+        script: Option<DemoScript>,
+        at: Option<i64>,
+    ) -> Result<Self, String> {
         let _ = std::fs::remove_dir_all(&data_dir);
         std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
         let platform = NativePlatform::new()?;
@@ -55,6 +57,11 @@ impl Runtime {
             core.requests(),
             Arc::new(|| {}),
         )?));
+        let now = at.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_millis() as i64)
+        });
         let mut demo = Demo {
             sessions: DemoSessions::default(),
             used: script
@@ -358,7 +365,7 @@ mod tests {
         // launch, whose requests have long expired.
         let now = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:00:00Z").unwrap();
         let path = folder.path().join("fixed");
-        let mut runtime = Runtime::demo_at(path, None, now.timestamp_millis()).unwrap();
+        let mut runtime = Runtime::demo_at(path, None, Some(now.timestamp_millis())).unwrap();
         let statistics = runtime
             .core
             .request(
