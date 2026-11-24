@@ -239,3 +239,65 @@ fn a_sighting_of_the_approved_call_makes_no_sound_and_another_calls_does() {
     let mut tracker = started();
     assert_eq!(look(&mut tracker, "toolu_1", false, T + 1), 1);
 }
+
+/// A control from round 2, restored. A permission that shows its card at
+/// the first look sounds, though another request was allowed automatically
+/// in the same session: the approval is silent only for what goes by its
+/// own name.
+#[test]
+fn a_card_seen_at_the_first_look_beside_an_approval_in_its_session_sounds() {
+    let mut tracker = started();
+    let carded = [waiting("s1", &[("manual-card", "permission")])];
+    assert_eq!(
+        look_with(&mut tracker, &carded, &[(S1, &["r1"])], &[], T + 1),
+        [needs_you("s1")]
+    );
+    // And where the channel names both for the wait.
+    let mut tracker = started();
+    let both = [(S1, &["r1", "manual-card"][..])];
+    assert_eq!(
+        look_with(&mut tracker, &carded, &[(S1, &["r1"])], &both, T + 1),
+        [needs_you("s1")]
+    );
+}
+
+/// A control from round 2, restored. The approved request's wait passes
+/// and goes on until core keeps the request no longer. A question's card
+/// that then comes in it is new, and sounds.
+#[test]
+fn a_question_card_after_the_approved_request_is_kept_no_longer_sounds() {
+    let mut tracker = started();
+    let sessions = [told_waiting("s1")];
+    let named = [(S1, &["r1"][..])];
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &named, &named, T + 1),
+        []
+    );
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &[], &named, T + 600_001),
+        []
+    );
+    let question = [waiting("s1", &[("late-question", "question")])];
+    assert_eq!(
+        look_with(&mut tracker, &question, &[], &named, T + 600_002),
+        [needs_you("s1")]
+    );
+}
+
+/// An approved request silences its own session's wait and no other's:
+/// the same id named by another session's wait, or by a session of the
+/// same id under another source, is not that request.
+#[test]
+fn an_approved_requests_id_silences_no_other_sessions_or_sources_wait() {
+    let mut tracker = started();
+    let mut other_source = told_waiting("s1");
+    other_source["source"] = json!("codex");
+    let rows = [told_waiting("s1"), told_waiting("s2"), other_source];
+    let waits = [
+        (S1, &["shared-id"][..]),
+        ("claude:s2", &["shared-id"][..]),
+        ("codex:s1", &["shared-id"][..]),
+    ];
+    let alerts = look_with(&mut tracker, &rows, &[(S1, &["shared-id"])], &waits, T + 1);
+    assert_eq!(alerts, [needs_you("s2"), needs_you("s1")]);
+}
