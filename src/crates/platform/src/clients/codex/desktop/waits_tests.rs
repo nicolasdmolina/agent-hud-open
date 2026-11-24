@@ -93,3 +93,87 @@ fn the_wait_of_an_automatically_approved_request_names_it_by_the_id_core_keeps()
     assert_eq!(named(&requests).as_ref(), Some(kept));
     observer.stop();
 }
+
+/// The real channel beside a whole core, so that a state Codex Desktop
+/// streams is followed to the snapshot's session row, cards and sounds
+/// (the round 3 verifier's fixture).
+struct Replay {
+    core: agent_hud_core::AgentHudCore,
+    observer: CodexDesktopObserver,
+    _temp: tempfile::TempDir,
+}
+
+impl Replay {
+    /// A Codex Desktop session at work, sound and Approve automatically on.
+    fn new() -> Self {
+        use agent_hud_core::{AgentHudCore, SourceRoot};
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("sessions");
+        std::fs::create_dir(&folder).unwrap(); // plain directory
+        let at = (chrono::Utc::now() - chrono::Duration::seconds(2)).to_rfc3339();
+        let events = [
+            json!({"timestamp":at,"type":"session_meta","payload":{"id":THREAD,"timestamp":at,"source":"vscode","originator":"Codex Desktop","cwd":"/fixture"}}),
+            json!({"timestamp":at,"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-fixture"}}),
+        ];
+        let log: String = events.iter().map(|line| format!("{line}\n")).collect();
+        std::fs::write(folder.join(format!("rollout-{THREAD}.jsonl")), log).unwrap();
+        let roots = vec![SourceRoot {
+            path: folder,
+            provider: "codex",
+        }];
+        let mut core = AgentHudCore::new(roots, temp.path().join("app"));
+        for key in ["sound", "autoApprove"] {
+            core.request("set_setting", json!({"key": key, "value": true}))
+                .unwrap();
+        }
+        core.request("refresh", json!({})).unwrap();
+        let observer =
+            CodexDesktopObserver::start(temp.path().join("w"), core.requests(), Arc::new(|| {}))
+                .unwrap();
+        let mut replay = Self {
+            core,
+            observer,
+            _temp: temp,
+        };
+        assert_eq!(replay.look(), ("running".to_owned(), 0, 0));
+        replay
+    }
+    fn streams(&self, state: Value) {
+        self.observer.shared.reconcile(THREAD, "owner", state);
+    }
+    /// One look: (the session's state, cards shown, `needs-you` alerts).
+    fn look(&mut self) -> (String, usize, usize) {
+        let snapshot = self.core.request("request_snapshot", json!({})).unwrap();
+        let rows = snapshot["sessions"].as_array().unwrap();
+        let row = rows.iter().find(|row| row["id"] == THREAD).unwrap();
+        let state = row["state"].as_str().unwrap().to_owned();
+        let cards = snapshot["approvals"].as_array().unwrap().len();
+        let alerts = snapshot["soundAlerts"]["items"].as_array().unwrap();
+        let needs = alerts.iter().filter(|item| item["kind"] == "needs-you");
+        (state, cards, needs.count())
+    }
+}
+
+/// The round 3 verifier's second probe. A thread's approval was allowed
+/// automatically and its wait passed in silence. The next state still says
+/// it waits on an approval and gives no list of requests: the channel has
+/// nothing to say which request the wait is for now. It names none, never
+/// the request it knew before, and the wait sounds.
+#[test]
+fn a_wait_whose_requests_cannot_be_read_names_none_and_sounds() {
+    for broken in ["no list", "a list that is not one"] {
+        let mut replay = Replay::new();
+        let requests = replay.core.requests();
+        replay.streams(state(&["waitingOnApproval"], true));
+        assert!(named(&requests).is_some());
+        assert_eq!(replay.look(), ("waiting".to_owned(), 0, 0));
+        let mut unknown = state(&["waitingOnApproval"], false);
+        match broken {
+            "no list" => drop(unknown.as_object_mut().unwrap().remove("requests")),
+            _ => unknown["requests"] = json!("unreadable"),
+        }
+        replay.streams(unknown);
+        assert_eq!(named(&requests), None, "{broken}: an old request named");
+        assert_eq!(replay.look(), ("waiting".to_owned(), 0, 1), "{broken}");
+    }
+}

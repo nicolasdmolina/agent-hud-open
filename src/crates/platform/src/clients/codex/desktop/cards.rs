@@ -29,6 +29,7 @@ impl Shared {
             }
         }
         let parsed = pending::parse(&state_value, thread, owner);
+        let named = super::waits::named(&state_value, parsed.as_deref().ok());
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if !self.active.load(Ordering::Acquire) {
             return;
@@ -38,6 +39,7 @@ impl Shared {
             ThreadState {
                 owner: owner.into(),
                 state: state_value,
+                named,
             },
         );
         let Ok(items) = parsed else {

@@ -36,6 +36,8 @@ use std::{
 struct ThreadState {
     owner: String,
     state: Value,
+    /// The requests this state's wait is for (`waits::named`).
+    named: Vec<String>,
 }
 struct LivePending {
     item: Pending,
@@ -212,16 +214,10 @@ impl Shared {
                 .known
                 .iter()
                 .filter_map(|(thread, known)| {
-                    let status = &known.state["threadRuntimeStatus"];
-                    let flags = status["activeFlags"].as_array()?;
-                    let on = |flag: &str| flags.iter().any(|told| told == flag);
-                    let (approval, input) = (on("waitingOnApproval"), on("waitingOnUserInput"));
                     // Agent HUD Fork (ticket 66): with the requests the wait
-                    // is for, where each part of it has one (`waits.rs`).
-                    (status["type"] == "active" && (approval || input)).then(|| {
-                        let named = waits::named(&state.pending, thread, approval, input);
-                        (thread.clone(), named)
-                    })
+                    // is for, as that state's own requests say (`waits.rs`).
+                    let (approval, input) = waits::waiting_on(&known.state);
+                    (approval || input).then(|| (thread.clone(), known.named.clone()))
                 })
                 .collect::<Vec<_>>()
         } else {
