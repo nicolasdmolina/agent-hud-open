@@ -177,3 +177,84 @@ fn a_wait_whose_requests_cannot_be_read_names_none_and_sounds() {
         assert_eq!(replay.look(), ("waiting".to_owned(), 0, 1), "{broken}");
     }
 }
+
+/// A second request beside the fixture's, differing in what `change` sets.
+fn another(base: &Value, id: u64, change: impl FnOnce(&mut Value)) -> Value {
+    let mut request = base["requests"][0].clone();
+    request["id"] = json!(id);
+    change(&mut request);
+    request
+}
+
+/// The round 3 verifier's first probe. Two approvals wait in one thread
+/// under one flag. The channel can show the first, which is allowed
+/// automatically; the second is for a connector it has no card for, and
+/// needs the person. The wait is not the first one's alone, so it names
+/// no request and sounds, as the second one alone does.
+#[test]
+fn a_wait_with_an_approval_the_channel_cannot_show_names_none_and_sounds() {
+    let base = state(&["waitingOnApproval"], true);
+    let unshown = another(&base, 8, |request| {
+        request["params"]["_meta"]["connector_id"] = json!("other-connector");
+    });
+    let mut replay = Replay::new();
+    let requests = replay.core.requests();
+    let mut both = base.clone();
+    both["requests"]
+        .as_array_mut()
+        .unwrap()
+        .push(unshown.clone());
+    replay.streams(both);
+    let kept = requests.auto_approved(crate::hooks::now_ms());
+    assert_eq!(
+        kept[&format!("{}:{THREAD}", AGENT.id)].len(),
+        1,
+        "the first"
+    );
+    assert_eq!(named(&requests), None, "a wait named for part of itself");
+    assert_eq!(replay.look(), ("waiting".to_owned(), 0, 1));
+
+    // The control: the one the channel cannot show, alone.
+    let mut control = Replay::new();
+    let mut alone = base.clone();
+    alone["requests"] = json!([unshown]);
+    control.streams(alone);
+    assert_eq!(control.look(), ("waiting".to_owned(), 0, 1));
+}
+
+/// What does not make a wait more than its requests': a second approval
+/// the channel shows too, a request that is already completed, and one of
+/// another thread. Each wait names every approval that waits in its
+/// thread, all of them allowed, and is silent.
+#[test]
+fn a_wait_names_its_requests_where_every_approval_that_waits_in_the_thread_is_one() {
+    let base = state(&["waitingOnApproval"], true);
+    let cases: [(&str, Value, usize); 3] = [
+        ("a second one shown", another(&base, 8, |_| {}), 2),
+        (
+            "one completed",
+            another(&base, 8, |request| {
+                request["completed"] = json!(true);
+                request["params"]["_meta"]["connector_id"] = json!("other-connector");
+            }),
+            1,
+        ),
+        (
+            "one of another thread",
+            another(&base, 8, |request| {
+                request["params"]["threadId"] = json!("00000000-0000-4000-8000-000000000067");
+                request["params"]["_meta"]["connector_id"] = json!("other-connector");
+            }),
+            1,
+        ),
+    ];
+    for (case, beside, count) in cases {
+        let mut replay = Replay::new();
+        let requests = replay.core.requests();
+        let mut both = base.clone();
+        both["requests"].as_array_mut().unwrap().push(beside);
+        replay.streams(both);
+        assert_eq!(named(&requests).map(|ids| ids.len()), Some(count), "{case}");
+        assert_eq!(replay.look(), ("waiting".to_owned(), 0, 0), "{case}");
+    }
+}
