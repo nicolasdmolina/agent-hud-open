@@ -55,11 +55,11 @@ Open is the floor, not the ceiling. Next must not do worse than Open; where it c
 | [c04](c04-models-logic.md) | Models, quota math, session phases, formatting, demo | 122 | 49 | 3 | 7 | 18 | 12 | 26 | 7 |
 | [c05](c05-panel-mcp.md) | Panel layout, HUD style, MCP tools | 96 | 23 | 10 | 1 | 15 | 2 | 44 | 1 |
 | [c06](c06-notch-surface.md) | Island, hover panel, Simple mode, HUD windows | 120 | 40 | 6 | 1 | 18 | 11 | 41 | 3 |
-| [c07](c07-glow-alerts-theme.md) | Glow, alerts, permission cards, theme | 121 | 38 | 5 | 5 | 24 | 6 | 39 | 4 |
+| [c07](c07-glow-alerts-theme.md) | Glow, alerts, permission cards, theme | 122 | 38 | 6 | 5 | 24 | 6 | 39 | 4 |
 | [c08](c08-bots.md) | Bots and Clawd | 58 | 35 | 1 | 2 | 1 | 1 | 15 | 3 |
 | [c09](c09-app-settings.md) | App lifecycle, Settings, menu bar | 93 | 25 | 8 | 7 | 6 | 9 | 33 | 5 |
 | [c10](c10-statistics-debug.md) | Statistics, sessions window, debug, recording | 102 | 14 | 2 | 9 | 13 | 8 | 54 | 2 |
-| **Total** | | **1,228** | **407** | **58** | **53** | **176** | **87** | **401** | **46** |
+| **Total** | | **1,229** | **407** | **59** | **53** | **176** | **87** | **401** | **46** |
 
 `pnpm run parity:ledger` recounts this table from the rows; `pnpm run check` fails when it is stale.
 

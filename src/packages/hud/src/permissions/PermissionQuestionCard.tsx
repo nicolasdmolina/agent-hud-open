@@ -8,6 +8,7 @@ import { CardButton } from "./CardButton";
 import { QuestionAnswerElsewhere } from "./QuestionAnswerElsewhere";
 import { QuestionOptions } from "./QuestionOptions";
 import { QuestionLockNote } from "./QuestionLockNote";
+import { useEnterSubmit } from "./enter-submit";
 import {
   canGoOn,
   isAnswered as answered,
@@ -53,6 +54,7 @@ export function PermissionQuestionCard({
   );
   const [editingCustomKey, setEditingCustomKey] = useState<string | null>(null);
   const customInputRef = useRef<HTMLInputElement | null>(null);
+  const enter = useEnterSubmit();
 
   const setPage = (nextPage: number) => {
     setPageState(nextPage);
@@ -136,17 +138,19 @@ export function PermissionQuestionCard({
   // A question another viewer settled may be left as it is.
   const isAnswered = canGoOn(q, value);
   const advanceOrSubmit = () => {
-    if (!isAnswered || disabled) return;
+    if (!isAnswered || disabled) return false;
     setEditingCustomKey(null);
     if (safePage + 1 < questions.length) {
       setPage(safePage + 1);
     } else {
       submitAllAnswers();
     }
+    return true;
   };
+  enter.submit = advanceOrSubmit;
 
   return (
-    <div style={cardColumn(8)}>
+    <div ref={enter.root} style={cardColumn(8)}>
       {detailText && (
         <div style={{ fontSize: 11, color: secondary, lineHeight: 1.35 }}>
           {detailText}

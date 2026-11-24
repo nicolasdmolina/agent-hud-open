@@ -31,7 +31,7 @@ export function QuestionOptions({
   customInputRef: RefObject<HTMLInputElement | null>;
   changeAnswer: (key: string, patch: Partial<Draft>) => void;
   setEditingCustomKey: (key: string | null) => void;
-  advanceOrSubmit: () => void;
+  advanceOrSubmit: () => boolean;
 }) {
   const t = (en: string, cn: string) => (zh ? cn : en);
   const key = q.answerKey;
@@ -73,6 +73,7 @@ export function QuestionOptions({
           <button
             key={option.label}
             type="button"
+            data-hud-choice=""
             disabled={disabled}
             onClick={() => {
               setEditingCustomKey(null);
