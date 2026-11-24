@@ -6,6 +6,7 @@ import { permissionColors } from "../tokens";
 import { useGround } from "../ground";
 import { cardColumn } from "../card-column";
 import { CardButton } from "./CardButton";
+import { holdEnter, holdsEnter } from "./enter-submit";
 
 export function PermissionToolCard({
   request,
@@ -174,6 +175,7 @@ export function PermissionToolCard({
               disabled={disabled}
               title={choice.title}
               onClick={() => void answer(choice.decision)}
+              onKeyDown={holdsEnter(choice.tone) ? holdEnter : undefined}
               {...(choice.tone === "deny"
                 ? { edge: denyStroke, fill: denyFill, color: denyText }
                 : choice.tone === "lasting"

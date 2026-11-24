@@ -5,6 +5,7 @@ import { alertFill, onAlertFill } from "../tokens";
 import { useGround } from "../ground";
 import { cardColumn } from "../card-column";
 import type { Draft } from "./question-answers";
+import { typedEnter } from "./enter-submit";
 
 /** A question's offered answers, to pick one or several, and the field for
  * an answer in one's own words. */
@@ -31,7 +32,7 @@ export function QuestionOptions({
   customInputRef: RefObject<HTMLInputElement | null>;
   changeAnswer: (key: string, patch: Partial<Draft>) => void;
   setEditingCustomKey: (key: string | null) => void;
-  advanceOrSubmit: () => void;
+  advanceOrSubmit: () => boolean;
 }) {
   const t = (en: string, cn: string) => (zh ? cn : en);
   const key = q.answerKey;
@@ -73,6 +74,7 @@ export function QuestionOptions({
           <button
             key={option.label}
             type="button"
+            data-hud-choice=""
             disabled={disabled}
             onClick={() => {
               setEditingCustomKey(null);
@@ -172,11 +174,7 @@ export function QuestionOptions({
             }}
             onKeyDown={(e) => {
               // Return while an input method is composing belongs to it.
-              if (
-                e.key === "Enter" &&
-                !e.nativeEvent.isComposing &&
-                e.keyCode !== 229
-              ) {
+              if (typedEnter(e.nativeEvent)) {
                 e.preventDefault();
                 advanceOrSubmit();
               }

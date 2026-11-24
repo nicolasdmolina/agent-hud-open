@@ -7,6 +7,7 @@ import { useGround } from "./ground";
 import { alertText } from "./tokens";
 import { cardColumn } from "./card-column";
 import { mayDecide, outOfReach } from "./permissions/answer-gate";
+import { useHeldEnterStop } from "./permissions/enter-submit";
 import { Unplug } from "lucide-react";
 
 export interface RequestActionsProps {
@@ -33,6 +34,7 @@ export function RequestActions({
   const t = (en: string, cn: string) => (zh ? cn : en);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useHeldEnterStop();
   const ground = useGround(light);
   const errorColor = ground.seeThrough
     ? alertText("warning", ground)
