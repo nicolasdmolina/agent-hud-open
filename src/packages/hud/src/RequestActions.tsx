@@ -6,7 +6,8 @@ import { PermissionToolCard } from "./permissions/PermissionToolCard";
 import { useGround } from "./ground";
 import { alertText } from "./tokens";
 import { cardColumn } from "./card-column";
-import { decisionGate, mayDecide, outOfReach } from "./permissions/answer-gate";
+import { mayDecide, outOfReach } from "./permissions/answer-gate";
+import { useHeldEnterStop } from "./permissions/enter-submit";
 import { Unplug } from "lucide-react";
 
 export interface RequestActionsProps {
@@ -33,9 +34,7 @@ export function RequestActions({
   const t = (en: string, cn: string) => (zh ? cn : en);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Several presses in one moment (a held key, a click and a key) see the
-  // same `pending`, so the gate, not the state, keeps it to one decision.
-  const [gate] = useState(decisionGate);
+  useHeldEnterStop();
   const ground = useGround(light);
   const errorColor = ground.seeThrough
     ? alertText("warning", ground)
@@ -45,15 +44,12 @@ export function RequestActions({
   // key, and keeps what was typed until it can be answered again.
   const unreachable = outOfReach(request);
   const answer = async (decision: RequestDecision) => {
-    if (!onDecision || !mayDecide(request, decision) || !gate.begin(decision))
-      return;
+    if (!onDecision || pending || !mayDecide(request, decision)) return;
     setPending(true);
     setError(null);
     try {
       await onDecision(decision);
-      gate.end(true);
     } catch (failure) {
-      gate.end(false);
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
       setPending(false);

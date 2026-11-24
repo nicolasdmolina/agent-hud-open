@@ -119,13 +119,34 @@ export function holdsEnter(tone: "deny" | "lasting" | "allow"): boolean {
   return tone !== "deny";
 }
 
-/** Submit's keydown: a held Enter's repeats do not press it again. */
-export function holdRepeat(event: {
+/** A held Enter's repeats, which the HUD stops before any control sees
+ * them, so no button, answer or box is pressed or toggled again. */
+export function stopsHeldEnter(event: {
   key: string;
+  code?: string;
   repeat: boolean;
-  preventDefault(): void;
-}) {
-  if (event.key === "Enter" && event.repeat) event.preventDefault();
+}): boolean {
+  return (
+    event.repeat && (event.key === "Enter" || event.code === "NumpadEnter")
+  );
+}
+
+let holding = 0;
+const onHeld = (event: KeyboardEvent) => {
+  if (!stopsHeldEnter(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+};
+
+/** Stops a held Enter's repeats in the whole HUD while a request card is on
+ * show: one capture listener, before every control. */
+export function useHeldEnterStop() {
+  useEffect(() => {
+    if (holding++ === 0) window.addEventListener("keydown", onHeld, true);
+    return () => {
+      if (--holding === 0) window.removeEventListener("keydown", onHeld, true);
+    };
+  }, []);
 }
 
 /** The request card the stack shows in front: the open one, or where

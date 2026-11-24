@@ -83,8 +83,7 @@ test("every decision a card makes goes through the gate", () => {
   const actions = source("../src/RequestActions.tsx");
   assert.match(
     actions,
-    // Out of reach first, then one decision at a time (ticket 76).
-    /if \(!onDecision \|\| !mayDecide\(request, decision\) \|\| !gate\.begin\(decision\)\)\s+return;/,
+    /if \(!onDecision \|\| pending \|\| !mayDecide\(request, decision\)\) return;/,
   );
   // Only `answer` calls onDecision, and the cards are handed `answer`.
   assert.equal(actions.match(/onDecision\(/g)?.length, 1);

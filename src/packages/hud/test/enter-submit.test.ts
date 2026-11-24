@@ -9,14 +9,13 @@ import {
   CONTROL,
   enterRegistry,
   holdEnter,
-  holdRepeat,
   holdsEnter,
   pressedChoice,
+  stopsHeldEnter,
   typedEnter,
   type EnterCard,
   type EnterKey,
 } from "../src/permissions/enter-submit.ts";
-import { decisionGate } from "../src/permissions/answer-gate.ts";
 import { permissionChoices } from "../src/permissions/permission-choices.ts";
 
 const enter = (patch: Partial<EnterKey> = {}): EnterKey => ({
@@ -196,33 +195,27 @@ test("one press submits once", () => {
     keys.press(enter({ defaultPrevented: true }), page, true, front),
     false,
   );
-  // A held key's repeats: on the page, in the typed answer, on Submit.
+  // A held key's repeats: on the page and in the typed answer.
   assert.equal(keys.press(enter({ repeat: true }), page, true, front), false);
   assert.equal(typedEnter(enter({ repeat: true })), false);
-  let held = 0;
-  holdRepeat({ key: "Enter", repeat: true, preventDefault: () => held++ });
-  assert.equal(held, 1);
-  holdRepeat({ key: "Enter", repeat: false, preventDefault: () => held++ });
-  assert.equal(held, 1, "the first press still presses Submit");
   assert.equal(one.made.sent, 0);
 });
 
-test("a card sends one decision while one is on its way or after it went", () => {
-  const gate = decisionGate();
-  const answer = { kind: "answer", answers: {} } as const;
-  assert.equal(gate.begin(answer), true);
-  assert.equal(gate.begin(answer), false, "on its way");
-  gate.end(true);
-  assert.equal(gate.begin(answer), false, "already sent");
-  assert.equal(gate.begin({ kind: "allow" }), false, "already sent");
-  // Leaving the card alone sends nothing to the client and still may.
-  assert.equal(gate.begin({ kind: "leave" }), true);
-
-  const failed = decisionGate();
-  assert.equal(failed.begin(answer), true);
-  failed.end(false);
-  // Delivery failed: the person may act again.
-  assert.equal(failed.begin(answer), true);
+test("a held Enter's repeats reach no control at all", () => {
+  // Stopped before any control sees them: Skip, Deny, Send, Next, Submit,
+  // an answer or a multi-select box. The first press still goes through.
+  assert.equal(stopsHeldEnter({ key: "Enter", repeat: true }), true);
+  assert.equal(
+    stopsHeldEnter({ key: "Enter", code: "NumpadEnter", repeat: true }),
+    true,
+  );
+  assert.equal(stopsHeldEnter({ key: "Enter", repeat: false }), false);
+  assert.equal(
+    stopsHeldEnter({ key: "Enter", code: "NumpadEnter", repeat: false }),
+    false,
+  );
+  assert.equal(stopsHeldEnter({ key: " ", repeat: true }), false);
+  assert.equal(stopsHeldEnter({ key: "a", repeat: true }), false);
 });
 
 test("Enter leaves other keys, chords and focused buttons alone", () => {

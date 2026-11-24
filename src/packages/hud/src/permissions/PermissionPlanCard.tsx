@@ -136,13 +136,10 @@ export function PermissionPlanCard({
               disabled={disabled}
               onChange={(e) => setFeedback(e.target.value)}
               onKeyDown={(e) => {
-                // Return while an input method is composing belongs to it,
-                // and a held Return's repeats send nothing more.
+                // Return while an input method is composing belongs to it.
                 if (typedEnter(e.nativeEvent)) {
                   e.preventDefault();
                   sendBack();
-                } else if (e.key === "Enter" && e.repeat) {
-                  e.preventDefault();
                 } else if (e.key === "Escape") {
                   setNoting(false);
                 }
