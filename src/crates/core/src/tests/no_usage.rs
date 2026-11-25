@@ -364,3 +364,37 @@ fn a_store_that_can_no_longer_say_whether_a_reply_exists_hides_nothing() {
     let rows = snapshot["sessions"].as_array().unwrap().iter();
     assert!(rows.clone().all(|row| row.get("usedNoAi").is_none()));
 }
+
+#[test]
+fn a_reply_lookup_that_fails_leaves_the_read_whole_and_hides_nothing() {
+    // The sessions stay readable, but asking for their replies errors (a
+    // `messages` view whose role comes from malformed JSON): the read still
+    // lists every session, a new one included, and with no answer about
+    // replies it hides none.
+    let mut fixture = here();
+    assert_eq!(fixture.list(true).0, [fixture.id("worked")]);
+    let now = Utc::now().timestamp();
+    fixture
+        .db
+        .execute_batch(&format!(
+            "ALTER TABLE messages RENAME TO messages_raw;
+             CREATE VIEW messages AS SELECT id, session_id, json_extract(content, '$.role') AS role, content FROM messages_raw;
+             UPDATE sessions SET title = 'Hourly job, renamed' WHERE id = 'job';
+             INSERT INTO sessions VALUES ('new', 'cli', 'claude-test', {}, 0, 0, 'New chat', NULL);",
+            now - 30
+        ))
+        .unwrap();
+    use_tokens(&fixture.db, "new");
+    fixture.refresh();
+    let all = vec![fixture.id("job"), fixture.id("new"), fixture.id("worked")];
+    assert_eq!(fixture.list(true), (all.clone(), json!(3)));
+    assert_eq!(fixture.list(false), (all, json!(3)));
+    let snapshot = fixture.core.request("snapshot", json!({})).unwrap();
+    let rows = snapshot["sessions"].as_array().unwrap().iter();
+    assert!(rows.clone().all(|row| row.get("usedNoAi").is_none()));
+    let job = rows
+        .clone()
+        .find(|row| row["id"] == fixture.id("job"))
+        .unwrap();
+    assert_eq!(job["title"], "Hourly job, renamed", "the read went through");
+}

@@ -26,17 +26,17 @@ const USAGE: [&str; 11] = [
 impl Sessions<'_> {
     /// Adds to `records` those of the session `row` holds: `id` as Agent
     /// HUD names it and `raw` as Hermes does, when it `started` and was
-    /// last active (`updated`).
+    /// last active (`updated`), and whether it holds a reply (`replied`).
     pub(super) fn records(
         &self,
         row: &rusqlite::Row<'_>,
         (id, raw): (&str, &str),
         (started, updated): (i64, i64),
+        replied: Option<bool>,
         records: &mut Vec<Record>,
     ) -> rusqlite::Result<()> {
         let label = self.mirror.as_ref().map(|mirror| mirror.label.clone());
         let live_total = super::rows::live_total(row)?;
-        let replied = super::rows::replied(row)?;
         let profile = match &self.of {
             Profile::Named(name) => Some(name.as_str().to_owned()),
             Profile::Default => None,

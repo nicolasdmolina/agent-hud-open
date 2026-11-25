@@ -38,6 +38,8 @@ pub(super) struct Sessions<'a> {
     pub(super) usage: HashSet<String>,
     pub(super) mirror: Option<Mirror>,
     pub(super) of: Profile,
+    /// Whether its sessions' replies can be asked for (`replied`).
+    replies: bool,
 }
 
 /// The rows one stretch held.
@@ -74,14 +76,10 @@ impl<'a> Sessions<'a> {
         };
         let print = session_counts::sql(&s, &u);
         let live = mirror::live_sql(db, mirror.as_ref())?;
-        // Whether it holds a reply of the model: a stored assistant message,
-        // in this machine's database. A mirror holds no messages: NULL.
-        let m = sql_columns(db, "messages")?;
-        let replied = if mirror.is_none() && m.contains("session_id") && m.contains("role") {
-            "EXISTS(SELECT 1 FROM messages m WHERE m.session_id=s.id AND m.role='assistant')"
-        } else {
-            "NULL"
-        };
+        // Whether its sessions' replies can be asked for: a stored assistant
+        // message, in this machine's database. A mirror holds no messages.
+        let m = sql_columns(db, "messages").unwrap_or_default();
+        let replies = mirror.is_none() && m.contains("session_id") && m.contains("role");
         // A `state.db` under a Hermes home is this machine's, and its folder
         // says whose: a named profile's in `profiles/<name>`, else the default
         // profile's of whatever root holds it. A mirror's own table says whose
@@ -93,18 +91,32 @@ impl<'a> Sessions<'a> {
         Ok(Self {
             db,
             select: format!(
-                "SELECT s.rowid,s.id,s.started_at,{},{last_seen},{print},{live},{replied} FROM sessions s",
+                "SELECT s.rowid,s.id,s.started_at,{},{last_seen},{print},{live} FROM sessions s",
                 fields.join(",")
             ),
             usage: u,
             mirror,
             of,
+            replies,
         })
     }
 
     /// Whether these are a mirror's sessions.
     pub(super) fn of_a_mirror(&self) -> bool {
         self.mirror.is_some()
+    }
+
+    /// Whether the session Hermes calls `raw` holds a reply of the model: a
+    /// stored assistant message. None where its database cannot say, or the
+    /// question fails: it never fails or holds up the read of the sessions.
+    fn replied(&self, raw: &str) -> Option<bool> {
+        let sql = "SELECT EXISTS(SELECT 1 FROM messages WHERE session_id=?1 AND role='assistant')";
+        let ask = || {
+            self.db
+                .prepare_cached(sql)?
+                .query_row([raw], |row| row.get::<_, i64>(0))
+        };
+        self.replies.then(ask)?.ok().map(|found| found != 0)
     }
 
     /// The rows whose rowid is in `range`, a condition over the numbers
@@ -175,7 +187,8 @@ impl<'a> Sessions<'a> {
                 .unwrap_or(started);
             // A reply stored since the last read reads the session again.
             let counts = sql_text(row, 18).unwrap_or_default();
-            let counts = match replied(row)? {
+            let replied = self.replied(&raw);
+            let counts = match replied {
                 Some(found) => format!("{counts}/{found}"),
                 None => counts,
             };
@@ -185,17 +198,11 @@ impl<'a> Sessions<'a> {
             }
             taken += 1;
             let whose = (id.as_str(), raw.as_str());
-            self.records(row, whose, (started, updated), records)?;
+            self.records(row, whose, (started, updated), replied, records)?;
         }
         span.more = span.seen == looked || taken == read;
         Ok(span)
     }
-}
-
-/// Whether the session `row` holds a reply of the model; None where its
-/// database cannot say (a mirror's).
-pub(super) fn replied(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<bool>> {
-    Ok(row.get::<_, Option<i64>>(20)?.map(|found| found != 0))
 }
 
 /// What a mirror's `hud_live` says the session `row` holds has used so
