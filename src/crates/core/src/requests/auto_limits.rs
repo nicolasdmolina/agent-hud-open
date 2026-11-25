@@ -88,6 +88,7 @@ impl State {
             return None;
         }
         self.dismissed.insert(id.to_owned());
+        self.allowed.insert(id.to_owned());
         let session = view["sessionId"].as_str().unwrap_or_default();
         let call = view["callId"].as_str();
         let wait = self.begin_wait();
@@ -131,6 +132,7 @@ impl State {
     /// kept of it, so the same request shown again is a request like any
     /// other, and sounds.
     pub(super) fn approval_settled(&mut self, id: &str) {
+        self.allowed.remove(id);
         self.approved
             .retain(|approved| approved.native.as_deref() != Some(id));
     }
@@ -148,6 +150,27 @@ impl Requests {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .note_approved(source, session, None, call, now_ms);
+    }
+
+    /// Its channel lost sight of the native request `id`: its stream
+    /// dropped, the thread became unknown to it, or a state came whose
+    /// requests it could not read. What happened to the request meanwhile
+    /// is not known, and what the channel sees next under that id may be
+    /// another request (a client can ask again with the very same
+    /// request). So nothing known of its automatic answer is carried
+    /// over: the approval goes, confirmed or not, and with it the
+    /// dismissal that kept the id from being registered again. Seen
+    /// again, it is registered as new, answered anew, and approved only
+    /// once that answer is confirmed. A request that was answered by hand
+    /// keeps its dismissal, as before the sync.
+    pub fn auto_approval_lost(&self, id: &str) {
+        let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.allowed.remove(id) {
+            state.dismissed.remove(id);
+        }
+        state
+            .approved
+            .retain(|approved| approved.native.as_deref() != Some(id));
     }
 
     /// The channel saw the automatic answer that was given in the wait
@@ -215,8 +238,13 @@ impl Requests {
             return;
         }
         let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        // Only what the look was told was approved: a request registered
+        // anew under the same id since, its answer not yet confirmed, is
+        // another request, and is kept.
         state.approved.retain(|approved| {
-            approved.session != session || !approved.names.iter().any(|name| names.contains(name))
+            !approved.confirmed
+                || approved.session != session
+                || !approved.names.iter().any(|name| names.contains(name))
         });
     }
 }

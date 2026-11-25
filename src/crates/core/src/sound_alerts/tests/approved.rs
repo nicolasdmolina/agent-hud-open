@@ -198,8 +198,104 @@ fn a_request_that_takes_the_place_of_another_with_no_card_sounds_too() {
         look_with(&mut tracker, &sessions, &[], &both, T + 5),
         [needs_you("s1")]
     );
-    // The first again, which already sounded: the same request.
-    assert_eq!(look_with(&mut tracker, &sessions, &[], &first, T + 6), []);
+    // The first again, after the wait was seen to name it no more: its
+    // channel settled it or lost sight of it, and what it names under that
+    // id now is another request (round 9). It sounds, once.
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &[], &first, T + 6),
+        [needs_you("s1")]
+    );
+    assert_eq!(look_with(&mut tracker, &sessions, &[], &first, T + 7), []);
+}
+
+/// Round 9. A request with no card whose wait is seen to end, and that
+/// its channel names again later, is another wait: it sounds again, as a
+/// wait that names no request does (round 4). Seen to end means a look at
+/// which the session waits no more, or its wait names the request no more.
+/// A request that only goes on, or whose approval comes and goes, is the
+/// same wait.
+#[test]
+fn a_request_with_no_card_seen_to_end_and_named_again_sounds_again() {
+    let named = [(S1, &["r1"][..])];
+    let waits = [told_waiting("s1")];
+    // The session is seen at work in between.
+    let mut tracker = started();
+    assert_eq!(
+        look_with(&mut tracker, &waits, &[], &named, T + 1),
+        [needs_you("s1")]
+    );
+    assert_eq!(
+        look_with(&mut tracker, &[running("s1")], &[], &[], T + 2),
+        []
+    );
+    assert_eq!(
+        look_with(&mut tracker, &waits, &[], &named, T + 3),
+        [needs_you("s1")]
+    );
+    assert_eq!(look_with(&mut tracker, &waits, &[], &named, T + 4), []);
+    // A third time, and its ids are three different ones.
+    assert_eq!(
+        look_with(&mut tracker, &[running("s1")], &[], &[], T + 5),
+        []
+    );
+    assert_eq!(
+        look_with(&mut tracker, &waits, &[], &named, T + 6),
+        [needs_you("s1")]
+    );
+    let ids: HashSet<&str> = tracker
+        .items
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    assert_eq!(ids.len(), 3, "{ids:?}");
+
+    // Approved and silent while it went on, and it had sounded before
+    // that: the same wait throughout, one sound.
+    let mut tracker = started();
+    assert_eq!(
+        look_with(&mut tracker, &waits, &[], &named, T + 1),
+        [needs_you("s1")]
+    );
+    assert_eq!(look_with(&mut tracker, &waits, &named, &named, T + 2), []);
+    assert_eq!(look_with(&mut tracker, &waits, &[], &named, T + 3), []);
+    // Seen to end while approved, then named again and not approved.
+    assert_eq!(look_with(&mut tracker, &waits, &named, &named, T + 4), []);
+    assert_eq!(
+        look_with(&mut tracker, &[running("s1")], &named, &[], T + 5),
+        []
+    );
+    assert_eq!(
+        look_with(&mut tracker, &waits, &[], &named, T + 6),
+        [needs_you("s1")]
+    );
+}
+
+/// The card of a request is told by the card, as before the sync: shown
+/// again after its wait was seen to end, it is the same card and does not
+/// sound. Named again with no card, it is a wait like any other, and
+/// sounds, as the wait with no card did before the sync.
+#[test]
+fn a_card_shown_again_is_the_same_card_and_its_request_with_no_card_is_a_new_wait() {
+    let named = [(S1, &["r1"][..])];
+    let carded = [waiting("s1", &[("r1", "permission")])];
+    let mut tracker = started();
+    assert_eq!(
+        look_with(&mut tracker, &carded, &[], &named, T + 1),
+        [needs_you("s1")]
+    );
+    assert_eq!(
+        look_with(&mut tracker, &[running("s1")], &[], &[], T + 2),
+        []
+    );
+    assert_eq!(look_with(&mut tracker, &carded, &[], &named, T + 3), []);
+    assert_eq!(
+        look_with(&mut tracker, &[running("s1")], &[], &[], T + 4),
+        []
+    );
+    assert_eq!(
+        look_with(&mut tracker, &[told_waiting("s1")], &[], &named, T + 5),
+        [needs_you("s1")]
+    );
 }
 
 /// The same after a wait that named no request, which sounded under a

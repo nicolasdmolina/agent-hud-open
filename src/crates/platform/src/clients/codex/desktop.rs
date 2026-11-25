@@ -201,6 +201,9 @@ impl Shared {
         // identities. Retaining pending prevents a reconnect from asking twice.
         for (id, pending) in &mut state.pending {
             self.requests.cancel(id);
+            // Agent HUD Fork (ticket 66): nor is an automatic answer's
+            // word carried over to what the next stream shows.
+            self.requests.auto_approval_lost(id);
             pending.ticket = None;
         }
         drop(state);

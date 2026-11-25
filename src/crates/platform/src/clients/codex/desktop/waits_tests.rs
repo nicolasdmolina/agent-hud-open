@@ -432,3 +432,107 @@ fn a_second_approval_after_a_confirmed_one_sounds() {
     assert_eq!(replay.look(), ("waiting".to_owned(), 0, 1));
     replay.observer.stop();
 }
+
+/// Round 9, every way the channel loses sight of a thread's requests
+/// without the stand-in sockets: the stream drops (`forget_connection`),
+/// the thread becomes unknown to it (`cards::unknown`), and a state comes
+/// whose requests cannot be read. Each time the approval was confirmed
+/// and its wait had passed in silence. What the channel shows next under
+/// the same id is registered anew, with an answer of its own to send, and
+/// is not approved until that one is confirmed: it sounds.
+#[test]
+fn a_request_seen_again_after_the_channel_lost_sight_of_it_sounds_and_is_answered_anew() {
+    for lost in [
+        "the stream drops",
+        "the thread is unknown",
+        "its requests cannot be read",
+    ] {
+        for looks_between in [false, true] {
+            let about = format!("{lost}, a look between: {looks_between}");
+            let mut replay = Replay::new();
+            let requests = replay.core.requests();
+            let wire = state(&["waitingOnApproval"], true);
+            replay.streams(wire.clone());
+            let id = named(&requests).unwrap().remove(0);
+            let ticket = |replay: &Replay| {
+                let state = replay.observer.shared.state.lock().unwrap();
+                state.pending[&id].ticket.as_ref().map(|ticket| ticket.wait)
+            };
+            let first = ticket(&replay).expect("the first answer is queued");
+            replay.owner_confirms();
+            assert_eq!(replay.look(), ("waiting".to_owned(), 0, 0), "{about}");
+            // What stands for a wait that names nothing, where there is one.
+            let mut sounds = 0;
+            match lost {
+                "the stream drops" => replay.observer.shared.forget_connection(),
+                "the thread is unknown" => {
+                    super::super::cards::unknown(&replay.observer.shared, THREAD)
+                }
+                _ => {
+                    let mut unreadable = wire.clone();
+                    unreadable["requests"] = json!("unreadable");
+                    replay.streams(unreadable);
+                }
+            }
+            assert!(ticket(&replay).is_none(), "{about}");
+            let now = crate::hooks::now_ms();
+            assert!(
+                requests.auto_approved(now).is_empty(),
+                "{about}: still approved"
+            );
+            if looks_between {
+                // A state that cannot be read still says the thread waits:
+                // a wait that names nothing, which sounds.
+                let waits = lost == "its requests cannot be read";
+                sounds += usize::from(waits);
+                let state = if waits { "waiting" } else { "running" };
+                assert_eq!(replay.look(), (state.to_owned(), 0, sounds), "{about}");
+            }
+            replay.streams(wire);
+            let second = ticket(&replay).expect("it is answered anew");
+            assert_ne!(first, second, "{about}");
+            assert!(requests.auto_approved(now).is_empty(), "{about}");
+            sounds += 1;
+            assert_eq!(replay.look(), ("waiting".to_owned(), 0, sounds), "{about}");
+            // Word of the first answer, late, confirms nothing of it.
+            requests.auto_answer_delivered(first, now);
+            assert!(requests.auto_approved(now).is_empty(), "{about}");
+            replay.owner_confirms();
+            assert_eq!(requests.auto_approved(now).len(), 1, "{about}");
+            assert_eq!(replay.look(), ("waiting".to_owned(), 0, sounds), "{about}");
+            replay.observer.stop();
+        }
+    }
+}
+
+/// The control for the three: a request the channel never lost sight of
+/// is not registered again by the next state that lists it, and stays
+/// approved and silent.
+#[test]
+fn a_request_the_channel_kept_in_sight_is_not_answered_twice() {
+    let mut replay = Replay::new();
+    let requests = replay.core.requests();
+    let wire = state(&["waitingOnApproval"], true);
+    replay.streams(wire.clone());
+    let id = named(&requests).unwrap().remove(0);
+    replay.owner_confirms();
+    assert_eq!(replay.look(), ("waiting".to_owned(), 0, 0));
+    // The reply worker has taken the ticket, as when the answer was sent.
+    replay
+        .observer
+        .shared
+        .state
+        .lock()
+        .unwrap()
+        .pending
+        .get_mut(&id)
+        .unwrap()
+        .ticket = None;
+    replay.streams(wire);
+    let state = replay.observer.shared.state.lock().unwrap();
+    assert!(state.pending[&id].ticket.is_none(), "answered twice");
+    drop(state);
+    assert_eq!(requests.auto_approved(crate::hooks::now_ms()).len(), 1);
+    assert_eq!(replay.look(), ("waiting".to_owned(), 0, 0));
+    replay.observer.stop();
+}

@@ -63,6 +63,8 @@ struct State {
     /// The requests allowed with no card, kept for the sound decision
     /// (`auto_limits.rs`).
     approved: VecDeque<auto_limits::Approved>,
+    /// The native ids dismissed because they were allowed at once.
+    allowed: HashSet<String>,
 }
 pub use native::{NativeReadings, NativeStates, LIVE_STATES_MS};
 struct Reviewer {
@@ -117,6 +119,7 @@ impl Default for Requests {
                 machines: BTreeMap::new(),
                 auto: AutoApprove::default(),
                 approved: VecDeque::new(),
+                allowed: HashSet::new(),
             }),
             wake: Mutex::new(None),
             #[cfg(feature = "probes")]
@@ -279,6 +282,7 @@ impl Requests {
             state.machines.clear();
             state.dismissed.clear();
             state.approved.clear();
+            state.allowed.clear();
             state.taken.clear();
             (std::mem::take(&mut state.pending), changed)
         };

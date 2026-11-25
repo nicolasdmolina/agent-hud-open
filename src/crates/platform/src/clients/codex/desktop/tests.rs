@@ -11,6 +11,8 @@ use std::{
 mod auto_answer;
 // Agent HUD Fork (ticket 66): a request that reuses an id, and its receipts.
 mod receipt_reuse;
+// Agent HUD Fork (ticket 66): the same request asked again after a reconnect.
+mod reconnect;
 
 const THREAD: &str = "00000000-0000-4000-8000-000000000001";
 fn permission(connector: &str, persist: Value) -> Value {

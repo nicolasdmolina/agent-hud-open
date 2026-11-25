@@ -161,6 +161,7 @@ impl Tracker {
             let carded = |r: &&String| now_requests.iter().any(|q| q.card && q.names.contains(r));
             let is_waiting = |r: &&String| !allowed.contains(r) && !carded(r);
             let waiting: Vec<&String> = named.iter().filter(is_waiting).collect();
+            let names = self.request_names(before, named, &key, now);
             // A wait with no card, for approved requests alone, is theirs:
             // it makes no sound. One that names no request always sounds.
             let silent = now_requests.is_empty() && !named.is_empty() && waiting.is_empty();
@@ -194,10 +195,9 @@ impl Tracker {
             // A request that newly waits with no card is a new wait: it
             // sounds whatever the session's wait sounded for before, and
             // once, under its own name, so its card would not sound again.
-            for request in &waiting {
-                let name = format!("needs-you:{source}:{id}:{request}");
-                if self.first(&name, now) {
-                    told.get_or_insert(name);
+            for (_, name) in names.iter().filter(|(r, _)| waiting.contains(&r)) {
+                if self.first(name, now) {
+                    told.get_or_insert(name.clone());
                 }
             }
             // Nothing of its own waits in it: a wait known only as a wait.
@@ -226,6 +226,7 @@ impl Tracker {
                 key,
                 Wait {
                     unnamed,
+                    named: names,
                     approved,
                     silent,
                     lent,
@@ -239,6 +240,9 @@ impl Tracker {
             self.ended
                 .extend(over.map(|request| (key.clone(), request)));
             self.over(wait.lent, now);
+            for (_, name) in wait.named {
+                self.over(Some(name), now);
+            }
         }
         let decided = self.decided.len();
         self.decided.retain(|_, at| now - *at < KEPT_MS);

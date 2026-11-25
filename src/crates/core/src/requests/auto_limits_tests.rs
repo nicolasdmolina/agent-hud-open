@@ -368,3 +368,107 @@ fn a_confirmation_that_comes_after_ten_minutes_confirms_nothing() {
         assert_eq!(kept.contains_key("codex:s1"), approved, "{late} ms, later");
     }
 }
+
+/// Round 9. Where its channel lost sight of a request, nothing known of
+/// its automatic answer is carried over: the approval goes, confirmed or
+/// not, and so does the dismissal, so the request the channel sees next
+/// under that id is registered as new and answered anew, in a wait of its
+/// own. Word of the first answer confirms nothing of it. A request that
+/// was answered by hand keeps its dismissal, as before the sync, and so
+/// does one the switch never touched.
+#[test]
+fn a_request_its_channel_lost_sight_of_is_registered_and_answered_anew() {
+    for confirmed in [false, true] {
+        let requests = approving();
+        let card = permission("codex", Some("codex-desktop"));
+        let first = allowed(&requests, "p", &card, 1_000);
+        let other = allowed(&requests, "other", &card, 1_000);
+        requests.auto_answer_delivered(other, 1_000);
+        if confirmed {
+            requests.auto_answer_delivered(first, 1_000);
+        }
+        // Registered again while it is known: the same request, no ticket.
+        assert!(requests
+            .register_native("p".into(), card.clone(), 1_001)
+            .is_none());
+        requests.auto_approval_lost("p");
+        assert_eq!(requests.auto_approved(1_001)["codex:s1"], ["other"]);
+        let second = allowed(&requests, "p", &card, 1_002);
+        assert_ne!(first, second);
+        requests.auto_answer_delivered(first, 1_003);
+        assert_eq!(requests.auto_approved(1_003)["codex:s1"], ["other"]);
+        requests.auto_answer_delivered(second, 1_004);
+        assert_eq!(requests.auto_approved(1_004)["codex:s1"], ["other", "p"]);
+        assert!(shown(&requests).is_empty());
+    }
+    // Answered by hand: lost sight of, it is still dismissed.
+    let requests = Requests::default();
+    let card = permission("codex", Some("codex-desktop"));
+    // The ticket is held, as its channel holds it until it is answered.
+    let ticket = requests.register_native("p".into(), card.clone(), 1_000);
+    let ticket = ticket.unwrap();
+    assert!(ticket.response.try_recv().is_err());
+    assert!(requests
+        .answer("p", &json!({"kind": "allow"}), 1_001)
+        .is_ok());
+    requests.auto_approval_lost("p");
+    assert!(requests.register_native("p".into(), card, 1_002).is_none());
+    // An id that was allowed at once, settled, and then answered by hand.
+    let requests = approving();
+    let card = permission("codex", Some("codex-desktop"));
+    allowed(&requests, "q", &card, 1_000);
+    requests.settle_native("q");
+    requests.set_auto_approve(AutoApprove::from_settings(&json!({})));
+    // The ticket is held, as its channel holds it until it is answered.
+    let ticket = requests.register_native("q".into(), card.clone(), 1_001);
+    let ticket = ticket.unwrap();
+    assert!(ticket.response.try_recv().is_err());
+    assert!(requests
+        .answer("q", &json!({"kind": "allow"}), 1_002)
+        .is_ok());
+    requests.auto_approval_lost("q");
+    assert!(requests.register_native("q".into(), card, 1_003).is_none());
+}
+
+/// Antigravity's and DeepSeek's channels: with Approve automatically on
+/// their permissions are allowed at once too, but neither names the
+/// requests a wait is for, and neither tells core of an answer by its
+/// wait. So nothing of theirs is ever approved for sound, whatever
+/// receipts they report, and their waits always sound.
+#[test]
+fn a_channel_that_never_tells_core_by_the_wait_has_nothing_approved() {
+    for source in ["antigravity", "deepseek"] {
+        let requests = approving();
+        assert!(requests.auto_approves(source, None), "{source}");
+        let card = json!({"source": source, "sessionId": "s1", "kind": "permission"});
+        let ticket = requests.register_native("p".into(), card, 1_000).unwrap();
+        assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
+        for word in ["confirmed", "failed", "uncertain"] {
+            requests.note_native_delivery("p", source, "s1", word, None, 1_500);
+        }
+        requests.set_native_waiting(source, "reader", &["s1".to_owned()], 1_500);
+        assert!(requests.auto_approved(1_500).is_empty(), "{source}");
+        assert!(requests.native_wait_requests().is_empty(), "{source}");
+    }
+}
+
+/// The look's word that an approved request's wait ended ends what the
+/// look was told was approved. A request registered anew under that id
+/// since, its answer not yet confirmed, is another request and is kept,
+/// so that its own answer can still confirm it.
+#[test]
+fn the_end_of_an_approved_wait_does_not_end_a_request_registered_anew_under_its_id() {
+    let requests = approving();
+    let card = permission("codex", Some("codex-desktop"));
+    let first = allowed(&requests, "p", &card, 1_000);
+    requests.auto_answer_delivered(first, 1_000);
+    let told = requests.auto_approved(1_000)["codex:s1"].clone();
+    requests.auto_approval_lost("p");
+    let second = allowed(&requests, "p", &card, 1_001);
+    requests.auto_approved_ended("codex:s1", &told);
+    requests.auto_answer_delivered(second, 1_002);
+    assert_eq!(requests.auto_approved(1_002)["codex:s1"], ["p"]);
+    // Once it is the approved one, its own wait's end does end it.
+    requests.auto_approved_ended("codex:s1", &told);
+    assert!(requests.auto_approved(1_002).is_empty());
+}

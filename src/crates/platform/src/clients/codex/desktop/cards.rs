@@ -46,6 +46,8 @@ impl Shared {
             for (id, pending) in &mut state.pending {
                 if pending.item.thread == thread {
                     self.requests.cancel(id);
+                    // Agent HUD Fork (ticket 66): as where the stream drops.
+                    self.requests.auto_approval_lost(id);
                     pending.ticket = None;
                 }
             }
@@ -100,6 +102,8 @@ pub(super) fn unknown(shared: &Shared, thread: &str) {
     for (id, live) in &mut state.pending {
         if live.item.thread == thread {
             shared.requests.cancel(id);
+            // Agent HUD Fork (ticket 66): as where the stream drops.
+            shared.requests.auto_approval_lost(id);
             live.ticket = None;
         }
     }
