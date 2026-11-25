@@ -23,9 +23,13 @@ fn permission(source: &str, client: Option<&str>) -> Value {
     view
 }
 
-/// The channel confirms the automatic answer to `id`, a request of `s1`.
-fn confirm(requests: &Requests, id: &str, now_ms: i64) {
-    requests.note_native_delivery(id, "codex", "s1", "confirmed", None, now_ms);
+/// Registers the card under `id`, which is allowed at once: the wait its
+/// answer was given in, which is what its channel confirms it by.
+fn allowed(requests: &Requests, id: &str, card: &Value, now_ms: i64) -> u64 {
+    let ticket = requests.register_native(id.into(), card.clone(), now_ms);
+    let ticket = ticket.unwrap();
+    assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
+    ticket.wait
 }
 
 fn shown(requests: &Requests) -> Vec<String> {
@@ -42,10 +46,7 @@ fn shown(requests: &Requests) -> Vec<String> {
 fn approve_automatically_never_decides_a_request_marked_unreachable() {
     let requests = approving();
     let card = permission("codex", Some("codex-desktop"));
-    let ticket = requests
-        .register_native("plain".into(), card.clone(), 1_000)
-        .unwrap();
-    assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
+    let plain = allowed(&requests, "plain", &card, 1_000);
     assert!(shown(&requests).is_empty());
 
     let mut marked = card.clone();
@@ -59,8 +60,8 @@ fn approve_automatically_never_decides_a_request_marked_unreachable() {
     );
     assert_eq!(shown(&requests), ["marked"]);
     // It was not noted as approved, and takes no decision by hand either.
-    for id in ["plain", "marked"] {
-        confirm(&requests, id, 1_000);
+    for wait in [plain, ticket.wait] {
+        requests.auto_answer_delivered(wait, 1_000);
     }
     let kept = requests.auto_approved(1_000);
     assert_eq!(kept["codex:s1"], ["plain"], "only the plain one");
@@ -125,9 +126,8 @@ fn an_automatic_approval_is_kept_by_its_names_and_ended_by_them() {
     let requests = approving();
     let mut card = permission("codex", Some("codex-desktop"));
     card["callId"] = json!("call-7");
-    let ticket = requests.register_native("p".into(), card, 10_000).unwrap();
-    assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
-    confirm(&requests, "p", 10_000);
+    let wait = allowed(&requests, "p", &card, 10_000);
+    requests.auto_answer_delivered(wait, 10_000);
     requests.note_auto_approved("claude", "s9", Some("toolu_9"), 10_000);
     // A hook's request that names no tool call has nothing to be known by.
     requests.note_auto_approved("claude", "s9", None, 10_000);
@@ -137,11 +137,8 @@ fn an_automatic_approval_is_kept_by_its_names_and_ended_by_them() {
     assert_eq!(kept.len(), 2);
     // A second approval in the same session, after the first was read.
     let other = permission("codex", Some("codex-desktop"));
-    let ticket = requests
-        .register_native("p2".into(), other, 10_001)
-        .unwrap();
-    assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
-    confirm(&requests, "p2", 10_001);
+    let wait = allowed(&requests, "p2", &other, 10_001);
+    requests.auto_answer_delivered(wait, 10_001);
     // Ending what was read ends that request and no other, though they
     // share a session: by one of its names, either of them.
     let ended = ["call:call-7".to_owned(), "unknown".to_owned()];
@@ -231,37 +228,59 @@ fn a_wait_is_for_its_requests_only_where_every_reader_names_them() {
 }
 
 /// An approval is only as good as its answer. A request allowed at once
-/// is not among the approved until its channel confirms that the answer
-/// was delivered, in its own source and session. Where the channel reports
-/// that it did not arrive, or that nobody confirmed it, nothing is kept of
-/// it: no later word can make it approved.
+/// is not among the approved until its channel says that the answer given
+/// in its own wait was delivered. A receipt as the panel shows it, which
+/// names the request by its id, says nothing either way, whatever it says
+/// and for whichever session; nor does word of another wait's answer.
 #[test]
-fn an_automatic_approval_counts_only_once_its_answer_is_confirmed() {
-    for (receipt, approved) in [("failed", false), ("uncertain", false), ("confirmed", true)] {
-        let requests = approving();
-        let card = permission("codex", Some("codex-desktop"));
-        let ticket = requests.register_native("p".into(), card, 1_000).unwrap();
-        assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
-        assert!(requests.auto_approved(1_000).is_empty(), "before any word");
-        // Another session's receipt for the same id says nothing of this
-        // one, whatever it says.
-        for word in ["failed", "confirmed"] {
-            requests.note_native_delivery("p", "codex", "another", word, None, 1_500);
-            requests.note_native_delivery("p", "claude", "s1", word, None, 1_500);
+fn an_automatic_approval_counts_only_once_its_own_answer_is_confirmed() {
+    let requests = approving();
+    let card = permission("codex", Some("codex-desktop"));
+    let wait = allowed(&requests, "p", &card, 1_000);
+    let other = allowed(&requests, "other", &card, 1_000);
+    assert!(requests.auto_approved(1_000).is_empty(), "before any word");
+    for word in ["failed", "uncertain", "confirmed"] {
+        for (source, session) in [("codex", "s1"), ("codex", "another"), ("claude", "s1")] {
+            requests.note_native_delivery("p", source, session, word, None, 1_500);
         }
-        assert!(requests.auto_approved(1_500).is_empty());
-
-        requests.note_native_delivery("p", "codex", "s1", receipt, None, 2_000);
-        let kept = requests.auto_approved(2_000);
-        assert_eq!(kept.contains_key("codex:s1"), approved, "{receipt}");
-        // A failure is final; a confirmation after it confirms nothing.
-        confirm(&requests, "p", 2_500);
-        let kept = requests.auto_approved(2_500);
-        assert_eq!(kept.contains_key("codex:s1"), approved, "{receipt}");
-        // It ends by its name, in its session.
-        requests.auto_approved_ended("codex:s1", &["p".to_owned()]);
-        assert!(requests.auto_approved(2_500).is_empty(), "{receipt}");
     }
+    assert!(requests.auto_approved(1_500).is_empty(), "a receipt by id");
+    // A wait nothing was allowed in, and one after every wait there is.
+    for unknown in [0, wait.max(other) + 1] {
+        requests.auto_answer_delivered(unknown, 1_500);
+    }
+    assert!(requests.auto_approved(1_500).is_empty());
+    requests.auto_answer_delivered(other, 2_000);
+    assert_eq!(requests.auto_approved(2_000)["codex:s1"], ["other"]);
+    requests.auto_answer_delivered(wait, 2_000);
+    assert_eq!(requests.auto_approved(2_000)["codex:s1"], ["p", "other"]);
+    // A failure told by id afterwards takes nothing back either.
+    requests.note_native_delivery("p", "codex", "s1", "failed", None, 2_500);
+    assert_eq!(requests.auto_approved(2_500)["codex:s1"].len(), 2);
+    // It ends by its name, in its session.
+    requests.auto_approved_ended("codex:s1", &["p".to_owned()]);
+    assert_eq!(requests.auto_approved(2_500)["codex:s1"], ["other"]);
+}
+
+/// Round 8. A request that is settled and asked again under the same id
+/// is another request, with a wait and an answer of its own. Word of the
+/// first one's answer, which may come late, confirms nothing of it.
+#[test]
+fn word_of_a_settled_requests_answer_confirms_nothing_of_the_one_that_reuses_its_id() {
+    let requests = approving();
+    let card = permission("codex", Some("codex-desktop"));
+    let first = allowed(&requests, "p", &card, 1_000);
+    requests.settle_native("p");
+    let second = allowed(&requests, "p", &card, 1_001);
+    assert_ne!(first, second);
+    requests.auto_answer_delivered(first, 1_002);
+    requests.note_native_delivery("p", "codex", "s1", "confirmed", None, 1_002);
+    assert!(
+        requests.auto_approved(1_002).is_empty(),
+        "the old answer confirmed the new request"
+    );
+    requests.auto_answer_delivered(second, 1_003);
+    assert_eq!(requests.auto_approved(1_003)["codex:s1"], ["p"]);
 }
 
 /// Settling a native request ends its approval, confirmed or not: where
@@ -274,18 +293,16 @@ fn settling_a_native_request_ends_its_approval() {
         let requests = approving();
         let mut card = permission("codex", Some("codex-desktop"));
         card["callId"] = json!("call-7");
-        for id in ["p", "other"] {
-            let ticket = requests.register_native(id.into(), card.clone(), 1_000);
-            assert!(ticket.unwrap().response.try_recv().unwrap().is_some());
-        }
-        confirm(&requests, "other", 1_000);
+        let wait = allowed(&requests, "p", &card, 1_000);
+        let other = allowed(&requests, "other", &card, 1_000);
+        requests.auto_answer_delivered(other, 1_000);
         requests.note_auto_approved("codex", "s1", Some("p"), 1_000);
         if confirmed {
-            confirm(&requests, "p", 1_000);
+            requests.auto_answer_delivered(wait, 1_000);
         }
         requests.settle_native("p");
         // Confirmed after it was settled: there is nothing to confirm.
-        confirm(&requests, "p", 1_001);
+        requests.auto_answer_delivered(wait, 1_001);
         assert_eq!(
             requests.auto_approved(1_001)["codex:s1"],
             ["other", "call:call-7", "call:p"],
@@ -306,12 +323,10 @@ fn settling_a_native_request_ends_its_approval() {
 fn a_confirmed_approval_is_kept_while_its_wait_is_named_for_it() {
     let requests = approving();
     let card = permission("codex", Some("codex-desktop"));
-    for id in ["named", "unnamed", "unconfirmed", "elsewhere"] {
-        let ticket = requests.register_native(id.into(), card.clone(), 1_000);
-        assert!(ticket.unwrap().response.try_recv().unwrap().is_some());
-    }
-    for id in ["named", "unnamed", "elsewhere"] {
-        confirm(&requests, id, 1_000);
+    let ids = ["named", "unnamed", "elsewhere", "unconfirmed"];
+    let waits_of = ids.map(|id| allowed(&requests, id, &card, 1_000));
+    for wait in &waits_of[..3] {
+        requests.auto_answer_delivered(*wait, 1_000);
     }
     let waits = |list: &[(&str, &[&str])]| -> Vec<(String, Vec<String>)> {
         let ids = |ids: &[&str]| ids.iter().map(|id| (*id).to_owned()).collect();
@@ -326,7 +341,7 @@ fn a_confirmed_approval_is_kept_while_its_wait_is_named_for_it() {
     assert_eq!(requests.auto_approved(late - 1)["codex:s1"].len(), 3);
     assert_eq!(requests.auto_approved(late)["codex:s1"], ["named"]);
     // Too late to confirm the one that was not.
-    confirm(&requests, "unconfirmed", late);
+    requests.auto_answer_delivered(waits_of[3], late);
     assert_eq!(requests.auto_approved(late)["codex:s1"], ["named"]);
     // The wait names it no more: it goes.
     requests.set_native_waits("codex", "reader", &waits(&[("s1", &[])]));
@@ -335,21 +350,20 @@ fn a_confirmed_approval_is_kept_while_its_wait_is_named_for_it() {
 
 /// Round 7. A request not heard of in ten minutes is approved no more, and
 /// the first word of its answer that comes after confirms nothing, though
-/// nothing asked core in between: the receipt itself looks at the age.
+/// nothing asked core in between: the word itself is held to the age.
 #[test]
 fn a_confirmation_that_comes_after_ten_minutes_confirms_nothing() {
     for (late, approved) in [(APPROVED_KEPT_MS - 1, true), (APPROVED_KEPT_MS, false)] {
         let requests = approving();
         let card = permission("codex", Some("codex-desktop"));
-        let ticket = requests.register_native("p".into(), card, 1_000).unwrap();
-        assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
+        let wait = allowed(&requests, "p", &card, 1_000);
         let waits = [("s1".to_owned(), vec!["p".to_owned()])];
         requests.set_native_waits("codex", "reader", &waits);
-        confirm(&requests, "p", 1_000 + late);
+        requests.auto_answer_delivered(wait, 1_000 + late);
         let kept = requests.auto_approved(1_000 + late);
         assert_eq!(kept.contains_key("codex:s1"), approved, "{late} ms");
         // Confirmed in time, a second word long after changes nothing.
-        confirm(&requests, "p", 1_000 + 3 * APPROVED_KEPT_MS);
+        requests.auto_answer_delivered(wait, 1_000 + 3 * APPROVED_KEPT_MS);
         let kept = requests.auto_approved(1_000 + 3 * APPROVED_KEPT_MS);
         assert_eq!(kept.contains_key("codex:s1"), approved, "{late} ms, later");
     }

@@ -28,6 +28,9 @@ pub(super) const THREAD: &str = "00000000-0000-4000-8000-000000000066";
 pub(super) struct Lab {
     pub core: AgentHudCore,
     pub now: i64,
+    /// The wait each card's answer was given in (its ticket's number), by
+    /// the card's id: what a channel confirms an automatic answer by.
+    waits: std::cell::RefCell<HashMap<String, u64>>,
     _temp: tempfile::TempDir,
     _clock: Clock,
 }
@@ -55,6 +58,7 @@ impl Lab {
         Self {
             core,
             now,
+            waits: Default::default(),
             _temp: temp,
             _clock: clock,
         }
@@ -69,13 +73,17 @@ impl Lab {
             .register_native(id.into(), view, self.now)
             .unwrap();
         let allowed = ticket.response.try_recv().ok().flatten().is_some();
+        self.waits.borrow_mut().insert(id.to_owned(), ticket.wait);
         std::mem::forget(ticket);
         allowed
     }
     /// The channel confirms that the automatic answer to `id` was
     /// delivered: only from then on is the request approved for sound.
+    /// As its channel does: by the wait that answer was given in, with
+    /// the receipt the panel shows beside it.
     pub fn confirmed(&self, id: &str) {
         let requests = self.core.requests();
+        requests.auto_answer_delivered(self.waits.borrow()[id], self.now);
         requests.note_native_delivery(id, "codex", THREAD, "confirmed", None, self.now);
     }
     /// A permission allowed at once whose answer its channel confirmed.
@@ -453,7 +461,7 @@ fn ending_an_approved_request_ends_it_in_its_own_session_only() {
         .register_native(reused.to_owned(), other, lab.now + 1)
         .unwrap();
     assert!(ticket.response.try_recv().ok().flatten().is_some());
-    requests.note_native_delivery(reused, "claude", "second", "confirmed", None, lab.now + 1);
+    requests.auto_answer_delivered(ticket.wait, lab.now + 1);
     assert_eq!(
         requests.auto_approved(lab.now + 1)["claude:second"],
         [reused]
@@ -478,10 +486,13 @@ fn an_automatic_answer_that_did_not_arrive_lets_the_wait_sound() {
         assert!(lab.card(A, "permission"));
         lab.told_waiting_for(&[A]);
         lab.later(500);
-        let why = (receipt != "confirmed").then(|| "the fixture's reason".to_owned());
-        lab.core
-            .requests()
-            .note_native_delivery(A, "codex", THREAD, receipt, why, lab.now);
+        if receipt == "confirmed" {
+            lab.confirmed(A);
+        } else {
+            let why = Some("the fixture's reason".to_owned());
+            let requests = lab.core.requests();
+            requests.note_native_delivery(A, "codex", THREAD, receipt, why, lab.now);
+        }
         assert_eq!(lab.look(), ("waiting".into(), 0, sounds), "{receipt}");
         lab.later(500);
         assert_eq!(
@@ -498,26 +509,31 @@ fn an_automatic_answer_that_did_not_arrive_lets_the_wait_sound() {
     }
 }
 
-/// A receipt speaks for its own source and session only. Another
-/// session's failure for the same id takes nothing from a confirmed
-/// answer here, and another session's confirmation confirms nothing here.
+/// A receipt, as the panel shows it, says nothing to the sound decision:
+/// it names a request by its id, and an id can be used again. Neither a
+/// failure nor a confirmation told that way, for this session or another,
+/// changes what is approved. Only word of the answer's own wait does.
 #[test]
-fn a_receipt_for_the_same_id_in_another_session_changes_nothing_here() {
+fn a_receipt_by_its_id_alone_changes_nothing_of_what_is_approved() {
     let mut lab = Lab::new(true);
     lab.look();
     lab.approved(A);
     let requests = lab.core.requests();
-    requests.note_native_delivery(A, "codex", "another-thread", "failed", None, lab.now);
-    requests.note_native_delivery(A, "claude", THREAD, "failed", None, lab.now);
+    for (source, session) in [("codex", THREAD), ("codex", "another"), ("claude", THREAD)] {
+        requests.note_native_delivery(A, source, session, "failed", None, lab.now);
+    }
     lab.told_waiting_for(&[A]);
+    assert_eq!(lab.kept(), [A]);
     assert_eq!(lab.look(), ("waiting".into(), 0, 0));
 
     let mut lab = Lab::new(true);
     lab.look();
     assert!(lab.card(A, "permission"));
     let requests = lab.core.requests();
-    requests.note_native_delivery(A, "codex", "another-thread", "confirmed", None, lab.now);
-    requests.note_native_delivery(A, "claude", THREAD, "confirmed", None, lab.now);
+    for (source, session) in [("codex", THREAD), ("codex", "another"), ("claude", THREAD)] {
+        requests.note_native_delivery(A, source, session, "confirmed", None, lab.now);
+    }
     lab.told_waiting_for(&[A]);
+    assert!(lab.kept().is_empty(), "a receipt by id confirmed it");
     assert_eq!(lab.look(), ("waiting".into(), 0, 1));
 }

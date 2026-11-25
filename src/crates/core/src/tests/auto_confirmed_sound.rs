@@ -259,3 +259,42 @@ fn no_later_word_revives_a_request_not_heard_of_in_ten_minutes() {
     assert!(lab.kept().is_empty());
     assert_eq!(lab.look(), ("waiting".into(), 0, 1));
 }
+
+/// Round 8 (the round 7 verifier's probe, at core). A request is allowed
+/// automatically and settled while its answer is still on its way, and
+/// its client then asks again under the very same id: a new request, with
+/// an answer of its own. Word that the first answer was delivered says
+/// nothing of the second, which is not approved and sounds. Before round
+/// 8 a receipt named a request by its id, source and session alone, and
+/// the first answer's receipt confirmed the second request.
+#[test]
+fn word_of_an_earlier_answer_confirms_nothing_of_a_request_that_reuses_its_id() {
+    let mut lab = Lab::new(true);
+    assert_eq!(lab.look(), ("running".into(), 0, 0));
+    let requests = lab.core.requests();
+    let view = |id: &str| json!({"source":"codex","client":"codex-desktop","sessionId":THREAD,"kind":"permission","title":id});
+    let first = requests
+        .register_native(A.into(), view(A), lab.now)
+        .unwrap();
+    assert!(first.response.try_recv().unwrap().is_some());
+    requests.settle_native(A);
+    let second = requests
+        .register_native(A.into(), view(A), lab.now)
+        .unwrap();
+    assert!(second.response.try_recv().unwrap().is_some());
+    assert_ne!(first.wait, second.wait);
+    lab.told_waiting_for(&[A]);
+    // The first answer is confirmed, late, as its channel tells it.
+    lab.later(500);
+    requests.auto_answer_delivered(first.wait, lab.now);
+    requests.note_native_delivery(A, "codex", THREAD, "confirmed", None, lab.now);
+    assert!(
+        lab.kept().is_empty(),
+        "the old answer confirmed the new request"
+    );
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+    // The second answer's own confirmation does confirm it.
+    requests.auto_answer_delivered(second.wait, lab.now);
+    assert_eq!(lab.kept(), [A]);
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+}

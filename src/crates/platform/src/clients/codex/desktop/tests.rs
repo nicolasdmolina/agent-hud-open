@@ -9,6 +9,8 @@ use std::{
 
 // Agent HUD Fork (ticket 66): an automatic answer the owner did not take.
 mod auto_answer;
+// Agent HUD Fork (ticket 66): a request that reuses an id, and its receipts.
+mod receipt_reuse;
 
 const THREAD: &str = "00000000-0000-4000-8000-000000000001";
 fn permission(connector: &str, persist: Value) -> Value {

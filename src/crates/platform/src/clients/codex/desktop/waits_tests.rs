@@ -87,11 +87,16 @@ fn the_wait_of_an_automatically_approved_request_names_it_by_the_id_core_keeps()
         .reconcile(THREAD, "owner", state(&["waitingOnApproval"], true));
     let now = crate::hooks::now_ms();
     assert!(requests.views(now).is_empty(), "it showed a card");
-    // Not approved until its answer is confirmed: by the id the wait names.
+    // Not approved until its answer is confirmed, by the wait it was
+    // given in; the wait the channel publishes names it by its id.
     assert!(requests.auto_approved(now).is_empty());
     let ids = named(&requests).unwrap();
     assert_eq!(ids.len(), 1, "{ids:?}");
-    requests.note_native_delivery(&ids[0], AGENT.id, THREAD, "confirmed", None, now);
+    let wait = {
+        let state = observer.shared.state.lock().unwrap();
+        state.pending[&ids[0]].ticket.as_ref().unwrap().wait
+    };
+    requests.auto_answer_delivered(wait, now);
     let kept = requests.auto_approved(now);
     assert_eq!(kept[&format!("{}:{THREAD}", AGENT.id)], ids);
     // Stopping the listener settles the request: nothing is kept of it.
@@ -163,12 +168,19 @@ impl Replay {
         self.observer.shared.reconcile(THREAD, "owner", state);
     }
     /// The owner confirms the automatic answer to every request the wait
-    /// names, as Codex Desktop's reply does (`reply.rs`; this fixture has
-    /// no socket for it). Only then are they approved for sound.
+    /// names, as the channel's reply worker tells it (`reply.rs`; this
+    /// fixture's socket never answers): by the wait each answer was given
+    /// in, with the receipt beside it. Only then are they approved.
     fn owner_confirms(&self) {
         let requests = self.core.requests();
         let now = crate::hooks::now_ms();
         for id in named(&requests).unwrap_or_default() {
+            let state = self.observer.shared.state.lock().unwrap();
+            let wait = state.pending[&id].ticket.as_ref().map(|ticket| ticket.wait);
+            drop(state);
+            if let Some(wait) = wait {
+                requests.auto_answer_delivered(wait, now);
+            }
             requests.note_native_delivery(&id, AGENT.id, THREAD, "confirmed", None, now);
         }
     }

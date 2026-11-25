@@ -25,10 +25,6 @@ impl Requests {
             .map(|date| date.to_rfc3339());
         {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-            // Agent HUD Fork (ticket 66): an automatic answer counts as
-            // delivered only from this receipt on (`auto_limits.rs`).
-            let session = format!("{source}:{session}");
-            state.answer_reported(&session, id, delivery == "confirmed", now_ms);
             state.deliveries.retain(|row| row["id"] != id);
             state.deliveries.push_back(serde_json::json!({"id":id,"source":source,"sessionId":session,"state":delivery,"reason":reason,"at":at}));
             while state.deliveries.len() > 256 {

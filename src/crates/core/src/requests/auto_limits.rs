@@ -15,8 +15,8 @@
 //!   Core keeps each approved request under its own names (its id, and
 //!   its tool call where it names one), and says it is approved only
 //!   after its channel confirmed that the automatic answer was delivered
-//!   (`note_native_delivery`, or a hook's reply written to the hook that
-//!   asked). Until then, and where the answer failed, was not confirmed,
+//!   (`auto_answer_delivered`, by the number of the wait the answer was
+//!   given in, or a hook's reply written to the hook that asked). Until then, and where the answer failed, was not confirmed,
 //!   was never sent because its listener stopped, or was not heard of
 //!   in ten minutes, the request is not approved: its wait and its card
 //!   sound as they did before the sync. The sound decision
@@ -53,6 +53,10 @@ pub(super) struct Approved {
     /// The id it was registered under, where a native channel did
     /// (`register_native`): what its channel settles it by.
     native: Option<String>,
+    /// The wait its automatic answer was given in (its ticket's number),
+    /// where a native channel registered it. Only word of that very
+    /// answer confirms it: an id may be used again, a wait's number never.
+    wait: Option<u64>,
     /// Its channel confirmed that the automatic answer was delivered. Only
     /// then is the request approved for the sound decision.
     confirmed: bool,
@@ -73,30 +77,33 @@ impl State {
     /// Whether the native request `id` is allowed at once, as upstream's
     /// rule has it (a permission whose client approves automatically) and
     /// within the limits above. Where it is, it is never shown again, and
-    /// it is kept, not yet confirmed, for the sound decision.
-    pub(super) fn approved_at_once(&mut self, id: &str, view: &Value, now_ms: i64) -> bool {
+    /// it is kept, not yet confirmed, for the sound decision, under the
+    /// number of the wait its answer goes out in (the ticket's).
+    pub(super) fn approved_at_once(&mut self, id: &str, view: &Value, now_ms: i64) -> Option<u64> {
         let source = view["source"].as_str().unwrap_or_default();
         let approved = view["kind"].as_str().unwrap_or("permission") == "permission"
             && takes_a_decision(view)
             && self.auto.approves(source, view["client"].as_str());
-        if approved {
-            self.dismissed.insert(id.to_owned());
-            let session = view["sessionId"].as_str().unwrap_or_default();
-            let call = view["callId"].as_str();
-            self.note_approved(source, session, Some(id), call, now_ms, false);
+        if !approved {
+            return None;
         }
-        approved
+        self.dismissed.insert(id.to_owned());
+        let session = view["sessionId"].as_str().unwrap_or_default();
+        let call = view["callId"].as_str();
+        let wait = self.begin_wait();
+        self.note_approved(source, session, Some((id, wait)), call, now_ms);
+        Some(wait)
     }
 
     pub(super) fn note_approved(
         &mut self,
         source: &str,
         session: &str,
-        id: Option<&str>,
+        native: Option<(&str, u64)>,
         call: Option<&str>,
         now_ms: i64,
-        confirmed: bool,
     ) {
+        let id = native.map(|(id, _)| id);
         let names = [id.map(str::to_owned), call.map(|c| format!("call:{c}"))];
         let names: Vec<String> = names.into_iter().flatten().collect();
         if source.is_empty() || session.is_empty() || names.is_empty() {
@@ -107,7 +114,10 @@ impl State {
             names,
             at_ms: now_ms,
             native: id.map(str::to_owned),
-            confirmed,
+            wait: native.map(|(_, wait)| wait),
+            // A hook's approval is noted once its reply was delivered; a
+            // native one waits for word of its answer.
+            confirmed: native.is_none(),
         });
         while self.approved.len() > APPROVED_KEPT {
             self.approved.pop_front();
@@ -116,27 +126,6 @@ impl State {
 }
 
 impl State {
-    /// What its channel reports of the automatic answer to the native
-    /// request `id` of `session` (`source:session`): that exact id, there
-    /// and nowhere else. Confirmed within the ten minutes it is kept, the
-    /// request is approved from now on. Failed, confirmed by nobody, or
-    /// confirmed too late, it is not kept at all: it still waits for the
-    /// person.
-    pub(super) fn answer_reported(&mut self, session: &str, id: &str, confirmed: bool, now: i64) {
-        let named = |approved: &Approved| {
-            approved.session == session && approved.native.as_deref() == Some(id)
-        };
-        // One not heard of in ten minutes is approved no more, and no word
-        // that comes after makes it so: it goes here, though no look came
-        // in between to drop it. A failed one goes whenever it is told.
-        let in_time = |a: &Approved| a.confirmed || now.saturating_sub(a.at_ms) < APPROVED_KEPT_MS;
-        self.approved
-            .retain(|approved| !named(approved) || (confirmed && in_time(approved)));
-        for approved in self.approved.iter_mut().filter(|a| named(a)) {
-            approved.confirmed = true;
-        }
-    }
-
     /// Its channel settled the native request `id`: it is over there, or
     /// its listener stopped before the answer left. Either way nothing is
     /// kept of it, so the same request shown again is a request like any
@@ -158,7 +147,38 @@ impl Requests {
             .state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .note_approved(source, session, None, call, now_ms, true);
+            .note_approved(source, session, None, call, now_ms);
+    }
+
+    /// The channel saw the automatic answer that was given in the wait
+    /// numbered `wait` (its ticket's) delivered: the request it was given
+    /// to is approved from now on. Word of any other answer says nothing
+    /// of it, though that answer was for a request of the same id in the
+    /// same session: one settled before, whose answer was still on its
+    /// way. One not heard of in ten minutes is approved no more, and no
+    /// word that comes after makes it so: it goes here, though no look
+    /// came in between to drop it. A wait that was answered by hand, or
+    /// whose request is settled, has nothing kept under its number.
+    pub fn auto_answer_delivered(&self, wait: u64, now_ms: i64) {
+        let confirmed = {
+            let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let in_time = |a: &Approved| now_ms.saturating_sub(a.at_ms) < APPROVED_KEPT_MS;
+            let mine = |a: &Approved| a.wait == Some(wait);
+            state
+                .approved
+                .retain(|a| !mine(a) || a.confirmed || in_time(a));
+            let mut confirmed = false;
+            for approved in state.approved.iter_mut().filter(|a| mine(a)) {
+                confirmed |= !std::mem::replace(&mut approved.confirmed, true);
+            }
+            if confirmed {
+                state.revision = state.revision.wrapping_add(1);
+            }
+            confirmed
+        };
+        if confirmed {
+            self.wake();
+        }
     }
 
     /// The requests allowed with no card whose answer is confirmed

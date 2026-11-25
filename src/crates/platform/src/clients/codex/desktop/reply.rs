@@ -24,7 +24,9 @@ impl Shared {
                 };
                 match ticket.response.try_recv() {
                     Ok(Some(decision)) => {
-                        ready.push((live.item.clone(), decision));
+                        // Agent HUD Fork (ticket 66): with the wait the
+                        // decision was given in, which its receipt names.
+                        ready.push((live.item.clone(), decision, ticket.wait));
                         live.ticket = None;
                     }
                     Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -34,7 +36,7 @@ impl Shared {
                 }
             }
         }
-        for (item, decision) in ready {
+        for (item, decision, wait) in ready {
             if !self.active.load(Ordering::Acquire) {
                 return;
             }
@@ -50,6 +52,12 @@ impl Shared {
                         .answer_connections
                         .remove(&item.id);
                     if shared.active.load(Ordering::Acquire) {
+                        // Agent HUD Fork (ticket 66): an automatic answer is
+                        // approved only once this very answer is confirmed.
+                        if result.is_ok() {
+                            let now = crate::hooks::now_ms();
+                            shared.requests.auto_answer_delivered(wait, now);
+                        }
                         match result {
                             Ok(()) => shared.requests.note_native_delivery(
                                 &item.id,

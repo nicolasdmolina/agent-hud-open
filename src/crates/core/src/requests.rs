@@ -182,9 +182,8 @@ impl Requests {
             // A permission its client approves automatically: allowed at
             // once, with no card, and never shown again (`auto_limits.rs`
             // says which never are).
-            if state.approved_at_once(&id, &view, now_ms) {
+            if let Some(wait) = state.approved_at_once(&id, &view, now_ms) {
                 let _ = sender.send(Some(auto::allow()));
-                let wait = state.begin_wait();
                 return Some(Ticket {
                     id,
                     response,
