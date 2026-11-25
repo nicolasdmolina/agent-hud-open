@@ -10,7 +10,6 @@ use super::*;
 
 mod asks;
 mod bare;
-mod finished;
 mod kept;
 mod look;
 mod requests;
@@ -99,8 +98,17 @@ impl Tracker {
         now: i64,
     ) -> Value {
         let mut alerts = Vec::new();
-        // Only a top-level session's turn end is `finished` (`finished.rs`).
-        let (children, unused) = finished::quiet(sessions);
+        // A subagent's turn ending is a step of another's turn: only a
+        // top-level session's turn end is `finished`. The island's
+        // completions come from these same rows, which name a child's parent
+        // or, where the log names none, say it is one (`liveFacts.subagent`).
+        let children: HashSet<(&str, &str)> = sessions
+            .iter()
+            .filter(|session| {
+                !session["parentId"].is_null() || session["liveFacts"]["subagent"] == true
+            })
+            .filter_map(|session| Some((session["source"].as_str()?, session["id"].as_str()?)))
+            .collect();
         for event in island["items"].as_array().into_iter().flatten() {
             if event["kind"] != "completion" {
                 continue;
@@ -112,13 +120,11 @@ impl Tracker {
             ) else {
                 continue;
             };
-            // A turn of a session that used no AI is not decided: it sounds
-            // at a later look that finds tokens it had not read yet.
-            if unused.contains(&(source, session)) {
-                continue;
-            }
             let id = format!("finished:{source}:{session}:{turn}");
-            if self.first(&id, now) && !children.contains(&(source, session)) {
+            // A turn that ended silent is decided and silent, by what its
+            // session was when it ended (`finishedSilent`).
+            let silent = children.contains(&(source, session)) || event["finishedSilent"] == true;
+            if self.first(&id, now) && !silent {
                 alerts.push(Alert {
                     kind: "finished",
                     source: event["source"].clone(),

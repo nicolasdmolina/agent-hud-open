@@ -66,10 +66,9 @@ export function SourceSessions({
   // Snapshot rows provide a first paint only; the complete-index query owns
   // ordering and totals. Both list the newest last message first and look
   // at no session state (owner, 2026-10-26).
-  const fallback = snapshot.sessions
+  const chosen = snapshot.sessions
     .filter(
       (session) =>
-        !session.usedNoAi &&
         (!selectedSources ||
           selectedSources.includes(sourceID(snapshot, session.source))) &&
         (!layout.projects?.length ||
@@ -82,8 +81,14 @@ export function SourceSessions({
         Date.parse(b.lastMessageAt ?? b.updatedAt) -
         Date.parse(a.lastMessageAt ?? a.updatedAt),
     );
+  // Sessions that used no AI stay on the Sessions page only (Core's
+  // `usedNoAi`, and `leftOut` in the query's answer).
+  const fallback = chosen.filter((session) => !session.usedNoAi);
   const sessions = query.data?.items ?? fallback.slice(0, limit);
   const total = query.data?.total ?? fallback.length;
+  const leftOut = query.data
+    ? (query.data.leftOut ?? 0)
+    : chosen.length - fallback.length;
   // A filter of the layout that keeps none of the sessions there are says
   // so, and the header then names no window it leaves them out of.
   const own = focusVendor
@@ -94,7 +99,8 @@ export function SourceSessions({
   const noneMatch = noSessionsMatch(
     layout,
     Boolean(focusVendor),
-    sessions.length,
+    // Those left out for using no AI match the layout too.
+    sessions.length + leftOut,
     own,
   );
   const status = week ? t("Last 7 days") : t("Last 24 hours");
@@ -207,7 +213,8 @@ export function SourceSessions({
           </span>
         </button>
       ))}
-      {!sessions.length && (
+      {/* With only sessions that used no AI, the heading leads to them. */}
+      {!sessions.length && !leftOut && (
         <span style={{ color: colors.secondary, lineHeight: "15px" }}>
           {noneMatch ? t("No sessions match") : t("No sessions yet")}
         </span>

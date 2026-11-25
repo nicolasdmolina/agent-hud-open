@@ -26,7 +26,10 @@ pub mod sqlite;
 pub mod transcript;
 
 pub use account::{Answer, Host, Reading};
-pub use agent::{account_provider, by_id, session_target, Agent, ACCOUNTS, ALL};
+pub use agent::{
+    account_provider, by_id, final_at_turn_end, session_target, zero_means_no_model, Agent,
+    ACCOUNTS, ALL, FINAL_AT_TURN_END, ZERO_MEANS_NO_MODEL,
+};
 pub use agent_hud_l10n as l10n;
 pub use change::{Change, Why};
 pub use channel::{

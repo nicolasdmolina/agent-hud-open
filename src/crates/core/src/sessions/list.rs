@@ -315,21 +315,14 @@ impl AgentHudCore {
         // HUD page must not silently cap its scope at the first 200 rows.
         let selected = self.selected();
         let family = session_breakdown::Family::new(&selected);
-        // The panel's short list leaves out the sessions that used no AI.
-        let counting =
-            super::no_usage::asked(&params)?.then(|| super::no_usage::counting(&self.logs));
         let mut rows = rows
             .drain(..)
             .map(|row| {
                 let state = state(&row);
                 (row, state)
             })
-            .filter(|(row, state)| {
-                counting
-                    .as_ref()
-                    .is_none_or(|c| !row.used_none(c, &family, state))
-            })
             .collect::<Vec<_>>();
+        let left_out = super::no_usage::leave_out(&params, &mut rows, &family)?;
         rows.sort_unstable_by(|(a, _), (b, _)| {
             message_at(b)
                 .cmp(&message_at(a))
@@ -509,7 +502,7 @@ impl AgentHudCore {
             .collect::<Vec<_>>();
         let next = offset.saturating_add(items.len());
         Ok(
-            json!({"kind":"sessions","revision":self.sessions_revision,"generatedAt":Utc::now().to_rfc3339(),"items":items,"total":total,"nextOffset":(next<total).then_some(next),"sources":sources,"projects":projects,"projectLabels":project_labels,"days":days}),
+            json!({"kind":"sessions","revision":self.sessions_revision,"generatedAt":Utc::now().to_rfc3339(),"items":items,"total":total,"leftOut":left_out,"nextOffset":(next<total).then_some(next),"sources":sources,"projects":projects,"projectLabels":project_labels,"days":days}),
         )
     }
 }

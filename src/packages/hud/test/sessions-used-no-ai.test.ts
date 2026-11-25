@@ -71,3 +71,22 @@ test("past five sessions that used AI, the count names only those", async () => 
   assert.match(markup, /\+2 more/);
   assert.doesNotMatch(markup, /Hourly report job/);
 });
+
+test("with only sessions that used no AI, the list does not say there are none", async () => {
+  const markup = await draw([
+    row("job-1", "Hourly report job", 5, { usedNoAi: true }),
+    row("job-2", "Hourly report job", 65, { usedNoAi: true }),
+  ]);
+  assert.doesNotMatch(markup, /Hourly report job/);
+  assert.doesNotMatch(markup, /No sessions yet/);
+  assert.doesNotMatch(markup, /No sessions match/);
+  // The heading still leads to the Sessions page, where they are, and still
+  // names its window.
+  assert.match(markup, /title="Show sessions"/);
+  assert.match(markup, /Last 24 hours/);
+  assert.doesNotMatch(markup, /visibility:hidden/);
+});
+
+test("with no sessions at all, it still says so", async () => {
+  assert.match(await draw([]), /No sessions yet/);
+});

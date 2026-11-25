@@ -152,14 +152,19 @@ impl Fixture {
     }
     /// The `finished` alerts in a snapshot, by session.
     fn finished(&mut self) -> Vec<String> {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        let snapshot = self.core.request("snapshot", json!({})).unwrap();
-        let alerts = snapshot["soundAlerts"]["items"].as_array().unwrap().iter();
-        let alerts = alerts.filter(|alert| alert["kind"] == "finished");
-        alerts
-            .map(|alert| alert["sessionId"].as_str().unwrap().to_owned())
-            .collect()
+        alerts(&mut self.core, "finished")
     }
+}
+
+/// The alerts of `kind` a snapshot holds, by session.
+fn alerts(core: &mut AgentHudCore, kind: &str) -> Vec<String> {
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let snapshot = core.request("snapshot", json!({})).unwrap();
+    let alerts = snapshot["soundAlerts"]["items"].as_array().unwrap().iter();
+    let alerts = alerts.filter(|alert| alert["kind"] == kind);
+    alerts
+        .map(|alert| alert["sessionId"].as_str().unwrap().to_owned())
+        .collect()
 }
 
 #[test]
@@ -202,20 +207,34 @@ fn a_session_that_used_no_ai_shows_while_it_runs_or_waits() {
 }
 
 #[test]
-fn a_turn_that_used_no_ai_sounds_no_finished_until_its_session_uses_tokens() {
-    turn_sounds_once_tokens_are_used(fixture());
+fn a_far_turn_that_used_no_ai_still_sounds_finished() {
+    // A far machine's tokens come after its turn's end (its gateway's live
+    // count, its history), so a zero then is no proof: its turn sounds.
+    let mut fixture = fixture();
+    let (job, worked) = (fixture.id("job"), fixture.id("worked"));
+    for id in ["job", "worked"] {
+        fixture.hook(id, "session-observation", "t1", Some("running"));
+    }
+    for id in ["job", "worked"] {
+        fixture.hook(id, "completion", "t1", None);
+    }
+    let mut sounded = fixture.finished();
+    sounded.sort();
+    assert_eq!(sounded, [job.clone(), worked.clone()]);
+    // It is still left out of the short list while it shows no tokens.
+    assert_eq!(fixture.list(true).0, [worked]);
 }
 
 #[test]
-fn this_macs_sessions_follow_the_same_rule() {
+fn a_turn_here_that_used_no_ai_sounds_no_finished_though_its_session_uses_tokens_later() {
     let mut fixture = here();
     let job = fixture.id("job");
     assert_eq!(fixture.list(false).0, [job, fixture.id("worked")]);
     assert_eq!(fixture.list(true).0, [fixture.id("worked")]);
-    turn_sounds_once_tokens_are_used(fixture);
+    turn_stays_silent(fixture);
 }
 
-fn turn_sounds_once_tokens_are_used(mut fixture: Fixture) {
+fn turn_stays_silent(mut fixture: Fixture) {
     let (job, worked) = (fixture.id("job"), fixture.id("worked"));
     for id in ["job", "worked"] {
         fixture.hook(id, "session-observation", "t1", Some("running"));
@@ -231,18 +250,105 @@ fn turn_sounds_once_tokens_are_used(mut fixture: Fixture) {
         std::slice::from_ref(&worked),
         "nothing new"
     );
-    // Tokens it had not read yet: it is back in the short list, and its
-    // turn sounds once.
+    // Tokens it uses later bring it back to the short list; the turn that
+    // ended with none stays silent, however its row reads now.
     use_tokens(&fixture.far, "job");
     fixture.refresh();
     let (short, _) = fixture.list(true);
-    assert_eq!(short, [job.clone(), worked.clone()]);
-    assert_eq!(fixture.finished(), [worked, job]);
+    assert_eq!(short, [job, worked.clone()]);
+    assert_eq!(fixture.finished(), [worked]);
 }
 
 #[test]
-fn a_client_that_never_counted_a_token_keeps_its_sessions() {
-    // No session of this client has tokens: its zeros say nothing.
+fn a_silent_turn_stays_silent_when_its_session_waits_again() {
+    let mut fixture = here();
+    let job = fixture.id("job");
+    fixture.hook("job", "session-observation", "t1", Some("running"));
+    fixture.hook("job", "completion", "t1", None);
+    assert!(fixture.finished().is_empty());
+    // The next turn waits on the person: it sounds `needs-you`, and the
+    // first turn's end is not weighed again against the waiting row.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    fixture.hook("job", "session-observation", "t2", Some("waiting"));
+    assert_eq!(alerts(&mut fixture.core, "needs-you"), [job]);
+    assert!(fixture.finished().is_empty());
+}
+
+#[test]
+fn every_unused_session_left_out_is_counted_for_the_panel() {
+    // Hermes records every model call's tokens, so its zeros mean none, even
+    // where no session here ever called a model.
     let mut fixture = fixture_counted(false);
-    assert_eq!(fixture.list(true).0, [far("job"), far("worked")]);
+    assert_eq!(fixture.list(false).0, [far("job"), far("worked")]);
+    let params = json!({"scope": "active", "limit": 5, "leaveOutUnused": true});
+    let found = fixture.core.request("sessions", params).unwrap();
+    assert_eq!(found["items"], json!([]));
+    assert_eq!(found["total"], 0);
+    // What the panel needs to lead to them rather than say there are none.
+    assert_eq!(found["leftOut"], 2);
+    let page = json!({"scope": "active", "limit": 5});
+    let found = fixture.core.request("sessions", page).unwrap();
+    assert_eq!(found["leftOut"], 0);
+}
+
+/// Qoder writes a credits-only reply's tokens as zeros (`qoder/transcript.rs`):
+/// a session of such replies did use a model, beside one that counted tokens.
+fn qoder(home: &Path, id: &str, tokens: u64) {
+    let at = Utc::now() - chrono::Duration::seconds(30);
+    let usage = if tokens == 0 {
+        json!({"input_tokens": 0, "output_tokens": 0, "credits": 1.5})
+    } else {
+        json!({"input_tokens": tokens, "output_tokens": 20})
+    };
+    let lines = [
+        json!({"sessionId": id, "timestamp": at.to_rfc3339(), "type": "user",
+            "message": {"role": "user", "content": "Synthetic prompt"}}),
+        json!({"sessionId": id, "timestamp": at.to_rfc3339(), "type": "assistant",
+            "message": {"id": format!("m-{id}"), "role": "assistant", "model": "auto",
+                "content": [{"type": "text", "text": "Synthetic reply"}], "usage": usage}}),
+    ];
+    let path = home
+        .join(".qoder/projects/work")
+        .join(format!("{id}.jsonl"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let text: Vec<String> = lines.iter().map(Value::to_string).collect();
+    fs::write(path, text.join("\n") + "\n").unwrap();
+}
+
+#[test]
+fn a_client_that_can_reply_without_tokens_never_hides_a_session_or_loses_a_sound() {
+    let temp = tempfile::tempdir().unwrap();
+    let (credits, counted) = (
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    );
+    qoder(temp.path(), credits, 0);
+    qoder(temp.path(), counted, 120);
+    let mut core = AgentHudCore::new(vec![], temp.path().join("app"));
+    core.provider_roots = vec![(temp.path().join(".qoder/projects"), "qoder")];
+    core.settings["sound"] = json!(true);
+    core.request("refresh", json!({})).unwrap();
+    let params = json!({"scope": "active", "limit": 5, "leaveOutUnused": true});
+    let found = core.request("sessions", params).unwrap();
+    let mut ids: Vec<String> = (found["items"].as_array().unwrap().iter())
+        .map(|item| item["id"].as_str().unwrap().to_owned())
+        .collect();
+    ids.sort();
+    assert_eq!(ids.len(), 2, "{found}");
+    assert_eq!(found["leftOut"], 0);
+    let rows = core.request("snapshot", json!({})).unwrap()["sessions"].clone();
+    assert!((rows.as_array().unwrap().iter()).all(|row| row.get("usedNoAi").is_none()));
+    for id in &ids {
+        let at = Utc::now().timestamp_millis();
+        core.ingest_hook_events(vec![HookEvent {
+            source: "qoder".into(),
+            session_id: id.clone(),
+            kind: "completion".into(),
+            at_ms: at,
+            data: json!({"turnId": "t1", "startedAtMs": at - 100}),
+        }]);
+    }
+    let mut sounded = alerts(&mut core, "finished");
+    sounded.sort();
+    assert_eq!(sounded, ids, "the credits-only reply's turn sounds too");
 }

@@ -2,7 +2,7 @@
   "src/crates/agents/src/account/fake.rs": 367,
   "src/crates/agents/src/claude/live.rs": 353,
   "src/crates/core/src/ingestion/scan.rs": 527,
-  "src/crates/core/src/sessions/list.rs": 515,
+  "src/crates/core/src/sessions/list.rs": 508,
   "src/crates/platform/src/deepseek_plugin/agent-hud.mjs": 389,
   "src/packages/app/src/sessions/SubagentTimeline.tsx": 454,
   "src/packages/app/src/sessions/TurnBarsChart.tsx": 325,

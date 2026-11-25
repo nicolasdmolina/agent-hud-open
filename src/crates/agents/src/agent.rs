@@ -117,6 +117,37 @@ pub static ACCOUNTS: &[&crate::account::Provider] = &[
     &trae::account::TRAE_CN,
 ];
 
+/// The clients whose sessions record every model call's tokens, so a
+/// session of theirs that shows none, as core reads it now, called no model:
+/// the panel's short list may leave it out, and takes it back at the read
+/// that finds tokens (Agent HUD fork, ticket 70; FORK.md, "Sessions that used
+/// no AI"). Hermes keeps a session's tokens in its own database, written at
+/// each model call; a scheduled job that calls none leaves them at zero, on
+/// this Mac and, once its history is read, on a far machine. Not here: a
+/// client that can record a reply with no tokens (Qoder's credits-only
+/// replies, TRAE, Kilo's moved tasks), and every client not checked.
+pub static ZERO_MEANS_NO_MODEL: &[&Agent] = &[&hermes::AGENT];
+
+/// Of `ZERO_MEANS_NO_MODEL`, the clients whose turn on this machine has its
+/// tokens where core reads them by the time core reads that the turn ended,
+/// so a turn that ends at zero is silent: it sounds no `finished`. Hermes
+/// here writes each call's tokens to its database before the turn ends. A far
+/// machine's session is never one: its tokens come later, from its
+/// gateway's live count or its history (FORK.md, ticket 35). Not here:
+/// Claude Code and Codex, whose reply's usage can be read after its turn
+/// ends.
+pub static FINAL_AT_TURN_END: &[&Agent] = &[&hermes::AGENT];
+
+/// Whether the client `id` is one of `ZERO_MEANS_NO_MODEL`.
+pub fn zero_means_no_model(id: &str) -> bool {
+    ZERO_MEANS_NO_MODEL.iter().any(|agent| agent.id == id)
+}
+
+/// Whether the client `id` is one of `FINAL_AT_TURN_END`.
+pub fn final_at_turn_end(id: &str) -> bool {
+    zero_means_no_model(id) && FINAL_AT_TURN_END.iter().any(|agent| agent.id == id)
+}
+
 /// Where a session of `source` opens, as its agent says (`Discovery::session_target`):
 /// the target the session list and `open_session` both use. None for an
 /// agent with no rule or a session with no place of its own.
