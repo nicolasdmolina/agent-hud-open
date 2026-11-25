@@ -23,7 +23,8 @@ pub struct Record {
     pub live_total: Option<u64>,
     /// Whether the session holds a reply of a model, where the client's
     /// store says (Hermes's stored assistant messages); None when the
-    /// record does not say. Agent HUD fork, ticket 70.
+    /// record does not say, or this read could not tell. It replaces what an
+    /// earlier read said. Agent HUD fork, ticket 70.
     pub replied: Option<bool>,
     /// Where the client says the session was started, in its own word
     /// (Hermes's stored `source`: `desktop`, `telegram`, `cli`); None when

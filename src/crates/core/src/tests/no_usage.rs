@@ -345,3 +345,22 @@ fn a_client_that_can_reply_without_tokens_never_hides_a_session_or_loses_a_sound
     sounded.sort();
     assert_eq!(sounded, ids, "the credits-only reply's turn sounds too");
 }
+
+#[test]
+fn a_store_that_can_no_longer_say_whether_a_reply_exists_hides_nothing() {
+    // The job was left out while its database said it held no reply. Once
+    // the database can no longer say (its messages lost the column the
+    // check reads), that read's answer is unknown, and unknown hides nothing.
+    let mut fixture = here();
+    assert_eq!(fixture.list(true).0, [fixture.id("worked")]);
+    fixture
+        .db
+        .execute_batch("ALTER TABLE messages RENAME COLUMN role TO legacy_role;")
+        .unwrap();
+    fixture.refresh();
+    let both = vec![fixture.id("job"), fixture.id("worked")];
+    assert_eq!(fixture.list(true), (both, json!(2)));
+    let snapshot = fixture.core.request("snapshot", json!({})).unwrap();
+    let rows = snapshot["sessions"].as_array().unwrap().iter();
+    assert!(rows.clone().all(|row| row.get("usedNoAi").is_none()));
+}

@@ -1374,7 +1374,7 @@ Found by ticket 40 on the Mac Mini: its default profile starts a session every h
 A session **used no AI** when all of these hold (`core/src/sessions/no_usage.rs`):
 
 - its client is in `ZERO_MEANS_NO_MODEL` (`agents/src/agent.rs`), now Hermes alone;
-- core reads it from a log, and its store says it holds **no reply of a model**. Hermes's reader asks this machine's database whether the session has a stored assistant message (`messages.role = 'assistant'`) and carries the answer as `replied` on its records, the log and the saved head. A store that cannot say gives none, and such a session is never left out;
+- core reads it from a log, and its store says it holds **no reply of a model**. Hermes's reader asks this machine's database whether the session has a stored assistant message (`messages.role = 'assistant'`) and carries the answer as `replied` on its records, the log and the saved head. A read that cannot tell (no `messages` table, or no `session_id` or `role` column) gives no answer, which replaces whatever an earlier read said, and a session with no answer is never left out. A read that fails as a whole reads no session, so each keeps its last answer until a read succeeds;
 - it shows no tokens, as its row counts them;
 - it neither waits nor runs.
 
@@ -1409,7 +1409,7 @@ The three that pass on both:
 - running and waiting sessions are listed;
 - Qoder's credits-only session is listed and sounds.
 
-All 8 pass now. Panel: `sessions-used-no-ai.test.ts` draws the real Sessions block, including the all-hidden case, which fails on round 1. The far-machine lab tests (`platform`, `machines::alerts`) are unchanged and pass. `sessions/list.rs` is 508 lines, down from 510 on the base, and its allowance is 508.
+All 8 pass. Round 4 added a ninth, `a_store_that_can_no_longer_say_whether_a_reply_exists_hides_nothing`: a session left out while its database said it held no reply comes back once a read can no longer tell. It fails on round 3's code, where the earlier answer was kept (`evidence/70/round4/`), and passes now. Panel: `sessions-used-no-ai.test.ts` draws the real Sessions block, including the all-hidden case, which fails on round 1. The far-machine lab tests (`platform`, `machines::alerts`) are unchanged and pass. `sessions/list.rs` is 508 lines, down from 510 on the base, and its allowance is 508.
 
 ## Languages (ticket 66)
 
