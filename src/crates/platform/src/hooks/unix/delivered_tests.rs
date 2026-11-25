@@ -75,3 +75,42 @@ fn an_automatic_allow_the_hook_did_not_take_whole_is_not_told_to_core() {
     let told = requests.auto_approved(now_ms()).into_values().next();
     assert_eq!(told, Some(vec!["call:toolu_66".to_owned()]));
 }
+
+/// The round 6 verifier's hand-over probe. The Windows listener cannot see
+/// its pipe write: the handler returns the reply, and the pipe server
+/// writes it afterwards, or drops it where the hook has gone or the
+/// listener stopped. Replayed here on a socket pair: the reply is taken
+/// the way `hooks/windows.rs` takes it, the hook's end closes, and the
+/// write fails. Core must know of no approval. Before round 7 the
+/// hand-over itself counted as delivery.
+#[test]
+fn a_reply_handed_over_and_never_written_is_not_told_to_core() {
+    // How the Windows handler takes the reply, which this Mac cannot
+    // compile: held to the one call that tells core nothing.
+    let windows = include_str!("../windows.rs");
+    assert!(windows.contains(".map(|answer| answer.into_reply())"));
+    assert!(!windows.contains("deliver("), "Windows counts a hand-over");
+
+    let root = tempfile::tempdir().unwrap();
+    let mut core = agent_hud_core::AgentHudCore::new(vec![], root.path().join("app"));
+    for key in ["sound", "autoApprove"] {
+        let on = json!({"key": key, "value": true});
+        core.request("set_setting", on).unwrap();
+    }
+    let requests = core.requests();
+    let reminders = super::super::reminders::Reminders::default();
+    let payload = json!({"session_id":"s1","cwd":"/w","hook_event_name":"PermissionRequest",
+        "tool_name":"Bash","tool_use_id":"toolu_66","tool_input":{"command":"cargo test"}});
+    let flag = "--permission-hook";
+    let answer =
+        super::super::wait_for_answer(&requests, &reminders, "claude", flag, &payload, || true)
+            .expect("an automatic Allow");
+    let (mut listener_end, hook_end) = UnixStream::pair().unwrap();
+    let reply = answer.into_reply();
+    drop(hook_end);
+    assert!(!written(&mut listener_end, &reply));
+    assert!(
+        requests.auto_approved(now_ms()).is_empty(),
+        "a reply that was never written counted as delivered"
+    );
+}

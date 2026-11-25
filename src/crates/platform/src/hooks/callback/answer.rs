@@ -39,6 +39,12 @@ impl Answer {
             approved: Some(approved),
         }
     }
+    /// The reply alone, for a transport that cannot see whether the hook
+    /// took it. Core is told nothing: an approval nobody saw delivered is
+    /// not one, so what the client then shows of that call sounds.
+    pub(crate) fn into_reply(self) -> Value {
+        self.response
+    }
     /// Hands the reply to `send`, which says whether the hook took it,
     /// and gives it back. Only where it did is core told of the approval,
     /// where the answer is one.
@@ -46,6 +52,6 @@ impl Answer {
         if let (true, Some((source, session, call))) = (send(&self.response), &self.approved) {
             requests.note_auto_approved(source, session, call.as_deref(), super::now_ms());
         }
-        self.response
+        self.into_reply()
     }
 }

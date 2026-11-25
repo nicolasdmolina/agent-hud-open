@@ -41,12 +41,13 @@ impl Server {
                     return Some(response);
                 }
                 // Agent HUD Fork (ticket 66): the pipe writes the reply after
-                // this returns and reports nothing back, so an automatic
-                // Allow counts as delivered where it is handed over.
+                // this returns, or drops it, and reports nothing back. An
+                // automatic Allow nobody saw delivered is not told to core as
+                // approved (`Answer::into_reply`), so what it leaves sounds.
                 super::wait_for_answer(&requests, &reminders, source, flag, payload, || {
                     active.load(Ordering::Acquire)
                 })
-                .map(|answer| answer.deliver(&requests, |_| true))
+                .map(|answer| answer.into_reply())
             },
         );
         crate::os::pipe::Server::start(data, "hooks", PAYLOAD_LIMIT, PAYLOAD_LIMIT, handler)
