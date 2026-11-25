@@ -29,6 +29,11 @@ fn identity(prefix: &str, thread: &str, owner: &str, wire: &Value) -> String {
         Sha256::digest(json!([thread, owner, wire]).to_string())
     )
 }
+/// The name of a request waiting in `thread` that this channel shows no
+/// card for (Agent HUD Fork, ticket 74): one of its own, never a card's.
+pub(super) fn unshown(thread: &str, owner: &str, wire: &Value) -> String {
+    identity("codex-desktop-unshown", thread, owner, wire)
+}
 /// The website a browser approval is for.
 fn origin_of(metadata: &Value) -> Option<&str> {
     text(&metadata["origin"]).or_else(|| text(&metadata["tool_params"]["origin"]))

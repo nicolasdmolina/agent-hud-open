@@ -22,6 +22,7 @@ impl AgentHudCore {
             calls: self.requests.calls(),
             approved: self.requests.auto_approved(now),
             waits: self.requests.native_wait_requests(),
+            asks: self.requests.native_wait_asks(),
         };
         let alerts = self
             .sound_alerts

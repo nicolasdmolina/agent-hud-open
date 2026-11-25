@@ -22,6 +22,9 @@ pub(crate) struct Heard<'a> {
     /// The requests each session's wait is for, by `source:session`, where
     /// its channel names them all (`Requests::native_wait_requests`).
     pub waits: HashMap<String, Vec<String>>,
+    /// Every request each session's channel says waits in it, cards or
+    /// none, each with its ask (`Requests::native_wait_asks`).
+    pub asks: HashMap<String, Vec<(String, String)>>,
 }
 pub(super) struct Request {
     pub names: Vec<String>,

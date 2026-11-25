@@ -38,10 +38,34 @@ struct ThreadState {
     state: Value,
     /// The requests this state's wait is for (`waits::named`).
     named: Vec<String>,
+    /// Every request waiting in it (`waits::asked`).
+    asked: Vec<String>,
 }
 struct LivePending {
     item: Pending,
     ticket: Option<Ticket>,
+    /// Its owner confirmed the answer sent for it, and the channel has
+    /// not lost sight of it since (Agent HUD Fork, ticket 74).
+    answered: bool,
+    /// How often it was answered and then lost from sight: seen waiting
+    /// again, it is asked anew, under another name (`ask`).
+    asks: u32,
+}
+impl LivePending {
+    fn new(item: Pending, ticket: Option<Ticket>) -> Self {
+        let (answered, asks) = (false, 0);
+        Self {
+            item,
+            ticket,
+            answered,
+            asks,
+        }
+    }
+    /// The channel lost sight of it: if it was answered, what it is seen
+    /// waiting as next is another ask.
+    fn lost(&mut self) {
+        self.asks += u32::from(std::mem::take(&mut self.answered));
+    }
 }
 struct State {
     reported: HashMap<String, Instant>,
@@ -205,6 +229,7 @@ impl Shared {
             // word carried over to what the next stream shows.
             self.requests.auto_approval_lost(id);
             pending.ticket = None;
+            pending.lost();
         }
         drop(state);
         self.publish_waiting();
@@ -220,17 +245,29 @@ impl Shared {
                     // Agent HUD Fork (ticket 66): with the requests the wait
                     // is for, as that state's own requests say (`waits.rs`).
                     let (approval, input) = waits::waiting_on(&known.state);
-                    (approval || input).then(|| (thread.clone(), known.named.clone()))
+                    let asks = known.asked.iter().map(|id| (id.clone(), ask(&state, id)));
+                    let asks = (thread.clone(), asks.collect());
+                    (approval || input).then(|| ((thread.clone(), known.named.clone()), asks))
                 })
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
         };
         sessions.sort();
+        let (sessions, asks): (Vec<_>, Vec<_>) = sessions.into_iter().unzip();
         // Keep this complete-list replacement ordered with disconnect/stop. The
         // Requests owner changes phase only; this creates no actionable request.
         self.requests
-            .set_native_waits(AGENT.id, SOLE_READER, &sessions);
+            .set_native_waits_asked(AGENT.id, SOLE_READER, &sessions, &asks);
+    }
+}
+
+/// The name of the ask the request `id` waits under: its id, and after it
+/// was answered and lost from sight, its id with the number of that ask.
+fn ask(state: &State, id: &str) -> String {
+    match state.pending.get(id).map_or(0, |live| live.asks) {
+        0 => id.to_owned(),
+        asks => format!("{id}#{asks}"),
     }
 }
 

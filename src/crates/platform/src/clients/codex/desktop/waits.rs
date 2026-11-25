@@ -37,17 +37,52 @@ pub(super) fn named(state: &Value, thread: &str, parsed: Option<&[Pending]>) -> 
     let (approval, input) = waiting_on(state);
     let shown = parsed.iter().filter(|item| item.view["kind"] != "question");
     let mut ids: Vec<String> = shown.map(|item| item.id.clone()).collect();
-    // A request that is done, or another thread's, does not wait here.
-    let waits_here = |request: &&Value| {
-        let of = request["params"]["threadId"].as_str();
-        request["completed"] != true && of.is_none_or(|id| id == thread)
-    };
-    let listed = state["requests"].as_array();
-    let waiting = listed.map_or(0, |all| all.iter().filter(waits_here).count());
+    let waiting = waiting(state, thread).count();
     if !approval || input || ids.is_empty() || waiting != ids.len() {
         return Vec::new();
     }
     ids.sort();
+    ids
+}
+
+/// The requests the state lists as waiting in `thread`: not done, and not
+/// another thread's.
+fn waiting<'a>(state: &'a Value, thread: &'a str) -> impl Iterator<Item = &'a Value> {
+    let listed = state["requests"].as_array().into_iter().flatten();
+    listed.filter(move |request| {
+        let of = request["params"]["threadId"].as_str();
+        request["completed"] != true && of.is_none_or(|id| id == thread)
+    })
+}
+
+/// Every request the wait of `thread` in `state` holds, by the id its card
+/// has, and by a name of its own where this channel shows none (Agent HUD
+/// Fork, ticket 74). Unlike `named`, these are not what the wait is only
+/// for: the sound decision sounds each that has no card and is not
+/// approved, once, so a request the channel skips is heard after one that
+/// had a card, and the other way round. Only where the state's requests
+/// could be read, and it waits on an approval and not on the person's
+/// input (that wait, with nothing to name it, sounds as before).
+pub(super) fn asked(
+    state: &Value,
+    thread: &str,
+    owner: &str,
+    parsed: Option<&[Pending]>,
+) -> Vec<String> {
+    let Some(parsed) = parsed else {
+        return Vec::new();
+    };
+    let (approval, input) = waiting_on(state);
+    if !approval || input {
+        return Vec::new();
+    }
+    let id = |request: &Value| match parsed.iter().find(|item| item.wire == *request) {
+        Some(item) => item.id.clone(),
+        None => super::pending::unshown(thread, owner, request),
+    };
+    let mut ids: Vec<String> = waiting(state, thread).map(id).collect();
+    ids.sort();
+    ids.dedup();
     ids
 }
 
