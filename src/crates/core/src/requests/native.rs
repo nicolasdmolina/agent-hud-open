@@ -229,11 +229,16 @@ impl Requests {
     /// any reader lists with none is left out: its wait is not only theirs.
     pub fn native_wait_requests(&self) -> HashMap<String, Vec<String>> {
         let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let native = &state.native;
+        state.native.wait_requests()
+    }
+}
+impl Readers {
+    /// The requests each waiting session's wait is for (`native_wait_requests`).
+    pub(super) fn wait_requests(&self) -> HashMap<String, Vec<String>> {
         let mut all: HashMap<String, Option<Vec<String>>> = HashMap::new();
-        for (source, readers) in &native.waiting {
+        for (source, readers) in &self.waiting {
             for (reader, sessions) in readers {
-                let named = native.named.get(&(source.clone(), reader.clone()));
+                let named = self.named.get(&(source.clone(), reader.clone()));
                 for session in sessions {
                     let told = named.and_then(|named| named.get(session));
                     let entry = all.entry(format!("{source}:{session}"));
@@ -248,6 +253,8 @@ impl Requests {
             .filter_map(|(key, requests)| Some((key, requests?)))
             .collect()
     }
+}
+impl Requests {
     /// What `reader`, one of `source`'s native channels, says each live
     /// session is doing, whole, as of `states.read_ms`: a session it leaves
     /// out, or an empty list, goes back to what its hooks and its log say

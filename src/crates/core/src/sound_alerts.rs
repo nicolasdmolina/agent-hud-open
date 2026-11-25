@@ -12,29 +12,10 @@ mod bare;
 mod kept;
 mod look;
 mod requests;
+mod wait;
 pub(crate) use requests::Heard;
-use requests::Request;
+use wait::Wait;
 
-/// What a session was waiting on at the last look: its requests (none for a
-/// wait its hooks or process report without a card).
-struct Wait {
-    requests: Vec<Request>,
-    /// The automatically approved requests its channel said the wait was
-    /// for, by their ids.
-    approved: Vec<String>,
-    /// It had no card and was for approved requests alone, so it passed
-    /// without a sound: a card that comes in it is new, and so is a wait
-    /// that names no request.
-    silent: bool,
-    /// The name it was decided under while it had no card, where that name
-    /// is only the time of the session's last event and not a time of the
-    /// wait's own (a channel's waiting flag has none). Once the wait is
-    /// seen to end the name is marked as over, and the next wait goes by
-    /// the name after it, so it is new though nothing was written between
-    /// the two. The host plays an alert once by its name: the same name
-    /// again would never be heard.
-    lent: Option<String>,
-}
 pub(crate) struct Tracker {
     primed: bool,
     /// Each waiting session's wait, by `source:session`.
@@ -153,12 +134,11 @@ impl Tracker {
                 continue;
             };
             let key = format!("{source}:{id}");
-            // A request allowed automatically showed no card: whatever goes
-            // by its names is decided, and so makes no sound.
-            let allowed = heard.approved.get(&key);
-            for name in allowed.into_iter().flatten() {
-                self.first(&format!("needs-you:{source}:{id}:{name}"), now);
-            }
+            // What core says is approved now: allowed automatically, with
+            // no card, and its answer confirmed delivered. Asked at every
+            // look; nothing of an earlier look's answer is used.
+            let no_names = Vec::new();
+            let allowed = heard.approved.get(&key).unwrap_or(&no_names);
             let now_requests = requests::requests(session, source, id, heard);
             if session["state"] != "waiting" && now_requests.is_empty() {
                 continue;
@@ -167,16 +147,10 @@ impl Tracker {
             let before = previous.as_ref();
             let mut told = None;
             // The requests its channel says the wait is for, and which of
-            // them were allowed automatically: by their ids, now or at the
-            // look before, and by nothing else.
+            // them are approved: by their ids, and by nothing else.
             let named = heard.waits.get(&key).map_or(&[][..], Vec::as_slice);
-            let unanswered = heard.unanswered.get(&key);
-            let is_approved = |request: &String| {
-                !unanswered.is_some_and(|names| names.contains(request))
-                    && (allowed.is_some_and(|names| names.contains(request))
-                        || before.is_some_and(|p| p.approved.contains(request)))
-            };
-            let approved: Vec<String> = named.iter().filter(|r| is_approved(r)).cloned().collect();
+            let is_approved = |request: &&String| allowed.contains(request);
+            let approved: Vec<String> = named.iter().filter(is_approved).cloned().collect();
             let over = before.into_iter().flat_map(|p| &p.approved);
             let over = over.filter(|r| !approved.contains(r));
             self.ended.extend(over.map(|r| (key.clone(), r.clone())));
@@ -185,6 +159,13 @@ impl Tracker {
             let silent =
                 now_requests.is_empty() && !named.is_empty() && approved.len() == named.len();
             for request in &now_requests {
+                // A transcript sighting that goes by an approved request's
+                // name is that request, which showed no card: silent while
+                // core says so, and not decided, so it sounds if core says
+                // so no longer. A card always waits for the person.
+                if !request.card && request.names.iter().any(|n| allowed.contains(n)) {
+                    continue;
+                }
                 let names: Vec<String> = request
                     .names
                     .iter()
@@ -200,7 +181,8 @@ impl Tracker {
                 }
                 // A wait already told without a card is the same wait once
                 // its card comes. The look's first new request names the alert.
-                if new && !before.is_some_and(|p| p.requests.is_empty() && !p.silent) {
+                let told_bare = |p: &Wait| p.requests.is_empty() && !p.silent && p.may_be(request);
+                if new && !before.is_some_and(told_bare) {
                     told.get_or_insert(names[0].clone());
                 }
             }
@@ -228,6 +210,7 @@ impl Tracker {
                 key,
                 Wait {
                     requests: now_requests,
+                    named: named.to_vec(),
                     approved,
                     silent,
                     lent,

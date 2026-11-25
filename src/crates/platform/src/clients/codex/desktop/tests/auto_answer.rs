@@ -1,11 +1,12 @@
-//! An automatic answer that Codex Desktop did not take (Agent HUD Fork,
-//! ticket 66, round 5; the round 4 verifier's probes). Approve
+//! An automatic answer and what Codex Desktop made of it (Agent HUD Fork,
+//! ticket 66, rounds 5 and 6; the round 4 verifier's probes). Approve
 //! automatically allows the request and the channel sends the answer to
-//! the thread's owner. Where the owner refuses it, or goes away before it
-//! confirms, the request still waits in Codex Desktop for the person. Its
-//! wait, which passed in silence while the request counted as approved,
-//! must then sound. A stand-in owner on a Unix socket, the real channel
-//! and a whole core.
+//! the thread's owner. The request is approved for sound only once the
+//! owner confirms the answer. Where the owner refuses it, or goes away
+//! before it confirms, the request still waits in Codex Desktop for the
+//! person, and its wait sounds. So does a wait the app looks at while the
+//! answer is still on its way. A stand-in owner on a Unix socket, the real
+//! channel and a whole core.
 use super::*;
 
 /// (the session's state, cards shown, the needs-you ids as the host plays
@@ -31,7 +32,9 @@ enum Owner {
     Confirms,
 }
 
-fn an_automatic_answer(owner: Owner) -> (String, usize, usize) {
+/// The look taken once the owner has answered, and the one taken before
+/// (`looks_early`), while the automatic answer is still on its way.
+fn an_automatic_answer(owner: Owner, looks_early: bool) -> (String, usize, usize) {
     use agent_hud_core::{AgentHudCore, SourceRoot};
     let scratch = tempfile::Builder::new().prefix("").tempdir().unwrap();
     let data = scratch.path().join("w");
@@ -116,8 +119,12 @@ fn an_automatic_answer(owner: Owner) -> (String, usize, usize) {
     wait(|| requests.native_wait_requests().contains_key(&key));
     let ids = requests.native_wait_requests()[&key].clone();
     assert_eq!(ids.len(), 1);
-    // Allowed at once, its wait named for it: silent, with no card.
-    assert_eq!(seen(&mut core), ("waiting".into(), 0, 0), "{owner:?}");
+    // Allowed at once with no card, its wait named for it, and its answer
+    // not yet confirmed: not approved, so a look now sounds.
+    assert!(requests.auto_approved(crate::hooks::now_ms()).is_empty());
+    if looks_early {
+        assert_eq!(seen(&mut core), ("waiting".into(), 0, 1), "{owner:?}");
+    }
     reply_now.send(()).unwrap();
     let receipt = match owner {
         Owner::Refuses => "failed",
@@ -142,7 +149,7 @@ fn an_automatic_answer(owner: Owner) -> (String, usize, usize) {
 #[test]
 fn an_automatic_answer_the_owner_refuses_leaves_a_wait_that_sounds() {
     assert_eq!(
-        an_automatic_answer(Owner::Refuses),
+        an_automatic_answer(Owner::Refuses, false),
         ("waiting".into(), 0, 1)
     );
 }
@@ -150,17 +157,32 @@ fn an_automatic_answer_the_owner_refuses_leaves_a_wait_that_sounds() {
 #[test]
 fn an_automatic_answer_nobody_confirms_leaves_a_wait_that_sounds() {
     assert_eq!(
-        an_automatic_answer(Owner::GoesAway),
+        an_automatic_answer(Owner::GoesAway, false),
         ("waiting".into(), 0, 1)
     );
 }
 
-/// The control: an answer the owner confirms stays silent while Codex
-/// Desktop goes on listing the request for a moment.
+/// The control: an answer the owner confirms before the app looks is
+/// silent while Codex Desktop goes on listing the request for a moment.
 #[test]
 fn an_automatic_answer_the_owner_confirms_stays_silent() {
     assert_eq!(
-        an_automatic_answer(Owner::Confirms),
+        an_automatic_answer(Owner::Confirms, false),
         ("waiting".into(), 0, 0)
     );
+}
+
+/// Round 6. A look that lands while the answer is on its way sounds, as
+/// the request's card did before the sync. Whatever the owner then says,
+/// that is the one sound: a confirmation takes nothing back and adds
+/// nothing, and a failure is the wait already told.
+#[test]
+fn a_look_while_the_automatic_answer_is_on_its_way_sounds_once() {
+    for owner in [Owner::Confirms, Owner::Refuses, Owner::GoesAway] {
+        assert_eq!(
+            an_automatic_answer(owner, true),
+            ("waiting".into(), 0, 1),
+            "{owner:?}"
+        );
+    }
 }

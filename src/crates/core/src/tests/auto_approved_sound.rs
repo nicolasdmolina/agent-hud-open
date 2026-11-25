@@ -1,9 +1,11 @@
 //! Approve automatically against the fork's sound rule, through the whole
 //! core (ticket 66). A permission allowed with no card makes no
-//! `needs-you` where its channel says the session's wait is for that
-//! request, by its id. Nothing else is silent: a wait that names no
-//! request always sounds, as before the sync, though a request was just
-//! approved. Each case of the two verifiers is a test here.
+//! `needs-you` where its channel confirmed that the answer was delivered
+//! and says the session's wait is for that request, by its id. Nothing
+//! else is silent: a wait that names no request always sounds, as before
+//! the sync, though a request was just approved, and so does the wait of
+//! a request whose answer is not confirmed (`auto_confirmed_sound.rs`).
+//! Each case of the verifiers is a test here.
 use super::*;
 use crate::requests::AutoApprove;
 use agent_hud_agents::SOLE_READER;
@@ -21,18 +23,18 @@ impl Drop for Clock {
     }
 }
 
-const THREAD: &str = "00000000-0000-4000-8000-000000000066";
+pub(super) const THREAD: &str = "00000000-0000-4000-8000-000000000066";
 
-struct Lab {
-    core: AgentHudCore,
-    now: i64,
+pub(super) struct Lab {
+    pub core: AgentHudCore,
+    pub now: i64,
     _temp: tempfile::TempDir,
     _clock: Clock,
 }
 
 impl Lab {
     /// A Codex Desktop session at work, sound on, past the first look.
-    fn new(auto_approve: bool) -> Self {
+    pub fn new(auto_approve: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let now = Utc::now().timestamp_millis();
         let clock = Clock::at(now);
@@ -59,7 +61,7 @@ impl Lab {
     }
     /// A card as the Desktop parser makes it; whether it was allowed at
     /// once, with no card.
-    fn card(&self, id: &str, kind: &str) -> bool {
+    pub fn card(&self, id: &str, kind: &str) -> bool {
         let view = json!({"source":"codex","client":"codex-desktop","vendor":"Codex","sessionId":THREAD,"title":"Synthetic","summary":"Synthetic","toolName":"shell","kind":kind,"input":"","detail":null,"cwd":"/synthetic","createdAt":crate::iso(self.now),"allowsAlways":false,"answersQuestion":kind=="question","answersPlan":false,"plan":null,"suggestions":[],"questions":[]});
         let ticket = self
             .core
@@ -70,9 +72,20 @@ impl Lab {
         std::mem::forget(ticket);
         allowed
     }
+    /// The channel confirms that the automatic answer to `id` was
+    /// delivered: only from then on is the request approved for sound.
+    pub fn confirmed(&self, id: &str) {
+        let requests = self.core.requests();
+        requests.note_native_delivery(id, "codex", THREAD, "confirmed", None, self.now);
+    }
+    /// A permission allowed at once whose answer its channel confirmed.
+    pub fn approved(&self, id: &str) {
+        assert!(self.card(id, "permission"));
+        self.confirmed(id);
+    }
     /// The channel tells the session as waiting and names no request: all
     /// a channel knows of a wait it has no card for.
-    fn told_waiting(&self) {
+    pub fn told_waiting(&self) {
         self.core.requests().set_native_waiting(
             "codex",
             SOLE_READER,
@@ -82,7 +95,7 @@ impl Lab {
     }
     /// The channel tells the session as waiting for these requests, by the
     /// ids it registered them under, as Codex Desktop's does.
-    fn told_waiting_for(&self, requests: &[&str]) {
+    pub fn told_waiting_for(&self, requests: &[&str]) {
         let requests = requests.iter().map(|id| (*id).to_owned()).collect();
         self.core.requests().set_native_waits(
             "codex",
@@ -91,20 +104,20 @@ impl Lab {
         );
     }
     /// The channel says the session waits no more.
-    fn not_waiting(&self) {
+    pub fn not_waiting(&self) {
         self.core
             .requests()
             .set_native_waiting("codex", SOLE_READER, &[], self.now);
     }
-    /// The names of the approved requests core still keeps.
-    fn kept(&self) -> Vec<String> {
+    /// The names of the requests core holds as approved now.
+    pub fn kept(&self) -> Vec<String> {
         let kept = self.core.requests().auto_approved(self.now);
         let mut names: Vec<String> = kept.into_values().flatten().collect();
         names.sort();
         names
     }
     /// One look: (the session's state, cards shown, `needs-you` alerts).
-    fn look(&mut self) -> (String, usize, usize) {
+    pub fn look(&mut self) -> (String, usize, usize) {
         let snapshot = self.core.request("request_snapshot", json!({})).unwrap();
         let state = snapshot["sessions"]
             .as_array()
@@ -125,13 +138,13 @@ impl Lab {
             .collect();
         (state, cards, needs.len())
     }
-    fn later(&mut self, ms: i64) {
+    pub fn later(&mut self, ms: i64) {
         self.now += ms;
         crate::snapshot::PINNED_CLOCK.set(Some(self.now));
     }
 }
 
-const A: &str = "codex-desktop-permission:approved";
+pub(super) const A: &str = "codex-desktop-permission:approved";
 
 /// The control: a wait its channel tells, with no card and nothing
 /// approved, sounds once.
@@ -167,7 +180,7 @@ fn a_permission_allowed_automatically_shows_no_card_and_its_wait_plays_no_sound(
             .approves("codex", Some("codex-desktop"))
     );
     assert_eq!(lab.look(), ("running".into(), 0, 0));
-    assert!(lab.card(A, "permission"));
+    lab.approved(A);
     lab.told_waiting_for(&[A]);
     assert_eq!(
         lab.look(),
@@ -192,7 +205,7 @@ fn the_approved_requests_wait_is_silent_however_late_it_is_first_seen() {
     for late in [5_001, 60_000] {
         let mut lab = Lab::new(true);
         assert_eq!(lab.look(), ("running".into(), 0, 0));
-        assert!(lab.card(A, "permission"));
+        lab.approved(A);
         lab.told_waiting_for(&[A]);
         lab.later(late);
         assert_eq!(lab.look(), ("waiting".into(), 0, 0), "seen {late} ms late");
@@ -206,7 +219,7 @@ fn the_approved_requests_wait_is_silent_however_late_it_is_first_seen() {
 fn a_separate_wait_after_an_automatic_approval_still_sounds() {
     let mut lab = Lab::new(true);
     assert_eq!(lab.look(), ("running".into(), 0, 0));
-    assert!(lab.card(A, "permission"));
+    lab.approved(A);
     assert_eq!(lab.look(), ("running".into(), 0, 0));
     lab.told_waiting();
     assert_eq!(
@@ -225,7 +238,7 @@ fn a_distinct_wait_that_names_no_request_sounds_before_the_first_look() {
     for first_look_after in [200, 6_000] {
         let mut lab = Lab::new(true);
         assert_eq!(lab.look(), ("running".into(), 0, 0));
-        assert!(lab.card(A, "permission"));
+        lab.approved(A);
         lab.told_waiting_for(&[A]);
         lab.later(100);
         lab.not_waiting();
@@ -252,7 +265,7 @@ fn a_wait_seen_before_its_request_was_approved_has_sounded_once() {
         lab.told_waiting();
         assert_eq!(lab.look(), ("waiting".into(), 0, 1));
         lab.later(100);
-        assert!(lab.card(A, "permission"));
+        lab.approved(A);
         if named {
             lab.told_waiting_for(&[A]);
         }
@@ -269,7 +282,7 @@ fn a_wait_seen_before_its_request_was_approved_has_sounded_once() {
 fn a_look_between_an_approval_and_the_publication_of_its_wait_stays_silent() {
     let mut lab = Lab::new(true);
     assert_eq!(lab.look(), ("running".into(), 0, 0));
-    assert!(lab.card(A, "permission"));
+    lab.approved(A);
     assert_eq!(lab.kept(), [A]);
     assert_eq!(lab.look(), ("running".into(), 0, 0));
     assert_eq!(lab.kept(), [A], "a look that saw no wait of it ended it");
@@ -292,10 +305,10 @@ fn an_approval_made_during_a_look_is_kept() {
     let session = format!("codex:{THREAD}");
     let first = "codex-desktop-permission:first";
     let second = "codex-desktop-permission:second";
-    assert!(lab.card(first, "permission"));
+    lab.approved(first);
     let read = requests.auto_approved(lab.now);
     assert_eq!(read[&session], [first]);
-    assert!(lab.card(second, "permission"));
+    lab.approved(second);
     requests.auto_approved_ended(&session, &read[&session]);
     assert_eq!(requests.auto_approved(lab.now)[&session], [second]);
 }
@@ -305,7 +318,7 @@ fn an_approval_made_during_a_look_is_kept() {
 fn an_approved_request_is_kept_until_a_look_sees_its_wait_end() {
     let mut lab = Lab::new(true);
     lab.look();
-    assert!(lab.card(A, "permission"));
+    lab.approved(A);
     lab.told_waiting_for(&[A]);
     assert_eq!(lab.look(), ("waiting".into(), 0, 0));
     assert_eq!(lab.kept(), [A]);
@@ -323,7 +336,7 @@ fn an_approved_request_is_kept_until_a_look_sees_its_wait_end() {
 fn a_wait_that_names_no_request_sounds_though_a_request_was_just_approved() {
     let mut lab = Lab::new(true);
     assert_eq!(lab.look(), ("running".into(), 0, 0));
-    assert!(lab.card(A, "permission"));
+    lab.approved(A);
     lab.told_waiting();
     assert_eq!(lab.look(), ("waiting".into(), 0, 1));
 }
@@ -334,7 +347,7 @@ fn a_wait_that_names_no_request_sounds_though_a_request_was_just_approved() {
 fn a_wait_for_the_approved_request_and_another_sounds() {
     let mut lab = Lab::new(true);
     assert_eq!(lab.look(), ("running".into(), 0, 0));
-    assert!(lab.card(A, "permission"));
+    lab.approved(A);
     lab.told_waiting_for(&[A, "codex-desktop-permission:no-card-yet"]);
     assert_eq!(lab.look(), ("waiting".into(), 0, 1));
 }
@@ -385,7 +398,7 @@ fn a_later_wait_that_names_no_request_sounds_though_nothing_new_was_written() {
     lab.not_waiting();
     assert_eq!(lab.look(), ("running".into(), 0, 1));
     lab.later(100);
-    assert!(lab.card(A, "permission"));
+    lab.approved(A);
     lab.told_waiting_for(&[A]);
     assert_eq!(lab.look(), ("waiting".into(), 0, 1));
     lab.later(100);
@@ -423,13 +436,15 @@ fn a_wait_seen_to_end_and_begin_again_sounds_again() {
 /// another source registers a request under the very same id, in a session
 /// of its own, and it is allowed too. Ending the first ends it in its own
 /// source and session only: the second, which no look has seen, is kept.
+/// (Since round 6 the settlement that frees the id has already ended the
+/// first; the late word of the look must still not reach the second.)
 #[test]
 fn ending_an_approved_request_ends_it_in_its_own_session_only() {
     let lab = Lab::new(true);
     let requests = lab.core.requests();
     let first = format!("codex:{THREAD}");
     let reused = "fixture-native-id";
-    assert!(lab.card(reused, "permission"));
+    lab.approved(reused);
     let read = requests.auto_approved(lab.now);
     assert_eq!(read[&first], [reused]);
     requests.settle_native(reused);
@@ -438,6 +453,7 @@ fn ending_an_approved_request_ends_it_in_its_own_session_only() {
         .register_native(reused.to_owned(), other, lab.now + 1)
         .unwrap();
     assert!(ticket.response.try_recv().ok().flatten().is_some());
+    requests.note_native_delivery(reused, "claude", "second", "confirmed", None, lab.now + 1);
     assert_eq!(
         requests.auto_approved(lab.now + 1)["claude:second"],
         [reused]
@@ -449,11 +465,11 @@ fn ending_an_approved_request_ends_it_in_its_own_session_only() {
 }
 
 /// The round 4 verifier's delivery probes, at core. A permission is allowed
-/// automatically and its wait passes in silence. Then its channel reports
-/// what became of the answer. One that did not arrive (`failed`), or that
-/// nobody confirmed (`uncertain`), leaves the request as it was in its
-/// client: still waiting for the person. It is no longer taken as approved,
-/// and its wait sounds, once. One that was confirmed stays silent.
+/// automatically, and its channel reports what became of the answer before
+/// the app looks. One that did not arrive (`failed`), or that nobody
+/// confirmed (`uncertain`), leaves the request as it was in its client:
+/// still waiting for the person. It is not approved, and its wait sounds,
+/// once. Only one that was confirmed is silent.
 #[test]
 fn an_automatic_answer_that_did_not_arrive_lets_the_wait_sound() {
     for (receipt, sounds) in [("failed", 1), ("uncertain", 1), ("confirmed", 0)] {
@@ -461,7 +477,6 @@ fn an_automatic_answer_that_did_not_arrive_lets_the_wait_sound() {
         assert_eq!(lab.look(), ("running".into(), 0, 0));
         assert!(lab.card(A, "permission"));
         lab.told_waiting_for(&[A]);
-        assert_eq!(lab.look(), ("waiting".into(), 0, 0), "{receipt}");
         lab.later(500);
         let why = (receipt != "confirmed").then(|| "the fixture's reason".to_owned());
         lab.core
@@ -474,7 +489,7 @@ fn an_automatic_answer_that_did_not_arrive_lets_the_wait_sound() {
             ("waiting".into(), 0, sounds),
             "{receipt}, again"
         );
-        // It is kept as approved only where its answer was confirmed.
+        // It is approved only where its answer was confirmed.
         assert_eq!(
             lab.kept().len(),
             usize::from(receipt == "confirmed"),
@@ -483,29 +498,26 @@ fn an_automatic_answer_that_did_not_arrive_lets_the_wait_sound() {
     }
 }
 
-/// The receipt comes before any look has seen the wait: the same.
+/// A receipt speaks for its own source and session only. Another
+/// session's failure for the same id takes nothing from a confirmed
+/// answer here, and another session's confirmation confirms nothing here.
 #[test]
-fn an_answer_that_did_not_arrive_before_the_wait_was_seen_lets_it_sound() {
+fn a_receipt_for_the_same_id_in_another_session_changes_nothing_here() {
     let mut lab = Lab::new(true);
-    assert_eq!(lab.look(), ("running".into(), 0, 0));
-    assert!(lab.card(A, "permission"));
-    lab.core.requests().note_native_delivery(
-        A,
-        "codex",
-        THREAD,
-        "failed",
-        Some("the fixture's reason".to_owned()),
-        lab.now,
-    );
+    lab.look();
+    lab.approved(A);
+    let requests = lab.core.requests();
+    requests.note_native_delivery(A, "codex", "another-thread", "failed", None, lab.now);
+    requests.note_native_delivery(A, "claude", THREAD, "failed", None, lab.now);
     lab.told_waiting_for(&[A]);
-    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
-    // Another session's receipt for the same id changes nothing here.
+    assert_eq!(lab.look(), ("waiting".into(), 0, 0));
+
     let mut lab = Lab::new(true);
     lab.look();
     assert!(lab.card(A, "permission"));
-    lab.core
-        .requests()
-        .note_native_delivery(A, "codex", "another-thread", "failed", None, lab.now);
+    let requests = lab.core.requests();
+    requests.note_native_delivery(A, "codex", "another-thread", "confirmed", None, lab.now);
+    requests.note_native_delivery(A, "claude", THREAD, "confirmed", None, lab.now);
     lab.told_waiting_for(&[A]);
-    assert_eq!(lab.look(), ("waiting".into(), 0, 0));
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
 }

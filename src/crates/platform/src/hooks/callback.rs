@@ -6,6 +6,9 @@ use super::{now_ms, reminders, reviewer};
 use agent_hud_agents::HookEvent;
 use agent_hud_core::requests::Requests;
 
+mod answer;
+pub(crate) use answer::Answer;
+
 /// Waits for the HUD's answer to a permission request a client's hook sent,
 /// while `keep_waiting` holds and until the request's deadline. None when the
 /// request is not one, its reviewer is not the user, or no answer came.
@@ -16,7 +19,7 @@ pub(super) fn wait_for_answer(
     flag: &str,
     payload: &serde_json::Value,
     keep_waiting: impl Fn() -> bool,
-) -> Option<serde_json::Value> {
+) -> Option<Answer> {
     let request = agent_hud_agents::parse_request(source, payload).ok()??;
     if request.requires_user_reviewer && !reviewer::is_user(requests, &request.source, payload) {
         return None;
@@ -32,17 +35,13 @@ pub(super) fn wait_for_answer(
         && requests.auto_approves(&request.source, payload[super::CLIENT_KEY].as_str())
     {
         // Agent HUD Fork (ticket 66): it showed no card, so it makes no
-        // sound; core is told which session it was allowed in.
-        requests.note_auto_approved(
-            &request.source,
-            &request.session_id,
-            request.call_id.as_deref(),
-            now_ms(),
-        );
-        return request
-            .response(&serde_json::json!({"kind":"allow"}))
-            .ok()
-            .flatten();
+        // sound. Core is told which session it was allowed in once the
+        // reply has reached the hook (`Answer::delivered`), not before.
+        let allow = request.response(&serde_json::json!({"kind":"allow"}));
+        let session = &request.session_id;
+        let call = request.call_id.as_deref();
+        return (allow.ok().flatten())
+            .map(|reply| Answer::automatic(reply, &request.source, session, call));
     }
     reminders.record(source, flag, payload);
     let ticket = requests.register(request, now_ms());
@@ -67,7 +66,7 @@ pub(super) fn wait_for_answer(
         }
     };
     requests.cancel(&ticket.id);
-    response
+    response.map(Answer::by_hand)
 }
 
 /// The event a callback hands over the channel because it could not write
@@ -127,7 +126,7 @@ mod tests {
                 || false,
             )
         };
-        let reply = ask(Some("claude")).unwrap();
+        let reply = ask(Some("claude")).unwrap().deliver(&requests, |_| true);
         assert_eq!(reply["hookSpecificOutput"]["decision"]["behavior"], "allow");
         // Off for Claude Desktop: no answer comes, the user is asked.
         assert!(ask(Some("claude-desktop")).is_none());
@@ -137,40 +136,45 @@ mod tests {
 
     /// Agent HUD Fork (ticket 66): a request allowed with no card is told
     /// to core with its session and the tool call it names, so that its
-    /// wait makes no sound; one that waits for the user is not.
+    /// wait makes no sound; one that waits for the user is not. Round 6:
+    /// core is told only once the reply has reached the hook that asked.
+    /// A reply the hook did not take tells core nothing, so what the
+    /// client then asks the person itself sounds.
     #[test]
-    fn an_approved_request_is_noted_with_its_session_for_the_sound_decision() {
+    fn an_approved_request_is_noted_for_the_sound_decision_once_its_reply_is_delivered() {
         let requests = Requests::default();
         let reminders = reminders::Reminders::default();
-        let ask = |client| {
+        let ask = |payload: &Value| {
             wait_for_answer(
                 &requests,
                 &reminders,
                 "claude",
                 "--permission-hook",
-                &claude_asks(client),
+                payload,
                 || false,
             )
         };
-        assert!(ask(Some("claude")).is_none());
+        assert!(ask(&claude_asks(Some("claude"))).is_none());
         assert!(requests.auto_approved(now_ms()).is_empty());
         requests.set_auto_approve(AutoApprove::from_settings(&json!({"autoApprove": true})));
         let mut asked = claude_asks(Some("claude"));
         asked["tool_use_id"] = json!("toolu_66");
-        let reply = wait_for_answer(
-            &requests,
-            &reminders,
-            "claude",
-            "--permission-hook",
-            &asked,
-            || false,
-        );
-        assert!(reply.is_some());
         let session = agent_hud_agents::parse_request("claude", &asked)
             .unwrap()
             .unwrap()
             .session_id;
-        // Kept under the tool call it names, by its session.
+        // Allowed, and not yet delivered: core knows of no approval.
+        let answer = ask(&asked).expect("an automatic Allow");
+        assert!(requests.auto_approved(now_ms()).is_empty());
+        // The hook did not take the reply.
+        let reply = answer.deliver(&requests, |_| false);
+        assert_eq!(reply["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        assert!(
+            requests.auto_approved(now_ms()).is_empty(),
+            "an answer that was not delivered counted as delivered"
+        );
+        // It took it: kept under the tool call it names, by its session.
+        ask(&asked).unwrap().deliver(&requests, |_| true);
         assert_eq!(
             requests.auto_approved(now_ms()),
             std::collections::HashMap::from([(
@@ -231,7 +235,7 @@ mod tests {
         let held = std::cell::Cell::new(0);
         let ask = |payload: &Value| {
             held.set(0);
-            wait_for_answer(
+            let answer = wait_for_answer(
                 &requests,
                 &reminders,
                 "droid",
@@ -242,7 +246,9 @@ mod tests {
                     held.set(requests.views(now_ms()).len());
                     false
                 },
-            )
+            );
+            // As where the reply reaches the hook.
+            answer.map(|answer| answer.deliver(&requests, |_| true))
         };
         // Approve automatically off: both wait for the person.
         assert!(ask(&ruled).is_none());

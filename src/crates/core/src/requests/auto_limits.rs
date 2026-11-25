@@ -11,26 +11,32 @@
 //!   mark is read, in the hook's callback
 //!   (`platform/src/hooks/callback.rs`), since only a hook carries it;
 //! - a request it allowed showed no card, so what is known to be that
-//!   request plays no sound. Core keeps each approved request under its
-//!   own names (its id, and its tool call where it names one). The sound
-//!   decision (`sound_alerts`) is silent only for what goes by one of
-//!   those names: a wait its channel says is for that request
-//!   (`set_native_waits`), or a transcript sighting of that call. Nothing
-//!   is inferred from the order of things or from a clock: a wait that
-//!   names no request always sounds, though it may be an approved
-//!   request's. An extra sound is the lesser fault; a silent wait is not.
-//!   And an approval is only as good as its answer: where the channel
-//!   reports that the answer did not arrive, or that nobody confirmed it,
-//!   the request is not taken as approved any more and its wait sounds.
+//!   request plays no sound, once its answer is known to have arrived.
+//!   Core keeps each approved request under its own names (its id, and
+//!   its tool call where it names one), and says it is approved only
+//!   after its channel confirmed that the automatic answer was delivered
+//!   (`note_native_delivery`, or a hook's reply written to the hook that
+//!   asked). Until then, and where the answer failed, was not confirmed,
+//!   was never sent because its listener stopped, or was not heard of
+//!   in ten minutes, the request is not approved: its wait and its card
+//!   sound as they did before the sync. The sound decision
+//!   (`sound_alerts`) asks at every look and remembers no approval. It
+//!   is silent only for what goes by a confirmed request's names: a
+//!   wait its channel says is for that request (`set_native_waits`), or
+//!   a transcript sighting of that call. Nothing is inferred from the
+//!   order of things: a wait that names no request always sounds. An
+//!   extra sound is the lesser fault; a silent wait is not.
 use super::{Requests, State};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::PoisonError;
 
-/// How long an approved request is kept where the sound decision never
-/// sees its wait end: ten minutes, which is the longest a request waits
-/// for an answer by default. Only so that the list cannot grow: a name
-/// belongs to one request, so one kept too long silences nothing else.
+/// How long an approved request is kept: ten minutes, which is the
+/// longest a request waits for an answer by default. One whose answer is
+/// not confirmed by then never counts as approved. A confirmed one is
+/// kept past it only while its channel still says a wait is for it, so
+/// that the same wait does not start to sound. A name belongs to one
+/// request, so one kept too long silences nothing else.
 pub const APPROVED_KEPT_MS: i64 = 600_000;
 /// How many are kept at most, the oldest going first: for the same reason.
 pub const APPROVED_KEPT: usize = 512;
@@ -44,10 +50,12 @@ pub(super) struct Approved {
     /// tool call it names, as the sound decision names a card's.
     names: Vec<String>,
     at_ms: i64,
-    /// Its channel reported that the automatic answer did not arrive, or
-    /// that nobody confirmed it: the request still waits for the person in
-    /// its client, and is not taken as approved any more.
-    unanswered: bool,
+    /// The id it was registered under, where a native channel did
+    /// (`register_native`): what its channel settles it by.
+    native: Option<String>,
+    /// Its channel confirmed that the automatic answer was delivered. Only
+    /// then is the request approved for the sound decision.
+    confirmed: bool,
 }
 
 /// Whether the requests of `agent` always wait for the person.
@@ -65,7 +73,7 @@ impl State {
     /// Whether the native request `id` is allowed at once, as upstream's
     /// rule has it (a permission whose client approves automatically) and
     /// within the limits above. Where it is, it is never shown again, and
-    /// it is kept for the sound decision.
+    /// it is kept, not yet confirmed, for the sound decision.
     pub(super) fn approved_at_once(&mut self, id: &str, view: &Value, now_ms: i64) -> bool {
         let source = view["source"].as_str().unwrap_or_default();
         let approved = view["kind"].as_str().unwrap_or("permission") == "permission"
@@ -75,7 +83,7 @@ impl State {
             self.dismissed.insert(id.to_owned());
             let session = view["sessionId"].as_str().unwrap_or_default();
             let call = view["callId"].as_str();
-            self.note_approved(source, session, Some(id), call, now_ms);
+            self.note_approved(source, session, Some(id), call, now_ms, false);
         }
         approved
     }
@@ -87,6 +95,7 @@ impl State {
         id: Option<&str>,
         call: Option<&str>,
         now_ms: i64,
+        confirmed: bool,
     ) {
         let names = [id.map(str::to_owned), call.map(|c| format!("call:{c}"))];
         let names: Vec<String> = names.into_iter().flatten().collect();
@@ -97,7 +106,8 @@ impl State {
             session: format!("{source}:{session}"),
             names,
             at_ms: now_ms,
-            unanswered: false,
+            native: id.map(str::to_owned),
+            confirmed,
         });
         while self.approved.len() > APPROVED_KEPT {
             self.approved.pop_front();
@@ -106,53 +116,66 @@ impl State {
 }
 
 impl State {
-    /// The automatic answer to the request `id` of `session`
-    /// (`source:session`) did not arrive, or was not confirmed.
-    pub(super) fn answer_did_not_arrive(&mut self, session: &str, id: &str) {
-        let named = |approved: &&mut Approved| {
-            approved.session == session && approved.names.iter().any(|name| name == id)
+    /// What its channel reports of the automatic answer to the native
+    /// request `id` of `session` (`source:session`): that exact id, there
+    /// and nowhere else. Confirmed, the request is
+    /// approved from now on. Failed, or confirmed by nobody, it is not
+    /// kept at all: it still waits for the person.
+    pub(super) fn answer_reported(&mut self, session: &str, id: &str, confirmed: bool) {
+        let named = |approved: &Approved| {
+            approved.session == session && approved.native.as_deref() == Some(id)
         };
-        for approved in self.approved.iter_mut().filter(named) {
-            approved.unanswered = true;
+        if confirmed {
+            for approved in self.approved.iter_mut().filter(|a| named(a)) {
+                approved.confirmed = true;
+            }
+        } else {
+            self.approved.retain(|approved| !named(approved));
         }
+    }
+
+    /// Its channel settled the native request `id`: it is over there, or
+    /// its listener stopped before the answer left. Either way nothing is
+    /// kept of it, so the same request shown again is a request like any
+    /// other, and sounds.
+    pub(super) fn approval_settled(&mut self, id: &str) {
+        self.approved
+            .retain(|approved| approved.native.as_deref() != Some(id));
     }
 }
 
 impl Requests {
     /// Notes that a permission request of `session` was allowed at once,
-    /// with no card: what a hook's callback tells, where the request never
-    /// came to `register`. `call` is the tool call it names; one that names
-    /// none has nothing to be known by, and is not kept.
+    /// with no card, and that the answer reached the hook that asked: what
+    /// a hook's callback tells once its reply is written, where the
+    /// request never came to `register`. `call` is the tool call it names;
+    /// one that names none has nothing to be known by, and is not kept.
     pub fn note_auto_approved(&self, source: &str, session: &str, call: Option<&str>, now_ms: i64) {
         self.0
             .state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .note_approved(source, session, None, call, now_ms);
+            .note_approved(source, session, None, call, now_ms, true);
     }
 
-    /// The requests allowed with no card that are still kept at `now_ms`
-    /// and still count as approved: by `source:session`, the names each
-    /// goes by.
+    /// The requests allowed with no card whose answer is confirmed
+    /// delivered, as core holds them at `now_ms`: by `source:session`, the
+    /// names each goes by. This is the whole of what counts as approved
+    /// for sound, asked anew at every look.
     pub fn auto_approved(&self, now_ms: i64) -> HashMap<String, Vec<String>> {
-        self.kept(now_ms, false)
-    }
-
-    /// Those whose automatic answer did not arrive (`note_native_delivery`
-    /// told `failed` or `uncertain`): the same shape. The sound decision no
-    /// longer takes a wait that names one as an approved request's.
-    pub fn auto_unanswered(&self, now_ms: i64) -> HashMap<String, Vec<String>> {
-        self.kept(now_ms, true)
-    }
-
-    fn kept(&self, now_ms: i64, unanswered: bool) -> HashMap<String, Vec<String>> {
         let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state
-            .approved
-            .retain(|approved| now_ms.saturating_sub(approved.at_ms) < APPROVED_KEPT_MS);
+        let waits = state.native.wait_requests();
+        let waited_for = |approved: &Approved| {
+            let named = waits.get(&approved.session);
+            named.is_some_and(|ids| approved.names.iter().any(|name| ids.contains(name)))
+        };
+        state.approved.retain(|approved| {
+            now_ms.saturating_sub(approved.at_ms) < APPROVED_KEPT_MS
+                || (approved.confirmed && waited_for(approved))
+        });
+        let approved = &state.approved;
         let mut kept: HashMap<String, Vec<String>> = HashMap::new();
-        let of_kind = |approved: &&Approved| approved.unanswered == unanswered;
-        for approved in state.approved.iter().filter(of_kind) {
+        for approved in approved.iter().filter(|approved| approved.confirmed) {
             let names = kept.entry(approved.session.clone()).or_default();
             names.extend(approved.names.iter().cloned());
         }

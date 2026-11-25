@@ -216,15 +216,18 @@ fn serve(
         let _ = stream.write_all(b"\n");
         return;
     }
-    let Some(response) =
-        super::wait_for_answer(&requests, &reminders, source, flag, payload, || {
-            running.load(Ordering::Acquire) && !disconnected(&stream)
-        })
-    else {
+    let Some(answer) = super::wait_for_answer(&requests, &reminders, source, flag, payload, || {
+        running.load(Ordering::Acquire) && !disconnected(&stream)
+    }) else {
         return;
     };
-    let _ = serde_json::to_writer(&mut stream, &response);
-    let _ = stream.write_all(b"\n");
+    // Agent HUD Fork (ticket 66): an automatic Allow counts as delivered
+    // only where the hook took the whole reply.
+    answer.deliver(&requests, |reply| written(&mut stream, reply));
+}
+/// Writes a reply to the hook as one line; whether every byte was taken.
+fn written(hook: &mut impl Write, reply: &Value) -> bool {
+    serde_json::to_writer(&mut *hook, reply).is_ok() && hook.write_all(b"\n").is_ok()
 }
 fn read_frame(stream: &mut UnixStream, running: &AtomicBool) -> Option<Vec<u8>> {
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -281,3 +284,6 @@ fn disconnected(stream: &UnixStream) -> bool {
 
 #[cfg(test)]
 mod tests;
+// Agent HUD Fork (ticket 66).
+#[cfg(test)]
+mod delivered_tests;

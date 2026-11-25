@@ -1,7 +1,7 @@
 //! What Approve automatically never does (ticket 66): decide a request
 //! marked `unreachable`, answer a request of a client whose requests are
-//! answered by hand (Hermes), or leave a session it approved in without
-//! a note for the sound decision.
+//! answered by hand (Hermes), or count a request as approved for sound
+//! before its channel confirmed that the answer was delivered.
 use super::super::{auto, AutoApprove, Requests};
 use super::{APPROVED_KEPT, APPROVED_KEPT_MS};
 use serde_json::{json, Value};
@@ -21,6 +21,11 @@ fn permission(source: &str, client: Option<&str>) -> Value {
         view["client"] = json!(client);
     }
     view
+}
+
+/// The channel confirms the automatic answer to `id`, a request of `s1`.
+fn confirm(requests: &Requests, id: &str, now_ms: i64) {
+    requests.note_native_delivery(id, "codex", "s1", "confirmed", None, now_ms);
 }
 
 fn shown(requests: &Requests) -> Vec<String> {
@@ -54,7 +59,11 @@ fn approve_automatically_never_decides_a_request_marked_unreachable() {
     );
     assert_eq!(shown(&requests), ["marked"]);
     // It was not noted as approved, and takes no decision by hand either.
-    assert_eq!(requests.auto_approved(1_000).len(), 1, "only the plain one");
+    for id in ["plain", "marked"] {
+        confirm(&requests, id, 1_000);
+    }
+    let kept = requests.auto_approved(1_000);
+    assert_eq!(kept["codex:s1"], ["plain"], "only the plain one");
     assert_eq!(
         requests.answer("marked", &json!({"kind": "allow"}), 1_500),
         Err(WHY.to_owned())
@@ -88,6 +97,7 @@ fn approve_automatically_never_answers_a_hermes_request() {
         "a Hermes approval was answered"
     );
     assert_eq!(shown(&requests), ["hermes:1"]);
+    requests.note_native_delivery("hermes:1", "hermes", "s1", "confirmed", None, 1_000);
     assert!(requests.auto_approved(1_000).is_empty());
     // By hand it is answered as ever.
     assert!(requests
@@ -117,6 +127,7 @@ fn an_automatic_approval_is_kept_by_its_names_and_ended_by_them() {
     card["callId"] = json!("call-7");
     let ticket = requests.register_native("p".into(), card, 10_000).unwrap();
     assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
+    confirm(&requests, "p", 10_000);
     requests.note_auto_approved("claude", "s9", Some("toolu_9"), 10_000);
     // A hook's request that names no tool call has nothing to be known by.
     requests.note_auto_approved("claude", "s9", None, 10_000);
@@ -130,6 +141,7 @@ fn an_automatic_approval_is_kept_by_its_names_and_ended_by_them() {
         .register_native("p2".into(), other, 10_001)
         .unwrap();
     assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
+    confirm(&requests, "p2", 10_001);
     // Ending what was read ends that request and no other, though they
     // share a session: by one of its names, either of them.
     let ended = ["call:call-7".to_owned(), "unknown".to_owned()];
@@ -218,35 +230,105 @@ fn a_wait_is_for_its_requests_only_where_every_reader_names_them() {
     assert!(requests.native_wait_requests().is_empty());
 }
 
-/// An approval is only as good as its answer. Where the channel reports
-/// that the automatic answer did not arrive, or that nobody confirmed it,
-/// the request is no longer among the approved: it is among those still
-/// waiting, in its own source and session, until its wait is seen to end.
+/// An approval is only as good as its answer. A request allowed at once
+/// is not among the approved until its channel confirms that the answer
+/// was delivered, in its own source and session. Where the channel reports
+/// that it did not arrive, or that nobody confirmed it, nothing is kept of
+/// it: no later word can make it approved.
 #[test]
-fn an_automatic_approval_whose_answer_did_not_arrive_is_approved_no_more() {
-    for (receipt, still_approved) in [("failed", false), ("uncertain", false), ("confirmed", true)]
-    {
+fn an_automatic_approval_counts_only_once_its_answer_is_confirmed() {
+    for (receipt, approved) in [("failed", false), ("uncertain", false), ("confirmed", true)] {
         let requests = approving();
         let card = permission("codex", Some("codex-desktop"));
         let ticket = requests.register_native("p".into(), card, 1_000).unwrap();
         assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
-        // Another session's receipt for the same id says nothing of this one.
-        requests.note_native_delivery("p", "codex", "another", "failed", None, 1_500);
-        requests.note_native_delivery("p", "claude", "s1", "failed", None, 1_500);
-        assert_eq!(requests.auto_approved(1_500)["codex:s1"], ["p"]);
-        assert!(requests.auto_unanswered(1_500).is_empty());
+        assert!(requests.auto_approved(1_000).is_empty(), "before any word");
+        // Another session's receipt for the same id says nothing of this
+        // one, whatever it says.
+        for word in ["failed", "confirmed"] {
+            requests.note_native_delivery("p", "codex", "another", word, None, 1_500);
+            requests.note_native_delivery("p", "claude", "s1", word, None, 1_500);
+        }
+        assert!(requests.auto_approved(1_500).is_empty());
 
         requests.note_native_delivery("p", "codex", "s1", receipt, None, 2_000);
-        let approved = requests.auto_approved(2_000).contains_key("codex:s1");
-        let unanswered = requests.auto_unanswered(2_000).contains_key("codex:s1");
-        assert_eq!(
-            (approved, unanswered),
-            (still_approved, !still_approved),
-            "{receipt}"
-        );
-        // Either way it ends by its name, in its session.
+        let kept = requests.auto_approved(2_000);
+        assert_eq!(kept.contains_key("codex:s1"), approved, "{receipt}");
+        // A failure is final; a confirmation after it confirms nothing.
+        confirm(&requests, "p", 2_500);
+        let kept = requests.auto_approved(2_500);
+        assert_eq!(kept.contains_key("codex:s1"), approved, "{receipt}");
+        // It ends by its name, in its session.
         requests.auto_approved_ended("codex:s1", &["p".to_owned()]);
-        assert!(requests.auto_approved(2_000).is_empty(), "{receipt}");
-        assert!(requests.auto_unanswered(2_000).is_empty(), "{receipt}");
+        assert!(requests.auto_approved(2_500).is_empty(), "{receipt}");
     }
+}
+
+/// Settling a native request ends its approval, confirmed or not: where
+/// its listener stopped before the answer left, and where the request is
+/// over in its client. A hook's approval, which no channel settles, and
+/// another request's are left.
+#[test]
+fn settling_a_native_request_ends_its_approval() {
+    for confirmed in [false, true] {
+        let requests = approving();
+        let mut card = permission("codex", Some("codex-desktop"));
+        card["callId"] = json!("call-7");
+        for id in ["p", "other"] {
+            let ticket = requests.register_native(id.into(), card.clone(), 1_000);
+            assert!(ticket.unwrap().response.try_recv().unwrap().is_some());
+        }
+        confirm(&requests, "other", 1_000);
+        requests.note_auto_approved("codex", "s1", Some("p"), 1_000);
+        if confirmed {
+            confirm(&requests, "p", 1_000);
+        }
+        requests.settle_native("p");
+        // Confirmed after it was settled: there is nothing to confirm.
+        confirm(&requests, "p", 1_001);
+        assert_eq!(
+            requests.auto_approved(1_001)["codex:s1"],
+            ["other", "call:call-7", "call:p"],
+            "confirmed before: {confirmed}"
+        );
+        // Shown again, it is a request like any other.
+        requests.set_auto_approve(AutoApprove::from_settings(&json!({})));
+        let ticket = requests.register_native("p".into(), card, 1_002).unwrap();
+        assert!(ticket.response.try_recv().is_err());
+        assert_eq!(shown(&requests), ["p"]);
+    }
+}
+
+/// A confirmed approval is kept past ten minutes only while a wait of its
+/// own session is said to be for it; one not confirmed is never kept
+/// longer, wait or no wait.
+#[test]
+fn a_confirmed_approval_is_kept_while_its_wait_is_named_for_it() {
+    let requests = approving();
+    let card = permission("codex", Some("codex-desktop"));
+    for id in ["named", "unnamed", "unconfirmed", "elsewhere"] {
+        let ticket = requests.register_native(id.into(), card.clone(), 1_000);
+        assert!(ticket.unwrap().response.try_recv().unwrap().is_some());
+    }
+    for id in ["named", "unnamed", "elsewhere"] {
+        confirm(&requests, id, 1_000);
+    }
+    let waits = |list: &[(&str, &[&str])]| -> Vec<(String, Vec<String>)> {
+        let ids = |ids: &[&str]| ids.iter().map(|id| (*id).to_owned()).collect();
+        list.iter()
+            .map(|(session, names)| ((*session).to_owned(), ids(names)))
+            .collect()
+    };
+    // Another session's wait names `elsewhere`; s1's names the other two.
+    let told = waits(&[("s1", &["named", "unconfirmed"]), ("s2", &["elsewhere"])]);
+    requests.set_native_waits("codex", "reader", &told);
+    let late = 1_000 + APPROVED_KEPT_MS;
+    assert_eq!(requests.auto_approved(late - 1)["codex:s1"].len(), 3);
+    assert_eq!(requests.auto_approved(late)["codex:s1"], ["named"]);
+    // Too late to confirm the one that was not.
+    confirm(&requests, "unconfirmed", late);
+    assert_eq!(requests.auto_approved(late)["codex:s1"], ["named"]);
+    // The wait names it no more: it goes.
+    requests.set_native_waits("codex", "reader", &waits(&[("s1", &[])]));
+    assert!(requests.auto_approved(late + 1).is_empty());
 }

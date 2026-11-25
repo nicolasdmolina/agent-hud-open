@@ -13,7 +13,7 @@ impl Tracker {
 
 impl AgentHudCore {
     /// This look's alerts, with what the rows no longer show: what cards
-    /// hid, each card's call, the requests allowed with no card, and the
+    /// hid, each card's call, the requests core holds as approved now, and the
     /// requests each session's wait is for. Core is then told which
     /// approved requests' waits the look saw end, and only those.
     pub(crate) fn sound_look(&mut self, island: &Value, sessions: &[Value], now: i64) -> Value {
@@ -21,7 +21,6 @@ impl AgentHudCore {
             sightings: self.listed_rows.as_ref().map(|(_, rows)| &rows.heard),
             calls: self.requests.calls(),
             approved: self.requests.auto_approved(now),
-            unanswered: self.requests.auto_unanswered(now),
             waits: self.requests.native_wait_requests(),
         };
         let alerts = self

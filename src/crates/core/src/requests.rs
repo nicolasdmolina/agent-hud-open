@@ -263,12 +263,10 @@ impl Requests {
         #[cfg(feature = "probes")]
         self.0.probes.called("settle_native", id);
         self.cancel(id);
-        self.0
-            .state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .dismissed
-            .remove(id);
+        let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.dismissed.remove(id);
+        // Agent HUD Fork (ticket 66): nor is it kept as approved.
+        state.approval_settled(id);
     }
     pub fn clear(&self) {
         let (pending, changed) = {

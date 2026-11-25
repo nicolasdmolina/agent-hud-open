@@ -3,6 +3,7 @@
 use super::*;
 
 mod auto_approved_sound;
+mod auto_confirmed_sound;
 mod claude_desktop;
 mod client_switches;
 mod conversation_feed;

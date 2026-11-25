@@ -1,7 +1,9 @@
 //! A request allowed automatically showed no card, so what is known to be
 //! that request makes no sound (ticket 66): a wait its channel says is for
 //! it, by its id, and a transcript sighting of its tool call. Nothing else
-//! is silent. A wait that names no request always sounds.
+//! is silent. A wait that names no request always sounds. What is approved
+//! is what core says at each look (its answer confirmed delivered): the
+//! decision remembers no approval from the look before (round 6).
 use super::*;
 
 const S1: &str = "claude:s1";
@@ -11,8 +13,9 @@ fn told_waiting(id: &str) -> Value {
     waiting(id, &[])
 }
 
-/// One look: `approved` are the requests allowed with no card, and `waits`
-/// the requests each session's wait is for, both by `source:session`.
+/// One look: `approved` are the requests core holds as approved at this
+/// look, and `waits` the requests each session's wait is for, both by
+/// `source:session`.
 fn look_with(
     tracker: &mut Tracker,
     sessions: &[Value],
@@ -64,14 +67,106 @@ fn a_wait_for_the_approved_request_makes_no_sound() {
         T + 1,
     );
     assert_eq!(alerts, [], "a request that showed no card sounded");
-    // The same wait at a later look, where core keeps the request no
-    // longer (its bound ran out): still that wait, still silent.
-    let alerts = look_with(&mut tracker, &sessions, &[], &[(S1, &["r1"])], T + 700_000);
+    // The same wait at a later look, core still holding the request.
+    let named = [(S1, &["r1"][..])];
+    let alerts = look_with(&mut tracker, &sessions, &named, &named, T + 700_000);
     assert_eq!(alerts, [], "the same wait sounded late");
     // Another session's wait is its own.
     let both = [told_waiting("s1"), told_waiting("s2")];
-    let alerts = look_with(&mut tracker, &both, &[], &[(S1, &["r1"])], T + 700_001);
+    let alerts = look_with(&mut tracker, &both, &named, &named, T + 700_001);
     assert_eq!(alerts, [needs_you("s2")]);
+}
+
+/// Round 6. The decision remembers no approval. A wait that was silent
+/// while core said its request was approved sounds at the first look
+/// where core says so no longer (the answer failed, was settled, or was
+/// not heard of in time), though the channel names the same request for
+/// it, and whenever that look comes. Once: it is the same wait after.
+#[test]
+fn a_wait_sounds_once_core_no_longer_says_its_request_is_approved() {
+    for later in [2, 600_000, 900_000] {
+        let mut tracker = started();
+        let sessions = [told_waiting("s1")];
+        let named = [(S1, &["r1"][..])];
+        assert_eq!(
+            look_with(&mut tracker, &sessions, &named, &named, T + 1),
+            []
+        );
+        assert_eq!(
+            look_with(&mut tracker, &sessions, &[], &named, T + later),
+            [needs_you("s1")],
+            "{later} ms on"
+        );
+        assert_eq!(tracker.take_ended(), [(S1.to_owned(), "r1".to_owned())]);
+        assert_eq!(
+            look_with(&mut tracker, &sessions, &[], &named, T + later + 1),
+            []
+        );
+    }
+}
+
+/// A wait for a request core never said was approved sounds at once,
+/// though it names that request alone: an answer on its way is not one.
+#[test]
+fn a_wait_for_a_request_core_does_not_say_is_approved_sounds() {
+    let mut tracker = started();
+    let sessions = [told_waiting("s1")];
+    let named = [(S1, &["r1"][..])];
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &[], &named, T + 1),
+        [needs_you("s1")]
+    );
+    // Confirmed afterwards: no second sound, and none while it goes on.
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &named, &named, T + 2),
+        []
+    );
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &named, &named, T + 3),
+        []
+    );
+}
+
+/// A card always waits for the person. One that goes by an approved
+/// request's name sounds like any card: at the first look, and after the
+/// request's own wait passed in silence.
+#[test]
+fn a_card_that_goes_by_an_approved_requests_name_sounds() {
+    let named = [(S1, &["r1"][..])];
+    let carded = [waiting("s1", &[("r1", "permission")])];
+    let mut tracker = started();
+    assert_eq!(
+        look_with(&mut tracker, &carded, &named, &named, T + 1),
+        [needs_you("s1")]
+    );
+    let mut tracker = started();
+    assert_eq!(
+        look_with(&mut tracker, &[told_waiting("s1")], &named, &named, T + 1),
+        []
+    );
+    assert_eq!(
+        look_with(&mut tracker, &carded, &[], &named, T + 2),
+        [needs_you("s1")]
+    );
+}
+
+/// A wait with no card that named its requests has sounded. A card that
+/// then comes for a request the wait did not name is another request, and
+/// sounds; the card of a request it did name is that wait, and does not.
+#[test]
+fn a_card_the_sounded_wait_did_not_name_is_new_and_one_it_named_is_not() {
+    for (card, sounds) in [("r2", 1), ("r1", 0)] {
+        let mut tracker = started();
+        let named = [(S1, &["r1"][..])];
+        assert_eq!(
+            look_with(&mut tracker, &[told_waiting("s1")], &[], &named, T + 1),
+            [needs_you("s1")]
+        );
+        let carded = [waiting("s1", &[(card, "question")])];
+        let both = [(S1, &["r1", "r2"][..])];
+        let alerts = look_with(&mut tracker, &carded, &[], &both, T + 2);
+        assert_eq!(alerts.len(), sounds, "{card}");
+    }
 }
 
 /// A wait that names no request always sounds, though a request was just
@@ -233,8 +328,15 @@ fn a_sighting_of_the_approved_call_makes_no_sound_and_another_calls_does() {
     };
     let mut tracker = started();
     assert_eq!(look(&mut tracker, "toolu_1", true, T + 1), 0);
-    assert_eq!(look(&mut tracker, "toolu_1", false, T + 60_000), 0);
-    assert_eq!(look(&mut tracker, "toolu_2", false, T + 60_001), 1);
+    assert_eq!(look(&mut tracker, "toolu_1", true, T + 60_000), 0);
+    assert_eq!(look(&mut tracker, "toolu_2", true, T + 60_001), 1);
+    // Round 6: silent only while core says the call is approved. A
+    // sighting still there when core holds it no longer (ten minutes
+    // after a hook's approval) sounds, once.
+    let mut tracker = started();
+    assert_eq!(look(&mut tracker, "toolu_1", true, T + 1), 0);
+    assert_eq!(look(&mut tracker, "toolu_1", false, T + 600_000), 1);
+    assert_eq!(look(&mut tracker, "toolu_1", false, T + 600_001), 0);
     // The control: the same sighting where nothing was approved sounds.
     let mut tracker = started();
     assert_eq!(look(&mut tracker, "toolu_1", false, T + 1), 1);
@@ -262,10 +364,12 @@ fn a_card_seen_at_the_first_look_beside_an_approval_in_its_session_sounds() {
 }
 
 /// A control from round 2, restored. The approved request's wait passes
-/// and goes on until core keeps the request no longer. A question's card
-/// that then comes in it is new, and sounds.
+/// and goes on past ten minutes, core holding the request while its wait
+/// is named. A question's card that then comes in it is new, and sounds.
+/// (Until round 6 the look at ten minutes was handed no approval and was
+/// silent by what the decision remembered. Now core says so itself.)
 #[test]
-fn a_question_card_after_the_approved_request_is_kept_no_longer_sounds() {
+fn a_question_card_late_in_the_approved_requests_wait_sounds() {
     let mut tracker = started();
     let sessions = [told_waiting("s1")];
     let named = [(S1, &["r1"][..])];
@@ -274,12 +378,13 @@ fn a_question_card_after_the_approved_request_is_kept_no_longer_sounds() {
         []
     );
     assert_eq!(
-        look_with(&mut tracker, &sessions, &[], &named, T + 600_001),
+        look_with(&mut tracker, &sessions, &named, &named, T + 600_001),
         []
     );
     let question = [waiting("s1", &[("late-question", "question")])];
+    let both = [(S1, &["r1", "late-question"][..])];
     assert_eq!(
-        look_with(&mut tracker, &question, &[], &named, T + 600_002),
+        look_with(&mut tracker, &question, &named, &both, T + 600_002),
         [needs_you("s1")]
     );
 }
@@ -300,33 +405,4 @@ fn an_approved_requests_id_silences_no_other_sessions_or_sources_wait() {
     ];
     let alerts = look_with(&mut tracker, &rows, &[(S1, &["shared-id"])], &waits, T + 1);
     assert_eq!(alerts, [needs_you("s2"), needs_you("s1")]);
-}
-
-/// The approved request's wait passes in silence. Then its answer is found
-/// not to have arrived: the wait that still names it sounds, once, though
-/// the request was approved at the look before.
-#[test]
-fn a_wait_for_a_request_whose_automatic_answer_did_not_arrive_sounds() {
-    let mut tracker = started();
-    let sessions = [told_waiting("s1")];
-    let named = [(S1, &["r1"][..])];
-    assert_eq!(
-        look_with(&mut tracker, &sessions, &named, &named, T + 1),
-        []
-    );
-    let look = |tracker: &mut Tracker, unanswered: &[&str], now: i64| {
-        let before = tracker.items.len();
-        let names = |list: &[&str]| list.iter().map(|name| (*name).to_owned()).collect();
-        let heard = Heard {
-            unanswered: [(S1.to_owned(), names(unanswered))].into(),
-            waits: [(S1.to_owned(), names(&["r1"]))].into(),
-            ..Heard::default()
-        };
-        let out = tracker.update(&no_events(), &sessions, &heard, &on(), now);
-        out["items"].as_array().unwrap().len() - before
-    };
-    assert_eq!(look(&mut tracker, &["r1"], T + 2), 1);
-    assert_eq!(tracker.take_ended(), [(S1.to_owned(), "r1".to_owned())]);
-    // Core has ended it by now: the same wait, already told.
-    assert_eq!(look(&mut tracker, &[], T + 3), 0);
 }
