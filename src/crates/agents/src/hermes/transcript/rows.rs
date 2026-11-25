@@ -8,6 +8,8 @@ use crate::hermes::session_counts;
 use crate::transcript::records::Record;
 use crate::transcript::{sql_column, sql_columns, sql_text, sql_time};
 use rusqlite::Connection;
+use std::cell::Cell;
+use std::time::{Duration, Instant};
 use std::{collections::HashSet, path::Path};
 
 /// The columns a session is read by after its rowid, id and start, in
@@ -40,7 +42,13 @@ pub(super) struct Sessions<'a> {
     pub(super) of: Profile,
     /// Whether its sessions' replies can be asked for (`replied`).
     replies: bool,
+    /// How long this read's questions about replies took so far.
+    asked: Cell<Duration>,
 }
+
+/// The most time a read's questions about replies may take together, all
+/// pages of it: past it a session's reply is not asked for and is unknown.
+const REPLY_BUDGET: Duration = Duration::from_millis(50);
 
 /// The rows one stretch held.
 #[derive(Clone, Copy, Default)]
@@ -98,6 +106,7 @@ impl<'a> Sessions<'a> {
             mirror,
             of,
             replies,
+            asked: Cell::new(Duration::ZERO),
         })
     }
 
@@ -107,16 +116,26 @@ impl<'a> Sessions<'a> {
     }
 
     /// Whether the session Hermes calls `raw` holds a reply of the model: a
-    /// stored assistant message. None where its database cannot say, or the
-    /// question fails: it never fails or holds up the read of the sessions.
+    /// stored assistant message. None where its database cannot say, the
+    /// question fails, or the read's questions have used `REPLY_BUDGET`: a
+    /// question is cut off when the budget runs out (SQLite's progress
+    /// handler, set for it alone), so all of a read's questions together add
+    /// at most about that much to it, and none fails it.
     fn replied(&self, raw: &str) -> Option<bool> {
+        let left = REPLY_BUDGET.saturating_sub(self.asked.get());
+        if !self.replies || left.is_zero() {
+            return None;
+        }
+        let started = Instant::now();
+        let deadline = started + left;
+        let cut = move || Instant::now() >= deadline;
+        self.db.progress_handler(1_000, Some(cut)).ok()?;
         let sql = "SELECT EXISTS(SELECT 1 FROM messages WHERE session_id=?1 AND role='assistant')";
-        let ask = || {
-            self.db
-                .prepare_cached(sql)?
-                .query_row([raw], |row| row.get::<_, i64>(0))
-        };
-        self.replies.then(ask)?.ok().map(|found| found != 0)
+        let found = (self.db.prepare_cached(sql))
+            .and_then(|mut question| question.query_row([raw], |row| row.get::<_, i64>(0)));
+        let _ = self.db.progress_handler(0, None::<fn() -> bool>);
+        self.asked.set(self.asked.get() + started.elapsed());
+        found.ok().map(|found| found != 0)
     }
 
     /// The rows whose rowid is in `range`, a condition over the numbers
@@ -187,7 +206,11 @@ impl<'a> Sessions<'a> {
                 .unwrap_or(started);
             // A reply stored since the last read reads the session again.
             let counts = sql_text(row, 18).unwrap_or_default();
-            let replied = self.replied(&raw);
+            // Only a session that shows no tokens is asked of its reply.
+            let counted = (10..14).any(|i| row.get::<_, Option<i64>>(i).ok().flatten() > Some(0));
+            let replied = (!counted && live_total(row)?.is_none_or(|n| n == 0))
+                .then(|| self.replied(&raw))
+                .flatten();
             let counts = match replied {
                 Some(found) => format!("{counts}/{found}"),
                 None => counts,
