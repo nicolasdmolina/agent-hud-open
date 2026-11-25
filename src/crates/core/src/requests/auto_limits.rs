@@ -118,19 +118,22 @@ impl State {
 impl State {
     /// What its channel reports of the automatic answer to the native
     /// request `id` of `session` (`source:session`): that exact id, there
-    /// and nowhere else. Confirmed, the request is
-    /// approved from now on. Failed, or confirmed by nobody, it is not
-    /// kept at all: it still waits for the person.
-    pub(super) fn answer_reported(&mut self, session: &str, id: &str, confirmed: bool) {
+    /// and nowhere else. Confirmed within the ten minutes it is kept, the
+    /// request is approved from now on. Failed, confirmed by nobody, or
+    /// confirmed too late, it is not kept at all: it still waits for the
+    /// person.
+    pub(super) fn answer_reported(&mut self, session: &str, id: &str, confirmed: bool, now: i64) {
         let named = |approved: &Approved| {
             approved.session == session && approved.native.as_deref() == Some(id)
         };
-        if confirmed {
-            for approved in self.approved.iter_mut().filter(|a| named(a)) {
-                approved.confirmed = true;
-            }
-        } else {
-            self.approved.retain(|approved| !named(approved));
+        // One not heard of in ten minutes is approved no more, and no word
+        // that comes after makes it so: it goes here, though no look came
+        // in between to drop it. A failed one goes whenever it is told.
+        let in_time = |a: &Approved| a.confirmed || now.saturating_sub(a.at_ms) < APPROVED_KEPT_MS;
+        self.approved
+            .retain(|approved| !named(approved) || (confirmed && in_time(approved)));
+        for approved in self.approved.iter_mut().filter(|a| named(a)) {
+            approved.confirmed = true;
         }
     }
 

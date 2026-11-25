@@ -215,3 +215,47 @@ fn a_question_card_beside_an_unconfirmed_requests_wait_sounds() {
     assert_eq!(lab.look(), ("waiting".into(), 1, 2));
     assert_eq!(lab.look(), ("waiting".into(), 1, 2));
 }
+
+/// The round 6 verifier's expiry probe. A permission is allowed
+/// automatically and its wait is named. Nothing is heard of the answer and
+/// the app does not look until the first confirmation comes: just before
+/// ten minutes, at ten, and at fifteen. A request not heard of in ten
+/// minutes is not approved, and no word that comes after can make it so,
+/// whether or not a look came in between to notice. Before round 7 the two
+/// late confirmations revived it, and the wait was silent.
+#[test]
+fn a_first_confirmation_after_ten_minutes_confirms_nothing() {
+    let mut sounds = Vec::new();
+    for elapsed in [599_999, 600_000, 900_000] {
+        let mut lab = Lab::new(true);
+        assert_eq!(lab.look(), ("running".into(), 0, 0));
+        assert!(lab.card(A, "permission"));
+        lab.told_waiting_for(&[A]);
+        lab.later(elapsed);
+        // The receipt comes before the first look that sees the wait.
+        lab.confirmed(A);
+        let seen = lab.look();
+        assert_eq!((seen.0.as_str(), seen.1), ("waiting", 0), "{elapsed} ms");
+        assert_eq!(lab.kept().len(), usize::from(seen.2 == 0), "{elapsed} ms");
+        assert_eq!(lab.look(), seen, "{elapsed} ms, again");
+        sounds.push(seen.2);
+    }
+    assert_eq!(sounds, [0, 1, 1]);
+}
+
+/// The same for a late word of failure after a late confirmation, and a
+/// second confirmation: nothing brings an expired request back.
+#[test]
+fn no_later_word_revives_a_request_not_heard_of_in_ten_minutes() {
+    let mut lab = Lab::new(true);
+    lab.look();
+    assert!(lab.card(A, "permission"));
+    lab.later(600_000);
+    lab.confirmed(A);
+    assert!(lab.kept().is_empty());
+    lab.later(1);
+    lab.confirmed(A);
+    lab.told_waiting_for(&[A]);
+    assert!(lab.kept().is_empty());
+    assert_eq!(lab.look(), ("waiting".into(), 0, 1));
+}

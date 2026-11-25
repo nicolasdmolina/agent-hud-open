@@ -332,3 +332,25 @@ fn a_confirmed_approval_is_kept_while_its_wait_is_named_for_it() {
     requests.set_native_waits("codex", "reader", &waits(&[("s1", &[])]));
     assert!(requests.auto_approved(late + 1).is_empty());
 }
+
+/// Round 7. A request not heard of in ten minutes is approved no more, and
+/// the first word of its answer that comes after confirms nothing, though
+/// nothing asked core in between: the receipt itself looks at the age.
+#[test]
+fn a_confirmation_that_comes_after_ten_minutes_confirms_nothing() {
+    for (late, approved) in [(APPROVED_KEPT_MS - 1, true), (APPROVED_KEPT_MS, false)] {
+        let requests = approving();
+        let card = permission("codex", Some("codex-desktop"));
+        let ticket = requests.register_native("p".into(), card, 1_000).unwrap();
+        assert_eq!(ticket.response.try_recv().unwrap(), Some(auto::allow()));
+        let waits = [("s1".to_owned(), vec!["p".to_owned()])];
+        requests.set_native_waits("codex", "reader", &waits);
+        confirm(&requests, "p", 1_000 + late);
+        let kept = requests.auto_approved(1_000 + late);
+        assert_eq!(kept.contains_key("codex:s1"), approved, "{late} ms");
+        // Confirmed in time, a second word long after changes nothing.
+        confirm(&requests, "p", 1_000 + 3 * APPROVED_KEPT_MS);
+        let kept = requests.auto_approved(1_000 + 3 * APPROVED_KEPT_MS);
+        assert_eq!(kept.contains_key("codex:s1"), approved, "{late} ms, later");
+    }
+}
