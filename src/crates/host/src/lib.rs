@@ -40,6 +40,9 @@ use service::Service;
 #[derive(Clone, Copy, serde::Serialize)]
 struct AppState {
     demo: bool,
+    /// Agent HUD Fork (ticket 78): whether the inspector is on in this build;
+    /// Settings shows its Experimental page only then.
+    inspector: bool,
 }
 
 #[tauri::command]
@@ -105,7 +108,10 @@ pub fn run_with_options(
     tauri::Builder::default()
         .manage(appearance::Appearance::load(demo))
         .manage(options.clone())
-        .manage(AppState { demo })
+        .manage(AppState {
+            demo,
+            inspector: inspect::on(),
+        })
         .invoke_handler({
             let commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 requests::native_request,

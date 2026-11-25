@@ -1,61 +1,94 @@
-//! Agent HUD Fork (ticket 78, FORK.md): upstream's inspector stays off. No
-//! clipboard watch, no browser-extension relay, no ⌥Z shortcut, and no note
-//! in any browser's folder; a note an earlier fork build left there is taken
-//! away, and one naming any other app is left alone. Settings hides the
-//! Experimental page that holds the inspector's switches
-//! (`app/src/settings/pages.ts`). To give the inspector back, set
-//! `INSPECTS` to true and drop "experimental" from that page's filter.
+//! Agent HUD Fork (ticket 78, FORK.md "Inspector off"): upstream's inspector
+//! stays off, by one switch, `INSPECTS`. Off, launch takes one step only: a
+//! browser note an earlier fork build left is removed. No picture is pruned,
+//! no note written, no clipboard watch, relay or shortcut started; the
+//! window's command refuses every request; and Settings, told by
+//! `startup_mode`, hides the Experimental page. True gives all of it back.
 use super::hosts;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// The fork's switch for upstream's inspector.
+/// The fork's one switch for upstream's inspector.
 const INSPECTS: bool = false;
 
-/// What launch starts of the inspector.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct Parts {
-    /// The thread that reads the clipboard's change counter.
-    pub(super) watch: bool,
-    /// The socket the browser extension's relay speaks to.
-    pub(super) relay: bool,
-    /// The global shortcut that calls the clipboard window up.
-    pub(super) shortcut: bool,
+/// The fork's bundle identifier, as `tauri.fork.conf.json` sets it. A note
+/// whose host sits in a bundle that says so is the fork's.
+const FORK_BUNDLE_ID: &str = "com.nickymolina.agenthud";
+
+/// Whether the inspector is on in this build.
+pub(crate) fn on() -> bool {
+    INSPECTS
 }
 
-pub(super) fn parts(demo: bool) -> Parts {
-    let on = INSPECTS && !demo;
-    Parts {
-        watch: on,
-        relay: on,
-        shortcut: on,
-    }
+/// The inspector's command, refused while it is off.
+pub(super) fn admit() -> Result<(), String> {
+    admit_with(INSPECTS)
 }
 
-/// The browsers' native-messaging notes, at launch: upstream writes one into
-/// each browser folder; the fork removes only its own.
-pub(super) fn browser_notes(home: &Path, executable: &Path) {
-    if INSPECTS {
-        hosts::install(home, executable);
+fn admit_with(on: bool) -> Result<(), String> {
+    if on {
+        Ok(())
     } else {
-        remove_own(&hosts::folders(home), executable);
+        Err("The inspector is off in this build".into())
     }
 }
 
-fn remove_own(folders: &[PathBuf], executable: &Path) {
-    for folder in folders {
+/// Each thing launch can do of the inspector. `install` acts only through
+/// these, in the order `launch` gives.
+pub(super) trait Launch {
+    /// Removes week-old pictures from `~/.agenthud/tmp`.
+    fn prune_pictures(&mut self);
+    /// Writes upstream's note into every browser folder.
+    fn write_browser_notes(&mut self);
+    /// Removes only a note that is provably the fork's.
+    fn remove_own_browser_notes(&mut self);
+    /// Starts the thread that reads the clipboard's change counter.
+    fn start_watch(&mut self);
+    /// Opens the socket the browser extension's relay speaks to.
+    fn start_relay(&mut self);
+    /// Holds the global shortcut that calls the clipboard window up.
+    fn hold_shortcut(&mut self);
+}
+
+pub(super) fn launch(demo: bool, steps: &mut impl Launch) {
+    launch_with(INSPECTS, demo, steps);
+}
+
+fn launch_with(on: bool, demo: bool, steps: &mut impl Launch) {
+    if !on {
+        if !demo {
+            steps.remove_own_browser_notes();
+        }
+        return;
+    }
+    // Upstream's launch, as it was.
+    steps.prune_pictures();
+    if demo {
+        return;
+    }
+    steps.write_browser_notes();
+    steps.start_watch();
+    steps.start_relay();
+    steps.hold_shortcut();
+}
+
+/// Removes, from each browser folder, a note that is provably the fork's.
+pub(super) fn remove_own(home: &Path, executable: &Path) {
+    for folder in hosts::folders(home) {
         let file = folder.join(format!("{}.json", hosts::NAME));
-        if names_this_app(&file, executable) {
+        if names_this_fork(&file, executable) {
             let _ = std::fs::remove_file(&file);
         }
     }
 }
 
-/// The note is upstream's, and its host is this app: this very executable,
-/// or one of the same name (an earlier build of the fork, from elsewhere).
-/// The official app's executable is named `Agent HUD`, the fork's
-/// `Agent HUD Fork`.
-fn names_this_app(file: &Path, executable: &Path) -> bool {
+/// The note is a plain file of upstream's, and its host is the fork: this
+/// very executable, or one inside an app bundle whose Info.plist names the
+/// fork's bundle identifier. Anything unreadable, linked or unclear stays.
+fn names_this_fork(file: &Path, executable: &Path) -> bool {
+    if !std::fs::symlink_metadata(file).is_ok_and(|meta| meta.is_file()) {
+        return false;
+    }
     let Some(note) = std::fs::read(file)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -66,10 +99,34 @@ fn names_this_app(file: &Path, executable: &Path) -> bool {
         return false;
     };
     note["name"] == hosts::NAME
-        && (host == executable
-            || host
-                .file_name()
-                .is_some_and(|name| Some(name) == executable.file_name()))
+        && (host == executable || bundle_identifier(host).as_deref() == Some(FORK_BUNDLE_ID))
+}
+
+/// The bundle identifier of `<name>.app/Contents/MacOS/<executable>`, read
+/// from the bundle's XML Info.plist; nothing is run. None for any other
+/// shape, or a plist that cannot be read as XML.
+fn bundle_identifier(executable: &Path) -> Option<String> {
+    let macos = executable.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    if macos.file_name()? != "MacOS"
+        || contents.file_name()? != "Contents"
+        || bundle.extension()? != "app"
+    {
+        return None;
+    }
+    let plist = std::fs::read_to_string(contents.join("Info.plist")).ok()?;
+    plist_string(&plist, "CFBundleIdentifier")
+}
+
+/// The string value of a top-level `key` in an XML plist.
+fn plist_string(plist: &str, key: &str) -> Option<String> {
+    let after = plist
+        .split_once(&format!("<key>{key}</key>"))?
+        .1
+        .trim_start();
+    let value = after.strip_prefix("<string>")?.split_once("</string>")?.0;
+    Some(value.trim().to_owned())
 }
 
 #[cfg(test)]

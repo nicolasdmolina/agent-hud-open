@@ -19,12 +19,14 @@ mod hosts;
 pub(crate) mod marking;
 mod page;
 mod shortcut;
+mod start;
 mod target;
 mod thumbnail;
 mod watch;
 
 pub(crate) use browser::relay;
 pub(crate) use commands::*;
+pub(crate) use fork::on;
 pub(crate) use shortcut::Shortcut;
 // The shortcut's callback, on the systems that hold one (`shell::CLIP_SHORTCUT`).
 #[allow(unused_imports)]
@@ -68,23 +70,17 @@ pub(crate) fn install(app: &tauri::AppHandle, demo: bool) -> Result<(), String> 
             .join(".agenthud")
             .join("tmp")
     };
-    content::prune(&pictures, KEEP_DAYS);
-    let parts = fork::parts(demo);
-    if !demo {
-        if let (Ok(home), Ok(executable)) =
-            (agent_hud_runtime::home_directory(), std::env::current_exe())
-        {
-            fork::browser_notes(&home, &executable);
-        }
-    }
+    let mut steps = start::Steps::new(app, &data, &pictures);
+    fork::launch(demo, &mut steps);
+    let (watch, browser, shortcut) = steps.started();
     app.manage(Inspect {
         draft: Mutex::new(Draft::default()),
         folder,
         pictures,
-        watch: Mutex::new(parts.watch.then(|| watch::start(app.clone())).flatten()),
-        browser: Mutex::new(parts.relay.then(|| browser::listen(app, &data)).flatten()),
+        watch: Mutex::new(watch),
+        browser: Mutex::new(browser),
     });
-    if parts.shortcut {
+    if shortcut {
         if let Some(presentation) = app.try_state::<agent_hud_hud::presentation::Presentation>() {
             shortcut::apply(app, &presentation.view());
         }

@@ -32,6 +32,8 @@ export function useHUD({ active = true }: { active?: boolean } = {}) {
   // `--demo` runs the same service on sample sources, so it reads the same way.
   const ownsPolling = !isTauri();
   const [demo, updateDemo] = useState<boolean | null>(null);
+  // Agent HUD Fork (ticket 78): whether the host's inspector is on.
+  const [inspector, setInspector] = useState(false);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -39,9 +41,10 @@ export function useHUD({ active = true }: { active?: boolean } = {}) {
     const boot = async () => {
       try {
         const mode = isTauri()
-          ? await invoke<{ demo: boolean }>("startup_mode")
+          ? await invoke<{ demo: boolean; inspector?: boolean }>("startup_mode")
           : { demo: false };
         updateDemo(mode.demo);
+        setInspector(mode.inspector === true);
       } catch (failure) {
         setError(String(failure));
         setLoading(false);
@@ -192,5 +195,13 @@ export function useHUD({ active = true }: { active?: boolean } = {}) {
     window.addEventListener("agenthud:refresh", listener);
     return () => window.removeEventListener("agenthud:refresh", listener);
   }, [refresh]);
-  return { snapshot, loading, error, demo: demo === true, refresh, act };
+  return {
+    snapshot,
+    loading,
+    error,
+    demo: demo === true,
+    inspector,
+    refresh,
+    act,
+  };
 }

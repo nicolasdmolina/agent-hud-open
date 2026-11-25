@@ -46,3 +46,12 @@ for (const language of ["en", "zh-Hans"] as const) {
     assert.ok(ids.includes("updates"));
   });
 }
+
+// The page follows the host's one switch: with the inspector on, it is back.
+test("the Experimental page shows when the host's inspector is on", () => {
+  const ids = sidebarPages([], translator("en"), "en", true).map(
+    (page) => page.id,
+  );
+  assert.ok(ids.includes("experimental"));
+  assert.ok(!ids.includes("local-network"));
+});
