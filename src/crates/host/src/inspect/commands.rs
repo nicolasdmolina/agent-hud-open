@@ -24,6 +24,8 @@ pub(crate) async fn inspect_request(
 }
 
 fn answer(app: &tauri::AppHandle, method: &str, params: &Value) -> Result<Value, String> {
+    // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+    super::fork::admit()?;
     let inspect = app.state::<Inspect>();
     match method {
         "state" => {}

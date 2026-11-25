@@ -27,6 +27,10 @@ pub(crate) struct Picture {
 impl Picture {
     /// PNG bytes, kept in `folder` as `clip-<id>.png`.
     pub(crate) fn save(png: Vec<u8>, folder: &Path, id: &str) -> Option<Self> {
+        // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+        if !super::fork::on() {
+            return None;
+        }
         let (width, height) = thumbnail::size(&png)?;
         agent_hud_runtime::delivery::private_dir(folder).ok()?;
         let path = folder.join(format!("{PREFIX}{id}.png"));
@@ -124,6 +128,10 @@ impl Content {
 /// Removes pictures kept longer than `days`: by then the session they went
 /// to has read them.
 pub(crate) fn prune(folder: &Path, days: u64) {
+    // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+    if !super::fork::on() {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(folder) else {
         return;
     };

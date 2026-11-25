@@ -82,6 +82,10 @@ fn wanted(view: &Value) -> Option<Shortcut> {
 
 /// Holds the shortcut the settings in `view` name, when it changed.
 pub(crate) fn apply(app: &tauri::AppHandle, view: &Value) {
+    // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+    if !super::fork::on() {
+        return;
+    }
     let want = wanted(view);
     let mut holding = HOLDING.lock().unwrap_or_else(PoisonError::into_inner);
     if *holding == want {

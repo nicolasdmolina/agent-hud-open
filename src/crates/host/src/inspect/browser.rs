@@ -20,6 +20,10 @@ pub(super) fn folder(data: &Path) -> PathBuf {
 
 /// Starts the socket the relay speaks to; none where it cannot open.
 pub(super) fn listen(app: &tauri::AppHandle, data: &Path) -> Option<Server> {
+    // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+    if !super::fork::on() {
+        return None;
+    }
     let app = app.clone();
     let handler = Arc::new(move |message: Value, _: &std::sync::atomic::AtomicBool| {
         match answer(&app, &message) {

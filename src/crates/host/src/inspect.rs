@@ -19,7 +19,6 @@ mod hosts;
 pub(crate) mod marking;
 mod page;
 mod shortcut;
-mod start;
 mod target;
 mod thumbnail;
 mod watch;
@@ -70,17 +69,22 @@ pub(crate) fn install(app: &tauri::AppHandle, demo: bool) -> Result<(), String> 
             .join(".agenthud")
             .join("tmp")
     };
-    let mut steps = start::Steps::new(app, &data, &pictures);
-    fork::launch(demo, &mut steps);
-    let (watch, browser, shortcut) = steps.started();
+    content::prune(&pictures, KEEP_DAYS);
+    if !demo {
+        if let (Ok(home), Ok(executable)) =
+            (agent_hud_runtime::home_directory(), std::env::current_exe())
+        {
+            hosts::install(&home, &executable);
+        }
+    }
     app.manage(Inspect {
         draft: Mutex::new(Draft::default()),
         folder,
         pictures,
-        watch: Mutex::new(watch),
-        browser: Mutex::new(browser),
+        watch: Mutex::new((!demo).then(|| watch::start(app.clone())).flatten()),
+        browser: Mutex::new((!demo).then(|| browser::listen(app, &data)).flatten()),
     });
-    if shortcut {
+    if !demo {
         if let Some(presentation) = app.try_state::<agent_hud_hud::presentation::Presentation>() {
             shortcut::apply(app, &presentation.view());
         }

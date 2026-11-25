@@ -32,6 +32,10 @@ pub(crate) fn store_url() -> Option<String> {
 
 /// Writes the note into every browser folder there is, where it differs.
 pub(super) fn install(home: &Path, executable: &Path) {
+    // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+    if !super::fork::on() {
+        return;
+    }
     let note = json!({
         "name": NAME,
         "description": "Agent HUD: sends what the browser extension picks to an agent session",
