@@ -53,6 +53,7 @@ export function SettingsWindow({
   version,
   theme,
   demo,
+  inspector,
   sourceMenu,
   error,
   loading,
@@ -76,6 +77,8 @@ export function SettingsWindow({
   version: string;
   theme: "dark" | "light";
   demo: boolean;
+  /** Agent HUD Fork (ticket 78): the host's inspector is on. */
+  inspector: boolean;
   sourceMenu: ReactNode;
   error: string | null;
   loading: boolean;
@@ -95,8 +98,8 @@ export function SettingsWindow({
   const t = useT();
   const { language } = useFormat();
   const allPages = useMemo(
-    () => sidebarPages(extensionPages, t, language),
-    [extensionPages, t, language],
+    () => sidebarPages(extensionPages, t, language, inspector),
+    [extensionPages, t, language, inspector],
   );
   const [page, setPage] = useState<Page>("display");
   // On Agents, the client whose page a link opened ("agents/claude").

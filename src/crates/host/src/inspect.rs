@@ -14,6 +14,7 @@ mod commands;
 mod compose;
 mod content;
 mod draft;
+mod fork;
 mod hosts;
 pub(crate) mod marking;
 mod page;
@@ -24,6 +25,7 @@ mod watch;
 
 pub(crate) use browser::relay;
 pub(crate) use commands::*;
+pub(crate) use fork::on;
 pub(crate) use shortcut::Shortcut;
 // The shortcut's callback, on the systems that hold one (`shell::CLIP_SHORTCUT`).
 #[allow(unused_imports)]
@@ -69,8 +71,10 @@ pub(crate) fn install(app: &tauri::AppHandle, demo: bool) -> Result<(), String> 
     };
     content::prune(&pictures, KEEP_DAYS);
     if !demo {
-        if let Ok(executable) = std::env::current_exe() {
-            hosts::install(&executable);
+        if let (Ok(home), Ok(executable)) =
+            (agent_hud_runtime::home_directory(), std::env::current_exe())
+        {
+            hosts::install(&home, &executable);
         }
     }
     app.manage(Inspect {
