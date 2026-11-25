@@ -4,6 +4,7 @@ use super::super::CodexDesktopObserver;
 use agent_hud_agents::codex::AGENT;
 use agent_hud_core::requests::{AutoApprove, Requests};
 use serde_json::{json, Value};
+use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 
 const THREAD: &str = "00000000-0000-4000-8000-000000000066";
@@ -16,11 +17,18 @@ fn state(flags: &[&str], asks: bool) -> Value {
         "threadRuntimeStatus":{"type":"active","activeFlags":flags}})
 }
 
-fn observed(requests: &Requests) -> CodexDesktopObserver {
+/// The channel, with a socket where Codex Desktop would listen that takes
+/// its connection and never answers (as `Replay`'s). With nobody there, its
+/// worker would, on its first look, find no connection and withdraw what
+/// the test streams in, as it must when Codex Desktop is gone (ticket 79).
+fn observed(requests: &Requests) -> (CodexDesktopObserver, UnixListener) {
     let temporary = tempfile::Builder::new().prefix("").tempdir().unwrap();
     let directory = temporary.path().join("w");
     std::mem::forget(temporary);
-    CodexDesktopObserver::start(directory, requests.clone(), Arc::new(|| {})).unwrap()
+    std::fs::create_dir_all(directory.join("ipc")).unwrap(); // plain directory
+    let owner = UnixListener::bind(directory.join("ipc/ipc.sock")).unwrap();
+    let observer = CodexDesktopObserver::start(directory, requests.clone(), Arc::new(|| {}));
+    (observer.unwrap(), owner)
 }
 
 /// The requests the session's wait is for, as core has them.
@@ -36,7 +44,7 @@ fn waits(requests: &Requests) -> bool {
 #[test]
 fn a_wait_names_its_request_only_where_every_part_of_it_has_one() {
     let requests = Requests::default();
-    let mut observer = observed(&requests);
+    let (mut observer, _owner) = observed(&requests);
     let now = crate::hooks::now_ms();
     // Waiting on an approval the channel registered: the wait is that
     // request's, under the id its card has.
@@ -81,7 +89,7 @@ fn a_wait_names_its_request_only_where_every_part_of_it_has_one() {
 fn the_wait_of_an_automatically_approved_request_names_it_by_the_id_core_keeps() {
     let requests = Requests::default();
     requests.set_auto_approve(AutoApprove::from_settings(&json!({"autoApprove": true})));
-    let mut observer = observed(&requests);
+    let (mut observer, _owner) = observed(&requests);
     observer
         .shared
         .reconcile(THREAD, "owner", state(&["waitingOnApproval"], true));
