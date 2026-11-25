@@ -107,6 +107,8 @@ pub(super) fn picture(inspect: &Inspect, id: &str) -> Result<Value, String> {
 /// The marked picture (`png`, base64) and its comments, in place of picture
 /// `id` in the draft.
 pub(super) fn save(app: &tauri::AppHandle, params: &Value) -> Result<Value, String> {
+    // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+    super::fork::admit()?;
     let inspect = app.state::<Inspect>();
     let id = params["id"].as_str().unwrap_or_default();
     let png = base64::engine::general_purpose::STANDARD

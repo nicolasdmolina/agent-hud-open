@@ -72,6 +72,7 @@ function AppContent({
     loading,
     error,
     demo,
+    inspector,
     refresh,
     act,
   } = useHUD({
@@ -274,6 +275,7 @@ function AppContent({
         version={version}
         theme={theme}
         demo={demo}
+        inspector={inspector}
         sourceMenu={sourceMenu}
         error={error}
         loading={loading}

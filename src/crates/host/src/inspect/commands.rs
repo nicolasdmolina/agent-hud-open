@@ -16,12 +16,16 @@ pub(crate) async fn inspect_request(
     method: String,
     params: Value,
 ) -> Result<Value, String> {
+    // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+    super::fork::admit()?;
     tauri::async_runtime::spawn_blocking(move || answer(&app, &method, &params))
         .await
         .map_err(|_| "The clipboard window's work stopped".to_owned())?
 }
 
 fn answer(app: &tauri::AppHandle, method: &str, params: &Value) -> Result<Value, String> {
+    // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+    super::fork::admit()?;
     let inspect = app.state::<Inspect>();
     match method {
         "state" => {}
