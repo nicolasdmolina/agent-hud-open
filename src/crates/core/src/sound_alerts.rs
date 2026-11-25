@@ -259,9 +259,7 @@ impl Tracker {
                 self.over(Some(name), now);
             }
         }
-        let decided = self.decided.len();
-        self.decided.retain(|_, at| now - *at < KEPT_MS);
-        self.changed |= self.decided.len() != decided;
+        self.forget(now);
         if let Some(kept) = &mut self.kept {
             kept.keep(&self.decided, std::mem::take(&mut self.changed), now);
         }
