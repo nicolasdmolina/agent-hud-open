@@ -21,9 +21,7 @@ pub(super) fn folder(data: &Path) -> PathBuf {
 /// Starts the socket the relay speaks to; none where it cannot open.
 pub(super) fn listen(app: &tauri::AppHandle, data: &Path) -> Option<Server> {
     // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
-    if !super::fork::on() {
-        return None;
-    }
+    super::fork::off_return!(None);
     let app = app.clone();
     let handler = Arc::new(move |message: Value, _: &std::sync::atomic::AtomicBool| {
         match answer(&app, &message) {
@@ -93,19 +91,24 @@ pub(crate) fn relay(arguments: &[String]) -> Option<i32> {
     {
         return None;
     }
+    Some(host(std::io::stdin().lock(), std::io::stdout().lock()))
+}
+
+/// The native host's exchange with Chrome, until either side stops.
+pub(super) fn host(mut input: impl Read, mut output: impl Write) -> i32 {
+    // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
+    super::fork::off_return!(0);
     let socket = agent_hud_runtime::local_tools_directory()
         .map(|data| folder(&data))
         .ok();
-    let mut input = std::io::stdin().lock();
-    let mut output = std::io::stdout().lock();
     loop {
         let mut length = [0u8; 4];
         if input.read_exact(&mut length).is_err() {
-            return Some(0);
+            return 0;
         }
         let mut body = vec![0u8; u32::from_ne_bytes(length) as usize];
         if input.read_exact(&mut body).is_err() {
-            return Some(0);
+            return 0;
         }
         let reply = match (serde_json::from_slice::<Value>(&body), &socket) {
             (Ok(message), Some(socket)) => request(socket, &message)
@@ -118,7 +121,7 @@ pub(crate) fn relay(arguments: &[String]) -> Option<i32> {
             .and_then(|_| output.write_all(&bytes))
             .and_then(|_| output.flush());
         if sent.is_err() {
-            return Some(0);
+            return 0;
         }
     }
 }

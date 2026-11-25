@@ -142,21 +142,60 @@ fn first_statement<'a>(source: &'a str, signature: &str) -> &'a str {
         .unwrap()
 }
 
-/// The entry points that need a running app open with the switch, so no
-/// caller reaches around it.
+/// Every entry point opens with its whole guard, one statement that
+/// returns while the inspector is off, so no caller reaches around it and no
+/// part of a guard can be left behind without the rest.
 #[test]
-fn every_entry_point_that_needs_the_app_asks_the_switch_first() {
+fn every_entry_point_opens_with_its_whole_guard() {
     let refuse = "super::fork::admit()?;";
-    let skip = "if !super::fork::on() {";
-    for (file, source, signature, gate) in [
-        ("watch.rs", include_str!("watch.rs"), "fn start(", skip),
-        ("watch.rs", include_str!("watch.rs"), "fn summon(", skip),
-        ("browser.rs", include_str!("browser.rs"), "fn listen(", skip),
+    for (file, source, signature, guard) in [
+        (
+            "hosts.rs",
+            include_str!("hosts.rs"),
+            "fn install(",
+            "super::fork::off_return!();",
+        ),
+        (
+            "content.rs",
+            include_str!("content.rs"),
+            "fn prune(",
+            "super::fork::off_return!();",
+        ),
+        (
+            "content.rs",
+            include_str!("content.rs"),
+            "fn save(",
+            "super::fork::off_return!(None);",
+        ),
+        (
+            "watch.rs",
+            include_str!("watch.rs"),
+            "fn start(",
+            "super::fork::off_return!(None);",
+        ),
+        (
+            "watch.rs",
+            include_str!("watch.rs"),
+            "fn summon(",
+            "super::fork::off_return!();",
+        ),
+        (
+            "browser.rs",
+            include_str!("browser.rs"),
+            "fn listen(",
+            "super::fork::off_return!(None);",
+        ),
+        (
+            "browser.rs",
+            include_str!("browser.rs"),
+            "fn host(",
+            "super::fork::off_return!(0);",
+        ),
         (
             "shortcut.rs",
             include_str!("shortcut.rs"),
             "fn apply(",
-            skip,
+            "super::fork::off_return!();",
         ),
         (
             "commands.rs",
@@ -171,14 +210,45 @@ fn every_entry_point_that_needs_the_app_asks_the_switch_first() {
             refuse,
         ),
         ("marking.rs", include_str!("marking.rs"), "fn save(", refuse),
-        ("hosts.rs", include_str!("hosts.rs"), "fn install(", skip),
-        ("content.rs", include_str!("content.rs"), "fn prune(", skip),
-        ("content.rs", include_str!("content.rs"), "fn save(", skip),
     ] {
         assert_eq!(
             first_statement(source, signature),
-            gate,
+            guard,
             "{file} {signature}"
         );
     }
+}
+
+/// The guard returns the value it is given, and nothing after it runs.
+#[test]
+fn the_guard_returns_at_once() {
+    fn unit(ran: &mut bool) {
+        off_return!();
+        *ran = true;
+    }
+    fn valued() -> i32 {
+        off_return!(7);
+        1
+    }
+    let mut ran = false;
+    unit(&mut ran);
+    assert!(!ran);
+    assert_eq!(valued(), 7);
+}
+
+/// Chrome starting the app as the extension's native host ends at once,
+/// with nothing read from Chrome and nothing sent back.
+#[test]
+fn the_browsers_native_host_ends_at_once() {
+    struct Untouched;
+    impl std::io::Read for Untouched {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("the native host read from the browser");
+        }
+    }
+    let mut sent = Vec::new();
+    assert_eq!(super::super::browser::host(Untouched, &mut sent), 0);
+    assert!(sent.is_empty());
+    let normal = ["Agent HUD Fork".to_owned()];
+    assert_eq!(super::super::browser::relay(&normal), None);
 }

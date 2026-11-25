@@ -5,7 +5,8 @@
 //! (`content::prune`) and writer (`Picture::save`), the clipboard watch
 //! (`watch::start`, `watch::summon`), the browser relay (`browser::listen`),
 //! the shortcut (`shortcut::apply`), the window's command and its dispatch
-//! (`commands`) and the markup save (`marking::save`). Settings, told by
+//! (`commands`), the markup save (`marking::save`) and the browser's native
+//! host (`browser::relay`'s exchange, which ends the process at once). Settings, told by
 //! `startup_mode`, hides the Experimental page while it is off. Nothing is
 //! read from, written to or removed from any browser's folder. True gives
 //! all of it back.
@@ -17,6 +18,22 @@ const INSPECTS: bool = false;
 pub(crate) fn on() -> bool {
     INSPECTS
 }
+
+/// The whole guard of an entry point: returns at once, with the value given,
+/// while the inspector is off. One statement, so it cannot be half removed.
+macro_rules! off_return {
+    () => {
+        if !$crate::inspect::fork::on() {
+            return;
+        }
+    };
+    ($value:expr) => {
+        if !$crate::inspect::fork::on() {
+            return $value;
+        }
+    };
+}
+pub(super) use off_return;
 
 /// For an entry point that answers: refused while the inspector is off.
 pub(super) fn admit() -> Result<(), String> {

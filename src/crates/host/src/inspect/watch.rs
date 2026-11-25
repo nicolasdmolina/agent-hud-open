@@ -14,9 +14,7 @@ const LOOK: Duration = Duration::from_millis(400);
 /// Starts the watch, or none where the system's clipboard cannot be watched.
 pub(super) fn start(app: tauri::AppHandle) -> Option<(mpsc::Sender<()>, JoinHandle<()>)> {
     // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
-    if !super::fork::on() {
-        return None;
-    }
+    super::fork::off_return!(None);
     // What was on the clipboard before the app started is not a copy.
     let mut seen = clipboard::change_count()?;
     let (stop, stopped) = mpsc::channel::<()>();
@@ -70,9 +68,7 @@ fn new_id() -> String {
 #[allow(dead_code)]
 pub(crate) fn summon(app: &tauri::AppHandle) {
     // Agent HUD Fork (ticket 78): nothing of the inspector runs while it is off.
-    if !super::fork::on() {
-        return;
-    }
+    super::fork::off_return!();
     let app = app.clone();
     std::thread::spawn(move || {
         let Some(inspect) = app.try_state::<Inspect>() else {
