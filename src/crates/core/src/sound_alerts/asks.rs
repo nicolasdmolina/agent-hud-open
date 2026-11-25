@@ -38,7 +38,14 @@ impl Tracker {
                 self.over(Some(old.name.clone()), now);
             }
         }
-        let name = |ask: &String| self.past(format!("needs-you:{session}:{ask}"));
+        // An ask the look before held keeps its name while it waits.
+        let kept = |ask: &String| {
+            let mut was = before.into_iter().flat_map(|wait| &wait.asks);
+            was.find(|old| old.ask == *ask).map(|old| old.name.clone())
+        };
+        let name = |ask: &String| {
+            kept(ask).unwrap_or_else(|| self.past(format!("needs-you:{session}:{ask}")))
+        };
         let named = asks.iter().map(|(request, ask)| Ask {
             request: request.clone(),
             ask: ask.clone(),

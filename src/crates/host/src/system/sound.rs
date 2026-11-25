@@ -16,9 +16,10 @@ use tauri::Manager;
 const LOG_LIMIT: u64 = 256 * 1024;
 
 pub struct Sounds {
-    /// The alert ids the last snapshot carried. Core keeps an alert in its
-    /// list until it is older than the list, and never brings one back, so
-    /// an id seen once is never played again.
+    /// The alert ids the last snapshot carried. An id plays unless the
+    /// snapshot before carried it: core keeps an alert in its list until
+    /// it is older than the list, and never gives a later wait the id of
+    /// an alert the list still carries (Agent HUD Fork, ticket 75).
     played: Mutex<HashSet<String>>,
     log: PathBuf,
 }

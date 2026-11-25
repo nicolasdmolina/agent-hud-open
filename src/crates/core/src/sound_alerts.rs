@@ -181,7 +181,7 @@ impl Tracker {
                 let names: Vec<String> = request
                     .names
                     .iter()
-                    .map(|name| format!("needs-you:{source}:{id}:{name}"))
+                    .map(|name| self.current(format!("needs-you:{source}:{id}:{name}")))
                     .collect();
                 // New only if it goes by no name decided before; all its
                 // names are decided now. Every name is checked before any is
@@ -221,7 +221,7 @@ impl Tracker {
                 // The approved requests' wait: the one before it is over.
                 self.over(lent.take(), now);
             } else if unnamed {
-                let (identity, borrowed) = self.bare_name(session, source, id);
+                let (identity, borrowed) = self.bare_name(session, source, id, before);
                 lent = borrowed.then(|| identity.clone());
                 if self.first(&identity, now) && before.is_none_or(|p| p.silent) {
                     told = Some(identity);

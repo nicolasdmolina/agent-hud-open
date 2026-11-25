@@ -12,7 +12,12 @@
 //! an id once while its last snapshot carries it, and the snapshot keeps
 //! the last 32 alerts however old: a mark forgotten after a day would
 //! give a later wait the name of an alert still there, and it would be
-//! silent. So few marks are kept that way: one per alert at most.
+//! silent. A wait that goes on keeps the name it was decided under, and
+//! a mark stays while the name after it is remembered: a wait that went
+//! on for over a day, or through a relaunch, never falls back to an older
+//! name, and the wait after it is never given one decided for it (round
+//! 2). Few marks are kept past their day: one per carried alert, and one
+//! per name still remembered that came after a mark.
 use super::{Tracker, Wait, KEPT_MS};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -23,7 +28,13 @@ const OVER: &str = "/over";
 impl Tracker {
     /// The name the wait with no card of `session` goes by now, and whether
     /// its time is borrowed.
-    pub(super) fn bare_name(&self, session: &Value, source: &str, id: &str) -> (String, bool) {
+    pub(super) fn bare_name(
+        &self,
+        session: &Value,
+        source: &str,
+        id: &str,
+        before: Option<&Wait>,
+    ) -> (String, bool) {
         let facts = &session["liveFacts"];
         let own = facts["attention"]["at"].as_str();
         let since = own
@@ -33,8 +44,21 @@ impl Tracker {
         let name = format!("needs-you:{source}:{id}:{since}");
         match own {
             Some(_) => (name, false),
-            // Past every wait that went by this time and was seen to end.
-            None => (self.past(name), true),
+            // The name it was decided under while it goes on; otherwise
+            // past every wait that went by this time and was seen to end.
+            None => {
+                let lent = before.and_then(|wait| wait.lent.as_ref());
+                let after = |lent: &&String| {
+                    lent.strip_prefix(name.as_str())
+                        .is_some_and(|rest| rest.bytes().all(|b| b == b'+'))
+                };
+                (
+                    lent.filter(after)
+                        .cloned()
+                        .unwrap_or_else(|| self.past(name)),
+                    true,
+                )
+            }
         }
     }
 
@@ -42,6 +66,19 @@ impl Tracker {
     /// was seen to end.
     pub(super) fn past(&self, mut name: String) -> String {
         while self.decided.contains_key(&format!("{name}{OVER}")) {
+            name.push('+');
+        }
+        name
+    }
+
+    /// The name a card goes by: `name`, unless it was forgotten while the
+    /// mark that its wait is over stayed (its alert is still carried), and
+    /// then the name after it. A card a day after its request waited with
+    /// no card is then heard.
+    pub(super) fn current(&self, mut name: String) -> String {
+        while !self.decided.contains_key(&name)
+            && self.decided.contains_key(&format!("{name}{OVER}"))
+        {
             name.push('+');
         }
         name
@@ -67,7 +104,15 @@ impl Tracker {
                 self.over(Some(name.clone()), now);
             }
         }
-        let name = |request: &String| self.past(format!("needs-you:{session}:{request}"));
+        // A request the wait named before keeps its name while it waits.
+        let kept = |request: &String| {
+            let mut was = before.into_iter().flat_map(|wait| &wait.named);
+            was.find(|(r, _)| r == request)
+                .map(|(_, name)| name.clone())
+        };
+        let name = |request: &String| {
+            kept(request).unwrap_or_else(|| self.past(format!("needs-you:{session}:{request}")))
+        };
         named.iter().map(|r| (r.clone(), name(r))).collect()
     }
 
@@ -88,12 +133,14 @@ impl Tracker {
 
     /// Forgets every identity last among the inputs a day ago, but the
     /// mark that a name is over while an alert the snapshot carries goes
-    /// by that name.
+    /// by that name, or while the name after it is remembered.
     pub(super) fn forget(&mut self, now: i64) {
-        let carried: HashSet<String> = self.carried().into_iter().map(str::to_owned).collect();
+        let mut kept: HashSet<String> = self.carried().into_iter().map(str::to_owned).collect();
+        let after = self.decided.keys().filter_map(|id| id.strip_suffix('+'));
+        kept.extend(after.map(str::to_owned).collect::<Vec<_>>());
         let decided = self.decided.len();
         self.decided.retain(|id, at| {
-            now - *at < KEPT_MS || id.strip_suffix(OVER).is_some_and(|n| carried.contains(n))
+            now - *at < KEPT_MS || id.strip_suffix(OVER).is_some_and(|n| kept.contains(n))
         });
         self.changed |= self.decided.len() != decided;
     }
