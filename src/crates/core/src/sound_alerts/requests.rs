@@ -15,9 +15,18 @@ pub(crate) struct Heard<'a> {
     pub sightings: Option<&'a crate::presentation::requests::Heard>,
     /// The tool call each waiting card holds, by card id, where named.
     pub calls: HashMap<String, String>,
+    /// The requests allowed automatically, with no card, whose answer is
+    /// confirmed delivered: by `source:session`, the names each goes by
+    /// (`Requests::auto_approved`), as core holds them at this look.
+    pub approved: HashMap<String, Vec<String>>,
+    /// The requests each session's wait is for, by `source:session`, where
+    /// its channel names them all (`Requests::native_wait_requests`).
+    pub waits: HashMap<String, Vec<String>>,
 }
 pub(super) struct Request {
     pub names: Vec<String>,
+    /// It shows a card: it waits for the person, whatever was approved.
+    pub card: bool,
 }
 struct Row<'a> {
     kind: &'a Value,
@@ -84,9 +93,14 @@ pub(super) fn requests(session: &Value, source: &str, id: &str, heard: &Heard) -
             cards[*c].names.extend(names);
         }
     }
+    let request = |card| {
+        move |r: Row| Request {
+            names: r.names,
+            card,
+        }
+    };
+    let cards = cards.into_iter().map(request(true));
     cards
-        .into_iter()
-        .chain(sightings)
-        .map(|r| Request { names: r.names })
+        .chain(sightings.into_iter().map(request(false)))
         .collect()
 }

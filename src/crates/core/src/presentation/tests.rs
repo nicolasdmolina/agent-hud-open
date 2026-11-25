@@ -435,7 +435,7 @@ fn verifier_process_exit_does_not_resurrect_hidden_question_or_sound_twice() {
     let raw = p.heard.into_inner();
     let heard = crate::sound_alerts::Heard {
         sightings: Some(&raw),
-        calls: Default::default(),
+        ..Default::default()
     };
     assert_eq!(sound.update(&events,&[row],&heard,&settings,1_000_001)["revision"],1,"an exited process has no question to answer; its already-sounded question must not sound again");
 }

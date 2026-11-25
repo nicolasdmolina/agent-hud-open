@@ -16,6 +16,7 @@ import {
   type EnterCard,
   type EnterKey,
 } from "../src/permissions/enter-submit.ts";
+import { translator } from "@agent-hud/ui/format";
 import { permissionChoices } from "../src/permissions/permission-choices.ts";
 
 const enter = (patch: Partial<EnterKey> = {}): EnterKey => ({
@@ -137,7 +138,8 @@ test("Enter presses no approving button, only Deny", () => {
   };
   const lasting = { allowsAlways: true };
   for (const request of [card, lasting, { allowsAlways: false }])
-    for (const choice of permissionChoices(request))
+    // Since the 0.6.7 sync the buttons take their words from a catalog.
+    for (const choice of permissionChoices(request, translator("en")))
       assert.equal(
         holdsEnter(choice.tone),
         choice.tone !== "deny",

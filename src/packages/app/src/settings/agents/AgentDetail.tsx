@@ -1,8 +1,10 @@
-/* One agent's settings: its switches, where its accounts come from, what the
- * panel shows of it, the relays it uses and its API credentials. */
-import { useState } from "react";
-import { RefreshCw } from "lucide-react";
+/* One agent's own page: whether Agent HUD follows it, the step it still
+ * waits for, the features it uses (each can be turned off for it alone) with
+ * what Agent HUD puts into it (its plugin, HUD tools), and its accounts: in full when it is its vendor's only client, else as a list
+ * that leads to the vendor's page, where they are set. */
+import { ChevronLeft, RefreshCw } from "lucide-react";
 import type {
+  ClientRow,
   NativeMethod,
   PanelLayout,
   Provider,
@@ -10,26 +12,26 @@ import type {
   SourcePreferences,
 } from "@agent-hud/protocol";
 import { Button } from "@agent-hud/ui/components/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@agent-hud/ui/components/tooltip";
-import { HUDArtwork as HUDLogo } from "@agent-hud/hud/HUDArtwork";
+import { AgentLogo } from "../AgentLogo";
 import { LinkButton, ToggleRow } from "../SettingsControls";
-import { Notice, Page, Section, type Text } from "../SettingsPrimitives";
-import AccountHomes from "../AccountHomes";
-import AntigravityAccounts from "../AntigravityAccounts";
-import { CodexModelSettings } from "../CodexModelSettings";
-import { PanelBlocks } from "./PanelBlocks";
-import { AgentRelays } from "./AgentRelays";
-import { AgentWebSignIn } from "./AgentWebSignIn";
-import { Connection } from "./Connection";
+import { Notice, Page, Section } from "../SettingsPrimitives";
+import type { Translate } from "@agent-hud/ui/format";
+import { AgentAccounts } from "./AgentAccounts";
+import { ClientAccounts } from "./ClientSections";
+import { ClientFeatures } from "./ClientFeatures";
+import { useClientInstalls } from "./ClientInstalls";
 import { MachinesSection } from "./MachinesSection";
+import type { AgentPluginItem } from "../agent-plugins/types";
+import type { HudTools, McpClients } from "../agent-plugins/use-status";
+import { hookStep } from "./steps";
+import { usePerform } from "./use-perform";
 
 export interface AgentDetailProps {
-  t: Text;
+  t: Translate;
   snapshot: Snapshot;
+  /** The client this page sets. */
+  client: ClientRow;
+  /** The agent whose data the client shares. */
   source: Provider;
   active?: boolean;
   action: (
@@ -40,11 +42,23 @@ export interface AgentDetailProps {
   onLayout: (layout: PanelLayout) => Promise<unknown>;
   preferences: Record<string, SourcePreferences>;
   onPreferences: (source: string, patch: SourcePreferences) => Promise<unknown>;
+  /** Back to the list of agents. */
+  back: () => void;
+  /** Opens the vendor's page; none for a vendor of this one client, whose
+   * accounts this page shows itself. */
+  openGroup?: () => void;
+  /** Which clients have HUD tools, and the app-wide switch for them. */
+  clients: McpClients;
+  tools: HudTools;
+  /** A product build's own rows for this client. */
+  items: AgentPluginItem[];
+  request: (method: string, params?: unknown) => Promise<unknown>;
 }
 
 export function AgentDetail({
   t,
   snapshot,
+  client,
   source,
   active,
   action,
@@ -52,244 +66,117 @@ export function AgentDetail({
   onLayout,
   preferences,
   onPreferences,
+  back,
+  openGroup,
+  clients,
+  tools,
+  items,
+  request,
 }: AgentDetailProps) {
-  // One save at a time. Its failure shows at the top of the detail, or through
-  // `report` where the caller shows it beside its own buttons (Connection,
-  // at the bottom of the page, where the top is out of view).
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function perform(
-    job: () => Promise<unknown>,
-    report: (message: string) => void = setError,
-  ) {
-    setPending(true);
-    setError(null);
-    try {
-      await job();
-      return true;
-    } catch (error) {
-      report(String(error));
-      return false;
-    } finally {
-      setPending(false);
-    }
-  }
-
-  const enabled = source.enabled;
-  // What the client needs before it runs the hooks Agent HUD put in, such as
-  // TRAE's own hooks switch.
-  const hookStep =
-    snapshot.connection.clientHooks?.clients?.find(
-      (client) => client.source === source.id && client.installed,
-    )?.notice ?? null;
-  // The clients whose approval hook goes in only once the user turns it on.
-  const optInApprovals = snapshot.settings.optInApprovals ?? [];
-  const live = preferences[source.id]?.live !== false;
-  const reminders = preferences[source.id]?.reminders !== false;
-  const offReason = t("Turn on Enabled first.", "请先启用。");
-  const refreshLabel = t("Read all agents again", "重新读取所有智能体");
+  const { pending, error, setError, perform } = usePerform();
+  const installs = useClientInstalls({
+    client,
+    snapshot,
+    clients,
+    tools,
+    items,
+    request,
+    active: active ?? true,
+    t,
+  });
+  // The step the agent wants before it runs Agent HUD's hooks, such as
+  // Codex's review, or that it gets none on this system yet: a warning while
+  // the agent says it waits for it, else a line under its switch.
+  const step = hookStep(snapshot, source.id);
+  const footer =
+    [source.notice, step && !step.waiting ? step.text : null]
+      .filter(Boolean)
+      .join(" ") || undefined;
+  const refreshLabel = t("Read all agents again");
 
   return (
     <Page>
+      <div className="agents-back">
+        <LinkButton onClick={back}>
+          <ChevronLeft size={13} />
+          {t("Agents")}
+        </LinkButton>
+      </div>
       <header className="agents-detail-header">
-        <HUDLogo source={source.id} size={24} />
+        <AgentLogo source={client.agent} size={24} />
         <div className="agents-detail-title">
-          <h2>{source.name}</h2>
-          {!source.detected && (
-            <p>{t("Not on this computer", "未在这台电脑上发现")}</p>
-          )}
+          <h2>{client.name}</h2>
+          {!client.detected && <p>{t("Not on this computer")}</p>}
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={refreshLabel}
-              disabled={pending}
-              onClick={() => void perform(() => action("refresh"))}
-            >
-              <RefreshCw size={14} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{refreshLabel}</TooltipContent>
-        </Tooltip>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={refreshLabel}
+          title={refreshLabel}
+          disabled={pending}
+          onClick={() => void perform(() => action("refresh"))}
+        >
+          <RefreshCw size={14} />
+        </Button>
       </header>
       {error && (
         <Notice
           tone="error"
           action={
             <LinkButton onClick={() => setError(null)}>
-              {t("Dismiss", "关闭")}
+              {t("Dismiss")}
             </LinkButton>
           }
         >
           {error}
         </Notice>
       )}
-      <Section footer={source.notice ?? hookStep ?? undefined}>
+      {client.enabled && step?.waiting && <Notice>{step.text}</Notice>}
+      <Section footer={footer}>
         <ToggleRow
-          title={t("Enabled", "启用")}
-          checked={enabled}
+          title={t("Enabled")}
+          checked={client.enabled}
           disabled={pending}
           change={(value) =>
             void perform(() =>
-              action("set_provider", { id: source.id, enabled: value }),
+              action("set_provider", { id: client.id, enabled: value }),
             )
           }
         />
-        <ToggleRow
-          title={t("Live status", "实时状态")}
-          subtitle={t(
-            "Running and waiting sessions on the HUD.",
-            "在 HUD 上显示运行和等待中的会话。",
-          )}
-          checked={live}
-          disabled={pending || !enabled}
-          reason={!enabled ? offReason : undefined}
-          change={(value) =>
-            void perform(() => onPreferences(source.id, { live: value }))
-          }
-        />
-        <ToggleRow
-          title={t("Completion reminders", "完成提醒")}
-          checked={live && reminders}
-          disabled={pending || !enabled || !live}
-          reason={
-            !enabled
-              ? offReason
-              : !live
-                ? t("Needs Live status.", "需要先打开实时状态。")
-                : undefined
-          }
-          change={(value) =>
-            void perform(() => onPreferences(source.id, { reminders: value }))
-          }
-        />
       </Section>
-      <div
-        className={`agents-detail-rest${enabled ? "" : " is-off"}`}
-        inert={!enabled}
-      >
-        {source.id === "codex" && (
-          <AccountHomes
-            t={t}
-            label={t("More Codex accounts", "更多 Codex 账户")}
-            variable="CODEX_HOME"
-            placeholder="~/.codex-work"
-            homes={snapshot.settings.codexHomes ?? []}
-            onSave={(homes) =>
-              action("set_setting", { key: "codexHomes", value: homes })
-            }
-          />
-        )}
-        {source.id === "claude" && (
-          <AccountHomes
-            t={t}
-            label={t("More Claude Code accounts", "更多 Claude Code 账户")}
-            variable="CLAUDE_CONFIG_DIR"
-            placeholder="~/.claude-work"
-            homes={snapshot.settings.claudeHomes ?? []}
-            onSave={(homes) =>
-              action("set_setting", { key: "claudeHomes", value: homes })
-            }
-          />
-        )}
-        {source.id === "antigravity" && (
-          <AntigravityAccounts
-            t={t}
-            settings={snapshot.settings.antigravityCliSettings ?? []}
-            action={action}
-          />
-        )}
-        {source.id === "copilot" && (
-          <Section>
-            <ToggleRow
-              title={t("Read GitHub Copilot quota", "读取 GitHub Copilot 额度")}
-              subtitle={t(
-                "Uses the GitHub sign-in on this computer.",
-                "使用这台电脑上已登录的 GitHub 账号。",
-              )}
-              checked={snapshot.settings.readCopilotQuota === true}
-              disabled={pending}
-              change={(value) =>
-                void perform(() =>
-                  action("set_setting", { key: "readCopilotQuota", value }),
-                )
-              }
-            />
-          </Section>
-        )}
-        {source.id === "copilot" && (
-          <Section
-            footer={
-              snapshot.settings.clientHooks
-                ? undefined
-                : t(
-                    "Takes effect once client hooks are on in Agent plugins.",
-                    "在「智能体插件」里打开客户端回调后生效。",
-                  )
-            }
-          >
-            <ToggleRow
-              title={t(
-                "Answer permission requests in the HUD",
-                "在 HUD 上回答权限请求",
-              )}
-              subtitle={t(
-                "Copilot then asks Agent HUD before its own rules and this session's approvals, so every tool call it would run or ask about waits for your answer in the HUD. Runs started with -p, --allow-all-tools, --allow-all or --yolo stay with Copilot.",
-                "Copilot 会先问 Agent HUD，再看自己的规则和本会话的批准，所以它要运行或询问的每次工具调用都会在 HUD 上等你回答。用 -p、--allow-all-tools、--allow-all 或 --yolo 启动的运行仍由 Copilot 自己处理。",
-              )}
-              checked={optInApprovals.includes(source.id)}
-              disabled={pending}
-              change={(value) =>
-                void perform(() =>
-                  action("set_setting", {
-                    key: "optInApprovals",
-                    value: [
-                      ...optInApprovals.filter((id) => id !== source.id),
-                      ...(value ? [source.id] : []),
-                    ],
-                  }),
-                )
-              }
-            />
-          </Section>
-        )}
-        <MachinesSection t={t} snapshot={snapshot} source={source} />
-        <PanelBlocks
+      <ClientFeatures
+        t={t}
+        snapshot={snapshot}
+        client={client}
+        action={action}
+        preferences={preferences}
+        onPreferences={onPreferences}
+        perform={perform}
+        pending={pending}
+        installs={installs}
+      />
+      {/* Agent HUD Fork (ticket 38): the machines its channel follows. */}
+      <MachinesSection t={t} snapshot={snapshot} source={source} />
+      {openGroup ? (
+        <ClientAccounts
+          t={t}
+          snapshot={snapshot}
+          client={client}
+          openGroup={openGroup}
+        />
+      ) : (
+        <AgentAccounts
           t={t}
           snapshot={snapshot}
           source={source}
+          active={active}
+          action={action}
           layout={layout}
           onLayout={onLayout}
           perform={perform}
           pending={pending}
         />
-        {source.id === "codex" && (
-          <CodexModelSettings
-            snapshot={snapshot}
-            action={action}
-            active={active}
-            layout={layout}
-            onLayout={onLayout}
-          />
-        )}
-        <AgentRelays t={t} snapshot={snapshot} source={source} />
-        <AgentWebSignIn
-          t={t}
-          source={source}
-          action={action}
-          perform={perform}
-          pending={pending}
-        />
-        <Connection
-          t={t}
-          source={source}
-          action={action}
-          perform={perform}
-          pending={pending}
-        />
-      </div>
+      )}
     </Page>
   );
 }

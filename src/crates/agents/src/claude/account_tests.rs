@@ -885,13 +885,145 @@ fn a_failed_folder_shows_its_record_stale_beside_the_folders_that_read() {
     assert_eq!(reading.account.unwrap()["label"], "work@example.com");
 }
 
+/// A signed-in engine and the desktop app are both read; a desktop sign-in
+/// that fails, for an account no folder reads, is a notice beside the
+/// engine's windows.
 #[test]
-fn a_signed_in_engine_never_reads_the_desktop_app() {
+fn a_signed_in_engine_reads_the_desktop_app_too() {
     let mut host = installed(limits());
     host.cookies.insert(
         "Claude|claude.ai|sessionKey".into(),
         Answer::Found("sk-ant-sid01-secret".into()),
     );
-    assert_eq!(read(&host).unwrap().quotas.len(), 2);
-    assert!(host.asked.borrow().is_empty());
+    let reading = read(&host).unwrap();
+    assert_eq!(reading.quotas.len(), 2);
+    assert!(!host.asked.borrow().is_empty());
+    assert!(reading.notice.unwrap().starts_with("Claude Desktop: "));
+}
+
+fn desktop_signed_in(host: FakeHost, user: &str) -> FakeHost {
+    let mut host = host
+        .file(
+            "/u/AppData/Claude/config.json",
+            &json!({"lastKnownAccountUuid": user}).to_string(),
+        )
+        .answer(
+            "https://claude.ai/api/account",
+            Ok(json!({"email_address": "desk@example.com", "memberships": [
+                {"organization": {"uuid": "0a1b-2c3d", "rate_limit_tier": "default_claude_max_5x"}},
+            ]})),
+        )
+        .answer(
+            "https://claude.ai/api/organizations/0a1b-2c3d/usage",
+            Ok(web_limits()),
+        );
+    host.cookies.insert(
+        "Claude|claude.ai|sessionKey".into(),
+        Answer::Found("sk-ant-sid01-secret".into()),
+    );
+    host.cookies.insert(
+        "Claude|claude.ai|lastActiveOrg".into(),
+        Answer::Found("0a1b-2c3d".into()),
+    );
+    host
+}
+
+/// The desktop app signed in to another account than Claude Code: each is
+/// read, with its own windows (a desktop app and a command line are separate
+/// clients).
+#[test]
+fn the_desktop_apps_other_account_is_read_beside_claude_codes() {
+    let host = desktop_signed_in(installed(limits()), "user-9");
+    let reading = read(&host).unwrap();
+    let labels: Vec<_> = reading
+        .account
+        .iter()
+        .chain(&reading.additional_accounts)
+        .map(|account| account["label"].clone())
+        .collect();
+    assert_eq!(labels, [json!("me@example.com"), json!("desk@example.com")]);
+    // Each read through its own client: neither is merged.
+    assert_eq!(
+        reading.account.as_ref().unwrap()["readBy"],
+        json!(["claude"])
+    );
+    assert_eq!(
+        reading.additional_accounts[0]["readBy"],
+        json!(["claude-desktop"])
+    );
+    let desktop = account_id("claude", &["user-9", "0a1b-2c3d"]);
+    assert!(reading
+        .quotas
+        .iter()
+        .any(|row| row["id"] == format!("{desktop}:claude-session")));
+    assert_eq!(reading.quotas.len(), 5);
+}
+
+/// The desktop app on Claude Code's own account is read too and shows once:
+/// Claude Code's windows, with any the desktop app's reading adds.
+#[test]
+fn the_desktop_apps_same_account_shows_once() {
+    let host = desktop_signed_in(installed(limits()), "user-1").file(
+        "/u/.claude.json",
+        &json!({"oauthAccount": {
+            "accountUuid": "user-1", "organizationUuid": "0a1b-2c3d",
+            "emailAddress": "me@example.com", "organizationType": "claude_max",
+        }})
+        .to_string(),
+    );
+    let reading = read(&host).unwrap();
+    assert!(reading.additional_accounts.is_empty());
+    // Read through both clients: merged.
+    assert_eq!(
+        reading.account.as_ref().unwrap()["readBy"],
+        json!(["claude", "claude-desktop"])
+    );
+    // Claude Code's session and weekly windows, and the Fable window only
+    // the desktop app's reading has.
+    assert_eq!(reading.quotas.len(), 3);
+    assert_eq!(reading.quotas[0]["usedPercent"], 12.0);
+    assert_eq!(host.asked.borrow().len(), 1);
+    assert_eq!(reading.notice, None);
+}
+
+/// Claude Code on an API key or a relay, the desktop app on a subscription:
+/// the desktop app's account shows, and Claude Code's "no plan limits" is no
+/// news beside it (its own page tells where its calls go).
+#[test]
+fn a_login_without_plan_limits_is_no_news_beside_the_desktop_apps_account() {
+    let mut host = installed(json!({
+        "subtype": "success", "response": {"rate_limits_available": false},
+    }));
+    host.engine_output
+        .insert("auth".into(), vec![json!({"loggedIn": true})]);
+    let reading = read(&desktop_signed_in(host, "user-9")).unwrap();
+    assert_eq!(reading.account.unwrap()["label"], "desk@example.com");
+    assert!(!reading.quotas.is_empty());
+    assert_eq!(reading.notice, None);
+}
+
+/// The desktop app on Claude Code's account, its own reading refused by
+/// claude.ai's browser check: nothing is said, and the account is still used
+/// in both.
+#[test]
+fn the_desktop_apps_account_counts_as_merged_when_its_reading_fails() {
+    let host = desktop_signed_in(installed(limits()), "user-1")
+        .file(
+            "/u/.claude.json",
+            &json!({"oauthAccount": {
+                "accountUuid": "user-1", "organizationUuid": "0a1b-2c3d",
+                "emailAddress": "me@example.com", "organizationType": "claude_max",
+            }})
+            .to_string(),
+        )
+        .answer(
+            "https://claude.ai/api/organizations/0a1b-2c3d/usage",
+            Err(HttpFailure::Challenged),
+        );
+    let reading = read(&host).unwrap();
+    assert_eq!(reading.notice, None);
+    assert_eq!(
+        reading.account.unwrap()["readBy"],
+        json!(["claude", "claude-desktop"])
+    );
 }

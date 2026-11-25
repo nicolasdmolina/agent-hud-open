@@ -14,7 +14,7 @@
 //! Code fetched it, and touching no identity field or credential to do so,
 //! follows QuotaView (github.com/duoasa/quotaview, MIT,
 //! `ClaudeCodeAccountProfile.decode`).
-use crate::l10n;
+use crate::l10n::tr;
 use serde_json::Value;
 
 /// How old a record can be and still stand for a reading made now. Claude
@@ -22,8 +22,8 @@ use serde_json::Value;
 /// the server, while it is under a minute old (`rt`, 60 000 ms in 2.1.316),
 /// so a record that young is what the engine would answer: reading it
 /// instead only saves starting the engine. Agent HUD's own readings write
-/// the record most of the time and are at least 60 s apart (150 s while a
-/// turn runs, 300 s otherwise), so a longer bound would read Agent HUD's
+/// the record most of the time and are at least 60 s apart (2–3 minutes
+/// while a turn runs, 4–5 otherwise), so a longer bound would read Agent HUD's
 /// previous answer back as a new one and halve how often the quota is
 /// really read.
 pub const FRESH_MS: i64 = 60_000;
@@ -49,11 +49,10 @@ impl Record<'_> {
     /// Says that the windows shown are this record's, and how old it is.
     pub fn shown(&self, now_ms: i64) -> String {
         let age = age(self.age_ms(now_ms));
-        if l10n::chinese() {
-            format!("显示的是 Claude Code {age} 前记下的读数")
-        } else {
-            format!("Showing Claude Code's own reading from {age} ago")
-        }
+        tr!(
+            "Showing Claude Code's own reading from {{age}} ago",
+            age = age
+        )
     }
 }
 

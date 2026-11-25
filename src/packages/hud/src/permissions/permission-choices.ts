@@ -1,4 +1,5 @@
 import type { Approval, RequestDecision } from "@agent-hud/protocol";
+import type { Translate } from "@agent-hud/ui/format";
 
 /** One button on a permission card, and the decision it sends. */
 export interface PermissionChoice {
@@ -33,9 +34,8 @@ export function permissionChoices(
     Approval,
     "allowsAlways" | "suggestions" | "alwaysAllowRule" | "allowLabel"
   >,
-  zh = false,
+  t: Translate,
 ): PermissionChoice[] {
-  const t = (en: string, cn: string) => (zh ? cn : en);
   const named = (request.suggestions ?? []).filter(labelled);
   const lasting: PermissionChoice[] = named.length
     ? named.map((suggestion) => ({
@@ -47,18 +47,18 @@ export function permissionChoices(
       ? [
           {
             tone: "lasting",
-            label: t("Always allow", "总是允许"),
+            label: t("Always allow"),
             decision: { kind: "always" },
             title: request.alwaysAllowRule ?? undefined,
           },
         ]
       : [];
   return [
-    { tone: "deny", label: t("Deny", "拒绝"), decision: { kind: "deny" } },
+    { tone: "deny", label: t("Deny"), decision: { kind: "deny" } },
     ...lasting,
     {
       tone: "allow",
-      label: request.allowLabel ?? t("Allow once", "批准一次"),
+      label: request.allowLabel ?? t("Allow once"),
       decision: { kind: "allow" },
     },
   ];

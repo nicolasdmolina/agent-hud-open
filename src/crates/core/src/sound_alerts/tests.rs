@@ -1,5 +1,7 @@
 use super::*;
 
+mod again;
+mod approved;
 mod relaunch;
 
 const T: i64 = 1_800_000_000_000;
@@ -86,6 +88,7 @@ fn look(
     let heard = Heard {
         sightings: Some(&sightings),
         calls,
+        ..Heard::default()
     };
     let out = tracker.update(island, &sessions, &heard, settings, now);
     out["items"]

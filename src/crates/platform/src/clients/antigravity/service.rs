@@ -1,6 +1,6 @@
 //! Shared acquisition of an already-running Antigravity service. Account and
 //! approval adapters share discovery; no app/server is launched or signed in.
-use agent_hud_core::l10n;
+use agent_hud_core::l10n::tr;
 use reqwest::{blocking::Client, header::HeaderValue};
 use serde_json::{json, Value};
 use std::{
@@ -8,8 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod answers;
 mod message;
 mod running;
+
+use answers::answer_error;
 
 pub use message::{message_session, MessageError, MessageSession};
 
@@ -19,6 +22,8 @@ pub struct Endpoint {
     port: u16,
     pid: u32,
     csrf: HeaderValue,
+    /// The client the server belongs to (`running::Server::client`).
+    client: &'static str,
 }
 impl Endpoint {
     pub fn identity(&self) -> String {
@@ -76,7 +81,8 @@ fn allowed(method: &str) -> Result<(), String> {
         "GetUserStatus"
             | "RetrieveUserQuotaSummary"
             | "GetAllCascadeTrajectories"
-            | "GetCascadeTrajectory"
+            | "GetConversationMetadata"
+            | "GetTrajectoryTurns"
             | "HandleCascadeUserInteraction"
             | "StartCascade"
             | "SendUserCascadeMessage"
@@ -100,17 +106,11 @@ impl Service {
             .header("X-Codeium-Csrf-Token", endpoint.csrf.clone())
             .json(params)
             .send()
-            .map_err(|_| {
-                l10n::text(
-                    "Antigravity 本地服务请求失败",
-                    "Antigravity local service request failed",
-                )
-            })?;
+            .map_err(|_| tr!("Antigravity local service request failed"))?;
         if !response.status().is_success() {
             return Err(service_error(response));
         }
-        crate::accounts::http::read_json(response)
-            .map_err(agent_hud_agents::account::HttpFailure::message)
+        crate::accounts::http::read_json(response).map_err(answer_error)
     }
     fn cached(&self) -> Vec<Endpoint> {
         self.state
@@ -130,9 +130,8 @@ impl Service {
                 .failed_at
                 .is_some_and(|at| at.elapsed() < Duration::from_secs(5))
             {
-                return Err(l10n::text(
-                    "启动并登录 Antigravity 后读取额度",
-                    "Start and sign in to Antigravity to use its local service",
+                return Err(tr!(
+                    "Start and sign in to Antigravity to use its local service"
                 ));
             }
         }
@@ -166,6 +165,7 @@ impl Service {
                     port,
                     pid: server.pid,
                     csrf,
+                    client: server.client,
                 };
                 let handshake = json!({"metadata":{"ideName":"antigravity","extensionName":"antigravity","locale":"en","ideVersion":"unknown"}});
                 if self
@@ -183,9 +183,8 @@ impl Service {
         state.complete = complete;
         state.failed_at = found.is_empty().then(Instant::now);
         if strict && !complete {
-            return Err(l10n::text(
-                "部分正在运行的 Antigravity 服务无法核实",
-                "Not every running Antigravity service could be verified",
+            return Err(tr!(
+                "Not every running Antigravity service could be verified"
             ));
         }
         Ok(found)
@@ -212,7 +211,8 @@ pub fn read_accounts(params: &Value) -> Result<Value, String> {
     for endpoint in endpoints {
         match service.send(&endpoint, "GetUserStatus", params) {
             Ok(status) => {
-                let mut entry = json!({"source":endpoint.identity(),"status":status});
+                let mut entry =
+                    json!({"source":endpoint.identity(),"client":endpoint.client,"status":status});
                 if let Ok(summary) = service.send(
                     &endpoint,
                     "RetrieveUserQuotaSummary",
@@ -264,10 +264,7 @@ pub fn call(method: &str, params: &Value) -> Result<Value, String> {
     }
     // A service that answered with its own error is reachable; say what it said.
     Err(last.unwrap_or_else(|| {
-        l10n::text(
-            "没有已登录且正在运行的 Antigravity 服务",
-            "No authenticated already-running Antigravity service is available",
-        )
+        tr!("No authenticated already-running Antigravity service is available")
     }))
 }
 

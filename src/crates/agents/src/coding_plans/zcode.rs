@@ -1,7 +1,7 @@
 //! WorkBuddy's GLM Coding Plan models in `~/.workbuddy/models.json`, a key
 //! the user typed into WorkBuddy, and how Zhipu says an account has no
-//! Coding Plan. ZCode's own sign-in (`~/.zcode/v2/credentials.json`) is
-//! encrypted by ZCode and never read.
+//! Coding Plan. ZCode's own sign-in (`~/.zcode/v2/credentials.json`) is read
+//! separately by `crate::zcode::account` as its own provider (`zcode`).
 use crate::account::{read_bounded, Host};
 use serde_json::Value;
 
@@ -61,10 +61,10 @@ pub(super) fn no_plan(body: &Value) -> bool {
         .collect::<String>();
     message.contains("codingplan")
         && [
-            "不存在",
-            "没有",
-            "未开通",
-            "未订阅",
+            "不存在", // l10n-ignore vendor message match
+            "没有",   // l10n-ignore vendor message match
+            "未开通", // l10n-ignore vendor message match
+            "未订阅", // l10n-ignore vendor message match
             "notexist",
             "nocodingplan",
             "nothave",

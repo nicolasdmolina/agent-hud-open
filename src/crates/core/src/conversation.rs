@@ -1,13 +1,14 @@
 //! Explicit, bounded transcript pages. Message bodies are read only for the
 //! selected session and never stored in ingestion checkpoints or snapshots.
 use super::*;
-use crate::l10n;
 use agent_hud_agents::transcript::items::{self, LineItem};
 use agent_hud_agents::transcript::turns::{self, TurnStart, Turns};
 
 mod page;
+mod segments;
 
 pub(super) use page::page;
+pub(super) use segments::segmented_page;
 /// The turn a page's messages belong to where the page begins: the turn read
 /// last before `cursor` in `path`. Which lines name a turn is the client's
 /// own rule (`Agent::turns`); keeping and finding it is the same for all.

@@ -4,7 +4,7 @@
 use super::ask::{Approval, Ask, Choice, Locked, Pending};
 use super::identity::Profile;
 use crate::hermes::AGENT;
-use crate::l10n;
+use crate::l10n::tr;
 use crate::naming::clients::client_name;
 use serde_json::{json, Value};
 
@@ -76,10 +76,7 @@ impl Pending {
 
 /// Why a card takes no answer while its gateway cannot be reached.
 pub fn out_of_reach() -> String {
-    l10n::text(
-        "暂时连不上 Hermes，恢复后才能回答",
-        "Hermes cannot be reached right now. This can be answered once it is back.",
-    )
+    tr!("Hermes cannot be reached right now. This can be answered once it is back.")
 }
 
 /// The label the sessions of `profile` go by (`Hermes Agent · <profile>`).
@@ -146,8 +143,8 @@ fn permission(approval: &Approval) -> Value {
         .iter()
         .filter_map(|choice| {
             let label = match choice {
-                Choice::Session => l10n::text("本会话内允许", "Allow this session"),
-                Choice::Always => l10n::text("总是允许", "Always allow"),
+                Choice::Session => tr!("Allow this session"),
+                Choice::Always => tr!("Always allow"),
                 Choice::Once | Choice::Deny => return None,
             };
             Some(json!({"type": "scope", "scope": choice.word(), "label": label}))

@@ -29,6 +29,7 @@ impl Shared {
             }
         }
         let parsed = pending::parse(&state_value, thread, owner);
+        let named = super::waits::named(&state_value, thread, parsed.as_deref().ok());
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if !self.active.load(Ordering::Acquire) {
             return;
@@ -38,12 +39,15 @@ impl Shared {
             ThreadState {
                 owner: owner.into(),
                 state: state_value,
+                named,
             },
         );
         let Ok(items) = parsed else {
             for (id, pending) in &mut state.pending {
                 if pending.item.thread == thread {
                     self.requests.cancel(id);
+                    // Agent HUD Fork (ticket 66): as where the stream drops.
+                    self.requests.auto_approval_lost(id);
                     pending.ticket = None;
                 }
             }
@@ -98,6 +102,8 @@ pub(super) fn unknown(shared: &Shared, thread: &str) {
     for (id, live) in &mut state.pending {
         if live.item.thread == thread {
             shared.requests.cancel(id);
+            // Agent HUD Fork (ticket 66): as where the stream drops.
+            shared.requests.auto_approval_lost(id);
             live.ticket = None;
         }
     }

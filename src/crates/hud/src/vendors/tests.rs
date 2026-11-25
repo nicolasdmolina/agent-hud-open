@@ -125,6 +125,34 @@ fn deepseek_balances_follow_row_visibility_and_order() {
     );
 }
 
+/// Open #91: a window the person hid in the panel kept the HUD number on it.
+#[test]
+fn the_number_leaves_out_the_windows_the_panel_hides() {
+    let row = |window: &str, used: f64, status: &str| {
+        json!({"id": format!("acct:{window}"), "vendor": "antigravity", "name": window,
+            "usedPercent": used, "resetAt": "2099-01-01T00:00:00Z", "status": status,
+            "account": "a@example.com", "accountId": "acct"})
+    };
+    let snapshot = json!({
+        "language": "en", "billing": [], "sessions": [], "approvals": [], "providers": [],
+        "quotas": [row("claude-5h", 100.0, "critical"), row("gemini-5h", 20.0, "normal")]
+    });
+    let view = |layout: Value| {
+        let list = configured(&snapshot, "simple", &layout, 0);
+        let vendor = list.into_iter().next().unwrap();
+        (meter_label(&vendor, false), vendor.level.to_owned())
+    };
+    assert_eq!(view(json!({})), ("100%".into(), "critical".into()));
+    assert_eq!(
+        view(json!({"blocks":{"antigravity":{"hiddenRows":["acct:claude-5h"]}}})),
+        ("20%".into(), "normal".into())
+    );
+    assert_eq!(
+        view(json!({"blocks":{"antigravity":{"hiddenAccounts":["acct"]}}})),
+        ("--".into(), "stale".into())
+    );
+}
+
 #[test]
 fn vendors_follow_the_resting_order_and_a_layout_list() {
     let now = chrono::DateTime::parse_from_rfc3339("2026-10-21T12:00:00Z")
@@ -237,6 +265,36 @@ fn a_failed_read_holds_its_last_share_until_the_window_resets() {
     );
 }
 
+/// Open #90: a live window whose reset has passed has started over, so it no
+/// longer sets the number or its level; the next read brings it back.
+#[test]
+fn a_window_past_its_reset_sets_neither_the_number_nor_the_level() {
+    let now = chrono::DateTime::parse_from_rfc3339("2026-11-01T12:00:00Z")
+        .unwrap()
+        .timestamp_millis();
+    let window = |used: f64, status: &str, reset: &str| json!({"vendor": "claude", "usedPercent": used, "status": status, "resetAt": reset});
+    let mark = |quotas: Vec<Value>| {
+        let snapshot = json!({"quotas": quotas, "billing": [], "providers": [], "sessions": []});
+        let vendor = &vendors(&snapshot, "simple", now)[0];
+        (vendor.used, vendor.held, vendor.level.to_owned())
+    };
+    assert_eq!(
+        mark(vec![
+            window(100.0, "critical", "2026-11-01T11:00:00Z"),
+            window(40.0, "normal", "2026-11-01T15:00:00Z"),
+        ]),
+        (Some(40.0), None, "normal".into())
+    );
+    // Only a stale window is current: it is held, in the stale grey.
+    assert_eq!(
+        mark(vec![
+            window(100.0, "critical", "2026-11-01T11:00:00Z"),
+            window(70.0, "stale", "2026-11-03T12:00:00Z"),
+        ]),
+        (None, Some(70.0), "stale".into())
+    );
+}
+
 #[test]
 fn detected_clients_without_readings_keep_their_marks_and_unknown_meter() {
     let now = chrono::DateTime::parse_from_rfc3339("2026-10-23T12:00:00Z")
@@ -275,4 +333,48 @@ fn detected_clients_without_readings_keep_their_marks_and_unknown_meter() {
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].key, "openai");
     }
+}
+
+#[test]
+fn domestic_agent_variants_stay_separate_marks_and_vendors() {
+    let snapshot = json!({
+        "quotas": [
+            {"vendor": "trae", "usedPercent": 10.0, "status": "normal"},
+            {"vendor": "trae-cn", "usedPercent": 20.0, "status": "normal"},
+            {"vendor": "qoder", "usedPercent": 30.0, "status": "normal"},
+            {"vendor": "qoder-cn", "usedPercent": 40.0, "status": "normal"},
+            {"vendor": "qoder-work", "usedPercent": 50.0, "status": "normal"},
+            {"vendor": "codebuddy", "usedPercent": 60.0, "status": "normal"},
+            {"vendor": "codebuddy-cn", "usedPercent": 70.0, "status": "normal"},
+            {"vendor": "zcode", "usedPercent": 80.0, "status": "warning"}
+        ],
+        "billing": [
+            {"vendor": "workbuddy", "amount": 500, "currency": "credits", "level": "normal"},
+            {"vendor": "minimax-code", "amount": 1200, "currency": "credits", "level": "normal"}
+        ],
+        "providers": [{"id": "minimax", "detected": true, "enabled": true}],
+        "sessions": [],
+        "approvals": []
+    });
+    let rows = vendors(&snapshot, "simple", 0);
+    let pairs: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|row| (row.key.as_str(), row.name.as_str()))
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            ("trae", "TRAE"),
+            ("trae-cn", "TRAE CN"),
+            ("qoder", "Qoder"),
+            ("qoder-cn", "Qoder CN"),
+            ("qoder-work", "QoderWork"),
+            ("codebuddy", "CodeBuddy"),
+            ("codebuddy-cn", "CodeBuddy CN"),
+            ("zcode", "ZCode"),
+            ("workbuddy", "WorkBuddy"),
+            ("minimax-code", "MiniMax Code"),
+            ("minimax", "MiniMax"),
+        ]
+    );
 }

@@ -5,6 +5,7 @@ use tauri::Manager;
 use agent_hud_hud::{bots, presentation, vendors};
 
 mod activity;
+mod appearance;
 mod auxiliary;
 mod backend;
 mod capture;
@@ -16,11 +17,13 @@ mod deepseek_plugin;
 mod demo;
 pub mod extension;
 mod hud;
+mod inspect;
 mod instance;
 mod mcp_clients;
 mod messages;
 mod phones;
 mod picture;
+mod placement;
 mod requests;
 mod screens;
 mod service;
@@ -29,6 +32,7 @@ mod system;
 mod tools;
 mod tray;
 mod web_sign_in;
+mod window_events;
 
 use service::Service;
 
@@ -54,7 +58,7 @@ pub fn run_with_context(
     run_with_options(context, extension, HostOptions::default())
 }
 pub fn run_with_options(
-    context: tauri::Context<tauri::Wry>,
+    mut context: tauri::Context<tauri::Wry>,
     extension: Option<Arc<dyn extension::ProductExtension>>,
     options: HostOptions,
 ) {
@@ -73,7 +77,9 @@ pub fn run_with_options(
             std::process::exit(2);
         }
     };
-    agent_hud_runtime::l10n::set_system_chinese(shell::system_prefers_chinese());
+    agent_hud_runtime::l10n::set_system_languages(&shell::system_languages());
+    // The system's language until the stored settings are read.
+    agent_hud_runtime::l10n::follow(&serde_json::Value::Null);
     let instance = if demo {
         None
     } else {
@@ -95,7 +101,9 @@ pub fn run_with_options(
             }
         }
     };
+    let initial_window = appearance::defer_main(&mut context.config_mut().app.windows);
     tauri::Builder::default()
+        .manage(appearance::Appearance::load(demo))
         .manage(options.clone())
         .manage(AppState { demo })
         .invoke_handler({
@@ -103,6 +111,7 @@ pub fn run_with_options(
                 requests::native_request,
                 backend::cached_snapshot,
                 startup_mode,
+                appearance::window_appearance,
                 requests::presentation_request,
                 mcp_clients::native_mcp_clients,
                 claude_plugin::native_claude_plugin,
@@ -117,8 +126,10 @@ pub fn run_with_options(
                 hud::hud_monitors,
                 hud::hud_geometry,
                 hud::hud_report_regions,
+                hud::hud_set_depth,
                 hud::hud_drag_start,
                 hud::hud_text_focus,
+                inspect::inspect_request,
                 auxiliary::hud_show_main,
                 auxiliary::quit_app,
                 auxiliary::open_statistics,
@@ -143,6 +154,7 @@ pub fn run_with_options(
             }
         })
         .setup(move |app| {
+            appearance::open_initial(app.handle(), initial_window.as_ref())?;
             // Hear about the system's shutdown before any background reading
             // starts. Without it the app still runs; helpers just are not held
             // back while Windows ends the session.
@@ -229,6 +241,7 @@ pub fn run_with_options(
                 }
                 app.manage(service);
             }
+            inspect::install(app.handle(), app.state::<AppState>().demo)?;
             app.manage(hud::HudWindows::default());
             app.manage(auxiliary::AuxiliaryWindows::default());
             app.manage(tray::TrayState::default());
@@ -244,35 +257,7 @@ pub fn run_with_options(
             }
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if web_sign_in::foreign(window.label()) {
-                    return;
-                }
-                if matches!(window.label(), "main" | "statistics") {
-                    // Closing Settings or Statistics ends its page and web
-                    // content process; the next open builds it again.
-                    activity::forget(window.app_handle(), window.label());
-                    return;
-                }
-                api.prevent_close();
-                let _ = window.hide();
-                activity::notify(window.app_handle(), window.label());
-            } else if let tauri::WindowEvent::Destroyed = event {
-                if matches!(window.label(), "main" | "statistics")
-                    || web_sign_in::foreign(window.label())
-                {
-                    shell::windows_changed(window.app_handle());
-                }
-            } else if let tauri::WindowEvent::ThemeChanged(theme) = event {
-                coordinator::appearance_changed(window.app_handle(), *theme == tauri::Theme::Light);
-            } else if matches!(
-                event,
-                tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)
-            ) {
-                activity::notify(window.app_handle(), window.label());
-            }
-        })
+        .on_window_event(window_events::handle)
         .build(context)
         .expect("Agent HUD could not start")
         .run(|app, event| {
@@ -286,6 +271,7 @@ pub fn run_with_options(
             if matches!(event, tauri::RunEvent::Exit) {
                 coordinator::stop(app);
                 screens::shutdown(app);
+                inspect::shutdown(app);
                 if let Some(service) = app.try_state::<Service>() {
                     service.stop();
                 }

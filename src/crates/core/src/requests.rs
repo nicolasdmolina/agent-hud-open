@@ -9,6 +9,8 @@ use std::{
 };
 
 mod answer;
+mod auto;
+mod auto_limits;
 mod back;
 mod deliveries;
 mod hold;
@@ -20,6 +22,9 @@ mod tests;
 #[cfg(test)]
 mod unreachable_tests;
 mod views;
+
+pub use auto::AutoApprove;
+pub use auto_limits::{APPROVED_KEPT, APPROVED_KEPT_MS};
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
 
@@ -53,6 +58,13 @@ struct State {
     native: native::Readers,
     /// What each source's native channel last said of its machines.
     machines: BTreeMap<String, Machines>,
+    /// Which clients' permission requests are allowed at once.
+    auto: AutoApprove,
+    /// The requests allowed with no card, kept for the sound decision
+    /// (`auto_limits.rs`).
+    approved: VecDeque<auto_limits::Approved>,
+    /// The native ids dismissed because they were allowed at once.
+    allowed: HashSet<String>,
 }
 pub use native::{NativeReadings, NativeStates, LIVE_STATES_MS};
 struct Reviewer {
@@ -105,6 +117,9 @@ impl Default for Requests {
                 deliveries: VecDeque::new(),
                 native: native::Readers::default(),
                 machines: BTreeMap::new(),
+                auto: AutoApprove::default(),
+                approved: VecDeque::new(),
+                allowed: HashSet::new(),
             }),
             wake: Mutex::new(None),
             #[cfg(feature = "probes")]
@@ -166,6 +181,18 @@ impl Requests {
             let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
             if state.dismissed.contains(&id) || state.pending.iter().any(|p| p.id == id) {
                 return None;
+            }
+            // A permission its client approves automatically: allowed at
+            // once, with no card, and never shown again (`auto_limits.rs`
+            // says which never are).
+            if let Some(wait) = state.approved_at_once(&id, &view, now_ms) {
+                let _ = sender.send(Some(auto::allow()));
+                return Some(Ticket {
+                    id,
+                    response,
+                    deadline_ms: now_ms,
+                    wait,
+                });
             }
             let deadline_ms = now_ms.saturating_add(state.hold_ms as i64);
             view["id"] = Value::String(id.clone());
@@ -238,12 +265,10 @@ impl Requests {
         #[cfg(feature = "probes")]
         self.0.probes.called("settle_native", id);
         self.cancel(id);
-        self.0
-            .state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .dismissed
-            .remove(id);
+        let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.dismissed.remove(id);
+        // Agent HUD Fork (ticket 66): nor is it kept as approved.
+        state.approval_settled(id);
     }
     pub fn clear(&self) {
         let (pending, changed) = {
@@ -256,6 +281,8 @@ impl Requests {
             state.native.clear();
             state.machines.clear();
             state.dismissed.clear();
+            state.approved.clear();
+            state.allowed.clear();
             state.taken.clear();
             (std::mem::take(&mut state.pending), changed)
         };

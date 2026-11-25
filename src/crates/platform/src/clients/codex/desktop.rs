@@ -12,6 +12,7 @@ mod pending;
 mod reply;
 mod stream;
 mod turns;
+mod waits;
 pub(crate) use daemon::daemon_tui_port_for as daemon_tui_port;
 
 use super::desktop_io::{endpoint, DesktopIpc, IpcError, ShutdownHandle};
@@ -35,6 +36,8 @@ use std::{
 struct ThreadState {
     owner: String,
     state: Value,
+    /// The requests this state's wait is for (`waits::named`).
+    named: Vec<String>,
 }
 struct LivePending {
     item: Pending,
@@ -198,6 +201,9 @@ impl Shared {
         // identities. Retaining pending prevents a reconnect from asking twice.
         for (id, pending) in &mut state.pending {
             self.requests.cancel(id);
+            // Agent HUD Fork (ticket 66): nor is an automatic answer's
+            // word carried over to what the next stream shows.
+            self.requests.auto_approval_lost(id);
             pending.ticket = None;
         }
         drop(state);
@@ -211,17 +217,10 @@ impl Shared {
                 .known
                 .iter()
                 .filter_map(|(thread, known)| {
-                    let status = &known.state["threadRuntimeStatus"];
-                    (status["type"] == "active"
-                        && status["activeFlags"].as_array().is_some_and(|flags| {
-                            flags.iter().any(|flag| {
-                                matches!(
-                                    flag.as_str(),
-                                    Some("waitingOnApproval" | "waitingOnUserInput")
-                                )
-                            })
-                        }))
-                    .then(|| thread.clone())
+                    // Agent HUD Fork (ticket 66): with the requests the wait
+                    // is for, as that state's own requests say (`waits.rs`).
+                    let (approval, input) = waits::waiting_on(&known.state);
+                    (approval || input).then(|| (thread.clone(), known.named.clone()))
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -231,7 +230,7 @@ impl Shared {
         // Keep this complete-list replacement ordered with disconnect/stop. The
         // Requests owner changes phase only; this creates no actionable request.
         self.requests
-            .set_native_waiting(AGENT.id, SOLE_READER, &sessions, crate::hooks::now_ms());
+            .set_native_waits(AGENT.id, SOLE_READER, &sessions);
     }
 }
 

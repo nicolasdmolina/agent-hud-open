@@ -48,12 +48,12 @@ fn the_menu_lists_windows_then_balances_as_use_tray_did() {
     // The highest reading that is not stale; one level per agent.
     assert_eq!(state.used_percent, Some(72.5));
     assert!(state.levels == [Level::Warning, Level::Stale, Level::Normal]);
-    let paused = json!({"language": "zh", "status": {"paused": true}, "quotas": [], "billing": [], "approvals": [],
+    let paused = json!({"language": "en", "status": {"paused": true}, "quotas": [], "billing": [], "approvals": [],
         "providers": [{"id": "kimi", "detected": true, "enabled": true}],
         "sessions": [{"id": "a", "source": "kimi", "state": "idle", "updatedAt": "2026-10-21T11:00:00Z"}]});
     let agents = crate::vendors::vendors(&paused, "simple", now);
     let state = project(&paused, &agents, true, true, false, None, now);
-    assert_eq!(titles(&state), ["Kimi", "暂无额度读数 —"]);
+    assert_eq!(titles(&state), ["Kimi", "No quota reading —"]);
     assert!(state.levels.is_empty() && state.glow_hidden && state.used_percent.is_none());
 }
 
@@ -117,4 +117,29 @@ fn an_update_notice_redraws_the_menu() {
     assert_eq!(offered.update.as_deref(), Some("0.6.1"));
     // `apply` skips an unchanged presentation, so the notice must change it.
     assert!(none != offered);
+}
+
+/// Agent HUD Fork (ticket 03, checked again by ticket 66): the tooltip
+/// names this app, whatever language its words are in.
+#[test]
+fn the_tooltip_names_this_app_in_every_language() {
+    for language in l10n::Language::ALL {
+        for remaining in [false, true] {
+            let state = Presentation {
+                language,
+                remaining,
+                ..Presentation::default()
+            };
+            let shown = tooltip(&state, "Agent HUD Fork", "62%");
+            let code = language.code();
+            assert!(shown.starts_with("Agent HUD Fork · "), "{code}: {shown}");
+            assert_eq!(shown.matches("Agent HUD").count(), 1, "{code}: {shown}");
+            assert!(shown.ends_with("62%"), "{code}: {shown}");
+        }
+    }
+    // The first tooltip, before any snapshot, is the same text with no
+    // figure yet (ticket 66, round 2).
+    let first = tooltip(&Presentation::default(), "Agent HUD Fork", "—");
+    assert!(first.starts_with("Agent HUD Fork · "), "{first}");
+    assert!(first.ends_with("—"), "{first}");
 }

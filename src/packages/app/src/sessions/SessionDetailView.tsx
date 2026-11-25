@@ -13,6 +13,7 @@ import { reveal as fadeIn } from "./SessionMotion";
 import { UsagePlaceholder } from "./SessionPlaceholders";
 import { ProjectExecutionsCard, SubagentsCard } from "./WorkerCards";
 import { card, CardTitle, type Theme } from "./SessionTheme";
+import { useT } from "@agent-hud/ui/format-context";
 
 const stack: CSSProperties = {
   display: "flex",
@@ -56,7 +57,7 @@ export function InlineDetail({
   loadMessages: () => void;
   loadingMessages: boolean;
 }) {
-  const zh = Boolean(theme.zh);
+  const t = useT();
   const [measure, setMeasure] = useState<Measure>("tokens");
   const client = sessionClient(session, snapshot.providers);
   const now = Date.parse(snapshot.generatedAt);
@@ -65,7 +66,10 @@ export function InlineDetail({
   const picked = entries.find((entry) => entry.id === selectedEntry);
   const lastMessage = session.liveFacts?.message?.trim();
   const children = detail?.children ?? [];
-  const helped = Boolean(detail?.subagents) || children.length > 0;
+  const helped =
+    Boolean(detail?.subagents) ||
+    Boolean(detail?.reviews) ||
+    children.length > 0;
   const projectHasLocalWorkers =
     (detail?.session.desktopProject?.localWorkerCount ??
       session.desktopProject?.localWorkerCount ??
@@ -95,7 +99,7 @@ export function InlineDetail({
           )}
           revealLabel={
             session.desktopProject?.openLabel ??
-            returnLabel(session, zh, snapshot.connection.platform === "macos")
+            returnLabel(session, t, snapshot.connection.platform === "macos")
           }
         />
         <DetailFigures session={session} detail={detail} theme={theme} />
@@ -164,7 +168,7 @@ export function InlineDetail({
           </div>
           {lastMessage && (
             <Card style={card(theme)}>
-              <CardTitle title={zh ? "最近回复" : "Last reply"} theme={theme} />
+              <CardTitle title={t("Last reply")} theme={theme} />
               <div
                 style={{
                   fontSize: 12,

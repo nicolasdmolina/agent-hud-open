@@ -1,4 +1,5 @@
 import type { QuestionLock } from "@agent-hud/protocol";
+import { useT } from "@agent-hud/ui/format-context";
 import { alertText } from "../tokens";
 import { useGround } from "../ground";
 
@@ -9,14 +10,12 @@ export function QuestionLockNote({
   lock,
   replaced,
   light,
-  zh,
 }: {
   lock: QuestionLock;
   replaced: boolean;
   light: boolean;
-  zh: boolean;
 }) {
-  const t = (en: string, cn: string) => (zh ? cn : en);
+  const t = useT();
   const color = alertText("warning", useGround(light));
   return (
     <div
@@ -30,11 +29,8 @@ export function QuestionLockNote({
       }}
     >
       {lock.state === "answered"
-        ? t(
-            `Answered elsewhere: ${lock.answer}`,
-            `已在别处回答：${lock.answer}`,
-          )
-        : t("Skipped elsewhere", "已在别处跳过")}
+        ? t("Answered elsewhere: {{answer}}", { answer: lock.answer })
+        : t("Skipped elsewhere")}
     </div>
   );
 }

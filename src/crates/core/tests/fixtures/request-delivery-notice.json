@@ -1,0 +1,14 @@
+{
+  "about": "A card that waits in a session, and the receipt of an earlier answer in that same session that did not arrive, as core's snapshot carries both. The HUD shows the receipt's reason under the card only where the two name the same session, by the same plain id. Core's test tests::delivery_notice holds the snapshot to this file; the HUD's test/request-delivery.test.ts draws the notice from it.",
+  "card": {
+    "source": "codex",
+    "sessionId": "00000000-0000-4000-8000-000000000066"
+  },
+  "receipt": {
+    "id": "earlier-request",
+    "source": "codex",
+    "sessionId": "00000000-0000-4000-8000-000000000066",
+    "state": "failed",
+    "reason": "fixture refusal"
+  }
+}

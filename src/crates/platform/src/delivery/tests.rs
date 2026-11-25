@@ -69,6 +69,7 @@ fn request(provider: Provider) -> SendRequest {
         form: PromptForm::Labelled,
         operation: Operation::Automatic,
         expected_turn_id: None,
+        model: None,
     }
 }
 
@@ -417,6 +418,7 @@ fn harness_request() -> SendRequest {
         form: PromptForm::Labelled,
         operation: Operation::Enqueue,
         expected_turn_id: None,
+        model: None,
     }
 }
 #[test]
@@ -850,6 +852,56 @@ mod native {
         }
     }
     #[test]
+    fn desktop_steer_naming_no_turn_goes_into_the_turn_in_progress_or_is_refused() {
+        for (active, version) in [(true, 11), (false, 11), (true, 13), (false, 13)] {
+            let fixture = Fixture::new();
+            let path = fixture.paths().codex_data.join("ipc/ipc.sock");
+            fs::create_dir_all(path.parent().unwrap()).unwrap(); // plain directory
+            let listener = UnixListener::bind(path).unwrap();
+            let worker = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let initialize = frame_read(&mut socket);
+                desktop_response(
+                    &mut socket,
+                    &initialize,
+                    json!({"clientId":"fixture-client"}),
+                );
+                let discover = frame_read(&mut socket);
+                desktop_response(&mut socket, &discover, json!({}));
+                assert_eq!(frame_read(&mut socket)["params"]["following"], true);
+                frame_send(
+                    &mut socket,
+                    json!({"type":"broadcast","method":"thread-stream-state-changed","sourceClientId":"owner","version":version,"params":{"hostId":"local","conversationId":THREAD,"change":{"type":"snapshot","conversationState":{"turns":if active{json!([{"turnId":"turn-fixture","status":"inProgress"}])}else{json!([{"turnId":null,"id":"turn-done","status":"completed"}])}}}}}),
+                );
+                assert_eq!(frame_read(&mut socket)["params"]["following"], false);
+                if active {
+                    let send = frame_read(&mut socket);
+                    assert_eq!(send["method"], "thread-follower-steer-turn");
+                    desktop_response(
+                        &mut socket,
+                        &send,
+                        json!({"result":{"turnId":"turn-fixture"}}),
+                    );
+                }
+            });
+            let mut steer = request(Provider::Codex);
+            steer.operation = Operation::Steer;
+            let receipt = fixture.service(Provider::Codex).send(steer).unwrap();
+            worker.join().unwrap();
+            if active {
+                assert_eq!(receipt.state, DeliveryState::Steered);
+                assert_eq!(receipt.turn_id.as_deref(), Some("turn-fixture"));
+            } else {
+                // Nothing was sent: no turn runs, and no new one is started.
+                assert_eq!(receipt.state, DeliveryState::Failed);
+                assert!(receipt.reason.unwrap().contains(NO_TURN_TO_STEER));
+            }
+        }
+    }
+    #[test]
     fn desktop_after_mutation_disconnect_is_uncertain_without_cli_fallback() {
         let fixture = Fixture::new();
         let path = fixture.paths().codex_data.join("ipc/ipc.sock");
@@ -1032,11 +1084,85 @@ for line in sys.stdin:
             receipt.reason
         );
     }
+    /// A shared daemon whose Codex has no queue refuses `thread/queue/add`
+    /// by name before queueing anything (Open #94), so the message goes
+    /// through the short-lived app-server instead of failing.
+    #[test]
+    fn enqueue_passes_a_daemon_without_the_queue() {
+        let fixture = Fixture::new();
+        let path = fixture
+            .paths()
+            .codex_data
+            .join("app-server-control/app-server-control.sock");
+        fs::create_dir_all(path.parent().unwrap()).unwrap(); // plain directory
+        let listener = UnixListener::bind(path).unwrap();
+        let daemon = thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut ws = tungstenite::accept(socket).unwrap();
+            let initialize = ws_read(&mut ws);
+            ws_reply(&mut ws, &initialize, json!({}));
+            assert_eq!(ws_read(&mut ws)["method"], "initialized");
+            let request = ws_read(&mut ws);
+            assert_eq!(request["method"], "thread/queue/add");
+            ws.send(tungstenite::Message::Text(
+                json!({"id":request["id"],"error":{"code":-32600,"message":"Invalid request: unknown variant `thread/queue/add`, expected one of `initialize`, `thread/start`"}})
+                    .to_string()
+                    .into(),
+            ))
+            .unwrap();
+        });
+        // A shell stand-in: `initialize` is id 1, the queued message id 2.
+        let script = fixture.0.join("bin/codex");
+        let log = fixture.0.join("app-server.log");
+        fs::create_dir_all(script.parent().unwrap()).unwrap(); // plain directory
+        fs::write(
+            &script,
+            r#"#!/bin/sh
+read -r line
+echo '{"id":1,"result":{}}'
+read -r line
+read -r line
+echo "$line" > "$QUEUE_LOG"
+echo '{"id":2,"result":{"queuedSubmission":{"id":"q1"}}}'
+"#,
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let route = QueueRoute {
+            executable: script,
+            environment: [
+                ("PATH".to_owned(), "/usr/bin:/bin".to_owned()),
+                ("QUEUE_LOG".to_owned(), log.to_string_lossy().into_owned()),
+            ]
+            .into(),
+            applications: vec![fixture.0.join("Applications")],
+        };
+        let service = LocalClients::with_transport(
+            fixture.paths(),
+            vec![target(Provider::Codex)],
+            Arc::new(NativeCodexTransport { queue: Some(route) }),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        let mut send = request(Provider::Codex);
+        send.operation = Operation::Enqueue;
+        let receipt = service.send(send).unwrap();
+        daemon.join().unwrap();
+        assert_eq!(receipt.state, DeliveryState::Queued, "{:?}", receipt.reason);
+        let queued: Value = serde_json::from_str(&fs::read_to_string(&log).unwrap()).unwrap();
+        assert_eq!(queued["method"], "thread/queue/add");
+        assert_eq!(queued["params"]["threadId"], THREAD);
+    }
     #[test]
     fn cli_existing_tui_start_steer_interrupt_and_enqueue() {
         for operation in [
             Operation::Start,
             Operation::Automatic,
+            Operation::Steer,
             Operation::Interrupt,
             Operation::Enqueue,
         ] {
@@ -1076,7 +1202,7 @@ for line in sys.stdin:
                     json!({"data":[{"name":"codex_tui","httpOrigin":format!("http://127.0.0.1:{port}")}]}),
                 );
                 let _ = tui.accept().unwrap();
-                if operation == Operation::Automatic || operation == Operation::Interrupt {
+                if operation != Operation::Start {
                     let state = ws_read(&mut ws);
                     assert_eq!(state["method"], "thread/read");
                     ws_reply(
@@ -1098,7 +1224,8 @@ for line in sys.stdin:
                         assert_eq!(mutation["method"], "turn/start");
                         ws_reply(&mut ws, &mutation, json!({"turn":{"id":"turn-fixture"}}));
                     }
-                    Operation::Automatic => {
+                    // A steer naming no turn goes into the one in progress.
+                    Operation::Automatic | Operation::Steer => {
                         assert_eq!(mutation["method"], "turn/steer");
                         assert_eq!(mutation["params"]["expectedTurnId"], "turn-fixture");
                         ws_reply(&mut ws, &mutation, json!({"turnId":"turn-fixture"}));
@@ -1118,10 +1245,9 @@ for line in sys.stdin:
                 receipt.state,
                 match operation {
                     Operation::Start => DeliveryState::Started,
-                    Operation::Automatic => DeliveryState::Steered,
+                    Operation::Automatic | Operation::Steer => DeliveryState::Steered,
                     Operation::Interrupt => DeliveryState::Interrupted,
                     Operation::Enqueue => DeliveryState::Queued,
-                    _ => unreachable!(),
                 }
             );
             worker.join().unwrap();

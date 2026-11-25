@@ -55,6 +55,44 @@ fn each_button_on_the_card_is_the_answer_hermes_gets() {
     }
 }
 
+/// Upstream's Approve automatically (0.6.7) allows a permission request at
+/// once, with no card. Hermes's approvals are answered by hand: with it on
+/// for every client, an approval Hermes asks for still shows its card, and
+/// nothing reaches the gateway until a button is pressed (FORK.md, ticket 66).
+#[test]
+fn approve_automatically_never_answers_a_hermes_approval() {
+    use agent_hud_core::requests::AutoApprove;
+    let mut lab = lab();
+    lab.requests
+        .set_auto_approve(AutoApprove::from_settings(&json!({"autoApprove": true})));
+    assert!(lab.requests.auto_approves("codex", None), "the rule is on");
+    let gateway = Fake::start(&lab.home, "instance-1");
+    lab.follow();
+    lab.hears(&gateway, RECORDING, "approval.request");
+    // The card shows: an approval allowed at once would have none.
+    let card = lab.card();
+    assert_eq!(card["kind"], "permission", "{card}");
+    assert_eq!(card["source"], "hermes", "{card}");
+    // Several polls on, Hermes has still been told nothing.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(gateway.world().calls("approval.respond").len(), 0);
+    assert_eq!(lab.card()["id"], card["id"]);
+    assert!(lab
+        .requests
+        .auto_approved(crate::hooks::now_ms())
+        .is_empty());
+    // Pressed by hand, it is answered as ever.
+    let id = card["id"].as_str().unwrap();
+    lab.requests
+        .answer(id, &json!({"kind": "allow"}), crate::hooks::now_ms())
+        .unwrap();
+    until("the answer reaches the gateway", || {
+        sent(&gateway).is_some()
+    });
+    assert_eq!(sent(&gateway), Some(json!("once")));
+    assert_eq!(gateway.world().calls("approval.respond").len(), 1);
+}
+
 /// Upstream lets a denial carry the user's words (`message`) to hook
 /// clients. Hermes's `approval.respond` takes only a choice, so a denial
 /// with words still reaches it as exactly one bare `deny` (FORK.md, ticket 17).

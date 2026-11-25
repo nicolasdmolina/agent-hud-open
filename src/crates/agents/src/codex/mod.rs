@@ -9,6 +9,7 @@ mod pi_usage;
 pub mod plans;
 pub mod process;
 pub mod providers;
+mod session_limits;
 pub mod transcript;
 mod usage;
 
@@ -22,6 +23,7 @@ pub static DESKTOP: Channel = Channel {
     name: "Codex desktop app IPC",
     carries: &[Carries::Requests],
     transcript_shows_pending: true,
+    answered_by_hand: false,
     support: PerOs {
         macos: Support::Verified(()),
         windows: Support::Unverified(()),

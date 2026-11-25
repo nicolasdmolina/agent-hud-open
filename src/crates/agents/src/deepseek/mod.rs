@@ -30,6 +30,7 @@ pub static QUESTIONS: Channel = Channel {
     name: "DeepSeek Harness's web question stream",
     carries: &[Carries::Requests],
     transcript_shows_pending: true,
+    answered_by_hand: false,
     support: PerOs {
         macos: Support::Verified(()),
         windows: Support::Unverified(()),
@@ -45,6 +46,7 @@ pub static PLUGIN: Channel = Channel {
     name: "Agent HUD's DeepSeek Harness plugin",
     carries: &[Carries::Requests],
     transcript_shows_pending: true,
+    answered_by_hand: false,
     support: PerOs {
         macos: Support::Verified(()),
         windows: Support::Unverified(()),

@@ -10,7 +10,7 @@ pub(crate) fn prepare(app: &tauri::AppHandle) -> Result<(), String> {
 
 pub(crate) fn install(_app: &tauri::AppHandle) {}
 
-pub(crate) fn window_opened(_app: &tauri::AppHandle) {}
+pub(crate) fn window_opened(_window: &tauri::WebviewWindow) {}
 
 pub(crate) fn windows_changed(_app: &tauri::AppHandle) {}
 
@@ -28,15 +28,27 @@ pub(crate) fn reopened(_event: &tauri::RunEvent) -> bool {
     false
 }
 
-pub(crate) fn statistics_chrome<'a>(
+/// The screen under the pointer, both in physical pixels here.
+pub(crate) fn pointer_monitor(app: &tauri::AppHandle) -> Option<tauri::Monitor> {
+    let pointer = app.cursor_position().ok()?;
+    app.monitor_from_point(pointer.x, pointer.y).ok().flatten()
+}
+
+pub(crate) fn toolbar_chrome<'a>(
     builder: tauri::WebviewWindowBuilder<'a, tauri::Wry, tauri::AppHandle>,
 ) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, tauri::AppHandle> {
     builder
 }
 
-pub(crate) fn system_prefers_chinese() -> bool {
-    // The primary language is the low ten bits; 0x04 is Chinese.
-    unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() & 0x3ff == 0x04 }
+pub(crate) fn system_languages() -> Vec<String> {
+    use windows::Win32::Globalization::{GetUserDefaultUILanguage, LCIDToLocaleName};
+    // The UI language's name, such as "zh-TW" or "ja-JP".
+    let mut name = [0u16; 85];
+    let length = unsafe { LCIDToLocaleName(GetUserDefaultUILanguage() as u32, Some(&mut name), 0) };
+    if length <= 1 {
+        return Vec::new();
+    }
+    vec![String::from_utf16_lossy(&name[..length as usize - 1])]
 }
 
 /// A message box from a process that has not started Tauri yet.
@@ -54,3 +66,8 @@ pub(crate) fn alert(title: &str, body: &str, _ok: &str) {
         );
     }
 }
+
+/// No shortcut for the clipboard window on this system yet.
+pub(crate) const CLIP_SHORTCUT: bool = false;
+
+pub(crate) fn clip_shortcut(_app: &tauri::AppHandle, _shortcut: Option<crate::inspect::Shortcut>) {}

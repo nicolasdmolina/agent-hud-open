@@ -1,14 +1,15 @@
-import hudDefaults from "@agent-hud/protocol/hud-defaults.json";
+import hudDefaults from "@agent-hud/protocol/hud-defaults.json" with { type: "json" };
 import type {
   PanelLayout,
   RequestDecision,
   Snapshot,
 } from "@agent-hud/protocol";
-import { agentArtworkKey, agentVendorName } from "./agent-artwork";
+import { agentArtworkKey, agentVendorName } from "./agent-artwork.ts";
 import { layoutMarks, restingAgents } from "./resting-agents.ts";
 import { recentLabel, recentUsage } from "./recent-usage.ts";
 import { visibleBalances } from "./balance-rows.ts";
-import { heldUsed } from "./held-reading.ts";
+import { heldUsed, tightestWindow, windowReading } from "./held-reading.ts";
+import { shownRows } from "./quota-rows.ts";
 import type { GlowEffect, GlowStyle } from "./HUDGlow";
 import type { UsageStyle } from "./usage-meter/arcs";
 import {
@@ -17,7 +18,7 @@ import {
   quotaPercentLabel,
   type QuotaDisplay,
 } from "@agent-hud/ui/format";
-export { agentVendorName } from "./agent-artwork";
+export { agentVendorName } from "./agent-artwork.ts";
 
 export type HUDMode = "notch" | "simple";
 export type HUDEdge = "top" | "right" | "bottom" | "left";
@@ -59,12 +60,16 @@ export interface HUDConfig {
   hidesRequests: boolean;
   /** This screen's HUD plays no flights of messages between agents. */
   hidesFlights: boolean;
+  /** This screen's HUD hides while an app or video is full screen on it (macOS). */
+  hidesInFullScreen: boolean;
   simpleSize: number;
   simpleGapScale: number;
   ringWidth: number;
   /** How a Simple mark draws its usage: rings, a segmented ring, bars, or the number alone. */
   simpleStyle: UsageStyle;
   showsNumbers: boolean;
+  greyNumbers: boolean;
+  greyNumberOpacity: number;
   separatesAgents: boolean;
   appearance: "dark" | "light" | "system";
   solidTransparency: number;
@@ -73,6 +78,13 @@ export interface HUDConfig {
   /** How often the dock's tail lets its oldest message go, in seconds;
    * 0 keeps them until the person lets them go. */
   messageFadeSeconds: number;
+  /** A bubble at the dock's tail for each copy, which opens the window that
+   * sends copies into a session. */
+  clipboardBubble: boolean;
+  /** How long a copy's bubble stays, in seconds; 0 keeps it. */
+  clipboardFadeSeconds: number;
+  /** Calls the clipboard window up again: `Alt+KeyZ`; empty for none. */
+  clipboardShortcut: string;
   requiresOptionToOpen: boolean;
   openImmediatelyAtTop: boolean;
   sessionList: boolean;
@@ -118,7 +130,7 @@ export function vendorKey(source: string): string {
   return agentArtworkKey(source);
 }
 
-export { restingAgents, sourceID } from "./resting-agents.ts";
+export { clientID, restingAgents, sourceID } from "./resting-agents.ts";
 
 const vendorProjections = new WeakMap<Snapshot, Map<HUDMode, HUDVendor[]>>();
 
@@ -133,13 +145,7 @@ export function vendorsFromSnapshot(
   const value = restingAgents(snapshot, mode).map((name) => {
     const key = vendorKey(name);
     const quotas = snapshot.quotas.filter((q) => vendorKey(q.vendor) === key);
-    const measured = quotas.filter(
-      (q) => q.usedPercent != null && q.status !== "stale",
-    );
-    const tightest = measured.reduce<(typeof measured)[number] | undefined>(
-      (a, b) => (!a || b.usedPercent! > a.usedPercent! ? b : a),
-      undefined,
-    );
+    const tightest = tightestWindow(quotas, now);
     const sessions = snapshot.sessions.filter(
       (s) => vendorKey(s.source) === key,
     );
@@ -193,6 +199,20 @@ export function vendorsFromSnapshot(
   return value;
 }
 
+/** An agent whose number and level follow the windows the panel shows: a row
+ * the person hid there no longer sets them (Open #91). Its rings already draw
+ * only those (`markWindows`). */
+function withShownWindows(
+  vendor: HUDVendor,
+  layout: HUDConfig["panelLayout"],
+  now: number,
+): HUDVendor {
+  const shown = shownRows(vendor.quotas, layout);
+  return shown.length === vendor.quotas.length
+    ? vendor
+    : { ...vendor, ...windowReading(shown, now) };
+}
+
 /** A window's short name, as Core names it (the Swift `shortName`). */
 export function quotaShortName(quota: {
   name: string;
@@ -214,23 +234,18 @@ export function meterLabel(vendor: HUDVendor, display?: QuotaDisplay): string {
     : quotaPercentLabel(used, display);
 }
 
-export function statusColor(level: HUDVendor["level"]): string {
-  return level === "critical"
-    ? "#ff453a"
-    : level === "warning"
-      ? "#ffd23f"
-      : level === "normal"
-        ? "#3ddc84"
-        : "#8e8e93";
-}
+export { simpleNumberColor, statusColor } from "./mark-colors.ts";
 
 /** HUDAgentOrder.swift: the marks a layout picks, in Settings' agent order; an unavailable list never empties a HUD. */
 export function configuredVendors(
   snapshot: Snapshot,
   config: HUDConfig,
 ): HUDVendor[] {
+  const now = Date.now();
   const available = vendorsFromSnapshot(snapshot, config.mode).map((vendor) => {
-    if (vendor.key !== "deepseek" || vendor.quotas.length) return vendor;
+    if (vendor.quotas.length)
+      return withShownWindows(vendor, config.panelLayout, now);
+    if (vendor.key !== "deepseek") return vendor;
     const rows = snapshot.billing.filter(
       (row) => vendorKey(row.vendor) === vendor.key,
     );

@@ -1,3 +1,4 @@
+import { useT } from "@agent-hud/ui/format-context";
 import type { ReactNode } from "react";
 import { Plug, X } from "lucide-react";
 import type { Approval } from "@agent-hud/protocol";
@@ -8,7 +9,10 @@ import { cardColumn } from "../card-column";
 import { CardButton } from "./CardButton";
 
 /** Settings' page for what Agent HUD installs into each client. */
-const AGENT_PLUGINS_PAGE = "agent-plugins";
+/** The agent's own page in Settings, where its plugin is installed and
+ * answering is turned on. */
+const agentPage = (source: string) =>
+  `agents/${source === "deepseek" ? "deepseek" : "claude"}`;
 /** What loads a newly installed plugin in a running Claude Code session. */
 const RELOAD_COMMAND = "/reload-plugins";
 
@@ -31,19 +35,17 @@ export function QuestionAnswerElsewhere({
   request,
   disabled,
   light,
-  zh,
   openSettings,
   dismiss,
 }: {
   request: Approval;
   disabled: boolean;
   light: boolean;
-  zh: boolean;
-  /** Settings, on a page such as "agent-plugins"; without it the card only says where to go. */
+  /** Settings, on a page such as "agents/claude"; without it the card only says where to go. */
   openSettings?: (page: string) => void;
   dismiss: () => void;
 }) {
-  const t = (en: string, cn: string) => (zh ? cn : en);
+  const t = useT();
   const questions = request.questions ?? [];
   const vendor = request.vendor ?? clientDisplayName(request.source);
   const detailText = request.detail?.trim() || null;
@@ -117,7 +119,7 @@ export function QuestionAnswerElsewhere({
       ))}
       {/* Core says why this one can be answered only in the client and
           which step would let Agent HUD answer it: a plugin to install or
-          answering to turn back on opens Settings → Agent plugins; a
+          answering to turn back on opens the agent's page in Settings; a
           session that has not loaded the plugin is told the command. */}
       <div
         style={{
@@ -128,7 +130,7 @@ export function QuestionAnswerElsewhere({
         }}
       >
         <span style={{ fontSize: 11, fontWeight: 600, color: primary }}>
-          {t(`Answer in ${vendor}`, `请到 ${vendor} 里回答`)}
+          {t("Answer in {{vendor}}", { vendor })}
         </span>
         {request.answerNote && (
           <span
@@ -148,12 +150,12 @@ export function QuestionAnswerElsewhere({
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {opensPlugins && (
           <CardButton
-            onClick={() => openSettings?.(AGENT_PLUGINS_PAGE)}
+            onClick={() => openSettings?.(agentPage(request.source))}
             fill={allow}
             color={onAllow}
           >
             <Plug size={9} strokeWidth={2.6} />
-            {t("Open Agent plugins", "打开智能体插件")}
+            {t("Open Settings")}
           </CardButton>
         )}
         <span style={{ flex: 1, minWidth: 8 }} />
@@ -164,7 +166,7 @@ export function QuestionAnswerElsewhere({
           color={secondary}
         >
           <X size={9} strokeWidth={2.6} />
-          {t("Dismiss", "知道了")}
+          {t("Dismiss [acknowledge]")}
         </CardButton>
       </div>
     </div>

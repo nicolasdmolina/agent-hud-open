@@ -30,14 +30,27 @@ const GLOBAL: &[&str] = &[
     "hoverDelayMs",
     "collapseDelayMs",
     "messageFadeSeconds",
+    "clipboardBubble",
+    "clipboardFadeSeconds",
+    "clipboardShortcut",
     "requiresOptionToOpen",
     "openImmediatelyAtTop",
     "animations",
 ];
+/// A display setting's value before the person sets it.
+pub fn global_default(key: &str) -> Option<Value> {
+    DEFAULTS.get(key).cloned()
+}
 const HARDWARE: &[&str] = &["monitorIndex", "hasNotch", "notchWidth", "notchHeight"];
 /// What a screen shows at all: only the person sets these, in Settings; they
 /// are no part of the look a tool reads, drafts or restores.
-const PRESENCE: &[&str] = &["hidden", "hidesMessages", "hidesRequests", "hidesFlights"];
+const PRESENCE: &[&str] = &[
+    "hidden",
+    "hidesInFullScreen",
+    "hidesMessages",
+    "hidesRequests",
+    "hidesFlights",
+];
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct Saved {

@@ -2,8 +2,12 @@
 //! grouped by what they cover.
 use super::*;
 
+mod auto_approved_sound;
+mod auto_confirmed_sound;
 mod claude_desktop;
+mod client_switches;
 mod conversation_feed;
+mod delivery_notice;
 mod forks;
 mod hermes_custom_roots;
 mod hermes_history;

@@ -16,6 +16,21 @@ impl AgentHudCore {
         self.render.last = None;
     }
 
+    /// What each client can do with Agent HUD (`live`, `answer`, `talk`,
+    /// `tools`), by client id.
+    pub fn set_client_features(&mut self, features: HashMap<String, Vec<String>>) {
+        self.client_features = features;
+    }
+
+    /// What was found of each client an agent is split into, apart from the
+    /// agent (`agents::split`).
+    pub fn set_client_discovery(&mut self, discovery: Vec<ProviderDiscovery>) {
+        self.client_discovery = discovery;
+        self.sessions_checked = None;
+        self.sessions_fingerprint = None;
+        self.render.last = None;
+    }
+
     /// The Claude desktop app's data folders on this host, beyond the macOS default.
     pub fn set_claude_desktop_bases(&mut self, bases: Vec<PathBuf>) {
         self.claude_desktop.index.set_bases(bases);

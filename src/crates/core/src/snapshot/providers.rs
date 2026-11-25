@@ -1,6 +1,7 @@
 //! The clients and accounts a snapshot shows: every client with what was
 //! found of it, and each enabled client's accounts as their headers show them.
 use super::*;
+use crate::l10n::tr;
 
 impl crate::AgentHudCore {
     /// An account as its section header shows it (Open's AccountSectionHeader
@@ -19,7 +20,10 @@ impl crate::AgentHudCore {
             .map(str::to_owned)
             .unwrap_or_else(|| {
                 let tail = id.rsplit(':').next().unwrap_or(id);
-                l10n::text("账户 ", "Account ") + &tail.chars().take(6).collect::<String>()
+                tr!(
+                    "Account {{id}}",
+                    id = tail.chars().take(6).collect::<String>()
+                )
             });
         account["name"] = json!(name);
         account["planLabel"] = json!(account["plan"]
@@ -76,7 +80,7 @@ impl crate::AgentHudCore {
                 // A source's notice is what its account reading says; how a
                 // reader works is not the person's concern (Open shows none).
                 let notice = Value::Null;
-                let mut row = json!({"id":id,"name":provider.name,"recent":recent.get(id).map(metering::Recent::json),"detected":detected,"enabled":self.enabled.get(id).copied().unwrap_or(true),"notice":notice,"sessions":projection.counts.get(id).copied().unwrap_or_default(),"discovery":discovery,"dataStatus":if provider.sessions {"supported"} else {"detection-only"}});
+                let mut row = json!({"id":id,"name":provider.name,"recent":recent.get(id).map(metering::Recent::json),"detected":detected,"enabled":self.agent_on(id),"notice":notice,"sessions":projection.counts.get(id).copied().unwrap_or_default(),"discovery":discovery,"dataStatus":if provider.sessions {"supported"} else {"detection-only"}});
                 if let Some(account) = self.accounts.providers.get(id) {
                     row["accountStatus"] = account.clone();
                     row["notice"] = account["notice"].clone();
@@ -104,8 +108,6 @@ impl crate::AgentHudCore {
 
     /// Whether the client a row names under `key` is turned on.
     pub(crate) fn shown(&self, value: &Value, key: &str) -> bool {
-        value[key]
-            .as_str()
-            .is_some_and(|id| self.enabled.get(id).copied().unwrap_or(true))
+        value[key].as_str().is_some_and(|id| self.agent_on(id))
     }
 }

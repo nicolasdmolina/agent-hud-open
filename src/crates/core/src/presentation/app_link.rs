@@ -22,7 +22,7 @@ pub(super) fn stand_in(discovery: &[ProviderDiscovery], source: &str, session: &
         .and_then(|agent| agent.discovery.app_navigation)
         .filter(|link| target["kind"] == link.kind)
         .and_then(|link| link.label);
-    if let Some((zh, en)) = named {
-        session["navigationLabel"] = json!(crate::l10n::text(zh, en));
+    if let Some(label) = named {
+        session["navigationLabel"] = json!(label());
     }
 }

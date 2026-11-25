@@ -7,6 +7,13 @@ use std::{
     os::unix::net::{UnixListener, UnixStream},
 };
 
+// Agent HUD Fork (ticket 66): an automatic answer the owner did not take.
+mod auto_answer;
+// Agent HUD Fork (ticket 66): a request that reuses an id, and its receipts.
+mod receipt_reuse;
+// Agent HUD Fork (ticket 66): the same request asked again after a reconnect.
+mod reconnect;
+
 const THREAD: &str = "00000000-0000-4000-8000-000000000001";
 fn permission(connector: &str, persist: Value) -> Value {
     json!({"id":7,"method":"mcpServer/elicitation/request","params":{"threadId":THREAD,"turnId":"turn-fixture","mode":"form","_meta":{"codex_approval_kind":"mcp_tool_call","connector_id":connector,"persist":persist,"tool_params":{"app":"com.example.Fixture","origin":"https://fixture.invalid"},"tool_name":"access_browser_origin"}}})
@@ -68,9 +75,9 @@ fn scopes_and_browser_reviewer_match_source() {
 }
 #[test]
 fn native_cards_say_what_allowing_keeps_as_open_words_it() {
-    use agent_hud_core::l10n;
-    let conversation = l10n::text("允许此对话", "Allow this conversation");
-    let once = l10n::text("批准一次", "Allow once");
+    use agent_hud_core::l10n::tr;
+    let conversation = tr!("Allow this conversation");
+    let once = tr!("Allow once");
     let app = snapshot(vec![permission(
         "computer-use",
         json!(["session", "always"]),

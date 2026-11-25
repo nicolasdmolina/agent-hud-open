@@ -21,7 +21,7 @@ use super::{
 use agent_hud_agents::hermes::gateway::{
     answered, refusal, Answered, Ask, Closed, Command, Failure, Input, Pending, Refusal,
 };
-use agent_hud_core::l10n;
+use agent_hud_core::l10n::tr;
 #[cfg(test)]
 use probes::{at_apply, before_reply};
 #[cfg(test)]
@@ -224,10 +224,7 @@ impl Going<'_> {
 }
 
 pub(super) fn unreachable() -> String {
-    l10n::text(
-        "无法连接 Hermes 来送出这个回答",
-        "Hermes could not be reached to send the answer.",
-    )
+    tr!("Hermes could not be reached to send the answer.")
 }
 
 /// What only the tests use: a way into `Going::written`, and the places

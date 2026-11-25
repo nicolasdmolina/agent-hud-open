@@ -40,9 +40,15 @@ impl Server {
                     wake();
                     return Some(response);
                 }
+                // Agent HUD Fork (ticket 66): the pipe writes the reply after
+                // this returns, or drops it, and reports nothing back. So
+                // this listener never says the hook took the reply: an
+                // automatic Allow nobody saw delivered is not told to core
+                // as approved, and what it leaves sounds.
                 super::wait_for_answer(&requests, &reminders, source, flag, payload, || {
                     active.load(Ordering::Acquire)
                 })
+                .map(|answer| answer.deliver(&requests, |_| false))
             },
         );
         crate::os::pipe::Server::start(data, "hooks", PAYLOAD_LIMIT, PAYLOAD_LIMIT, handler)

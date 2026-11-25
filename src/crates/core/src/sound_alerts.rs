@@ -8,16 +8,14 @@
 //! them is decided then, so none sounds on its own later.
 use super::*;
 
+mod bare;
 mod kept;
+mod look;
 mod requests;
+mod wait;
 pub(crate) use requests::Heard;
-use requests::Request;
+use wait::Wait;
 
-/// What a session was waiting on at the last look: its requests (none for a
-/// wait its hooks or process report without a card).
-struct Wait {
-    requests: Vec<Request>,
-}
 pub(crate) struct Tracker {
     primed: bool,
     /// Each waiting session's wait, by `source:session`.
@@ -29,6 +27,9 @@ pub(crate) struct Tracker {
     /// keeps them across a relaunch was last told (`kept.rs`).
     changed: bool,
     kept: Option<kept::Kept>,
+    /// The approved requests whose wait the last look saw end, by their
+    /// `source:session` and id, until core is told (`take_ended`).
+    ended: Vec<(String, String)>,
     revision: u64,
     items: VecDeque<Value>,
 }
@@ -59,6 +60,7 @@ impl Tracker {
             decided: HashMap::new(),
             changed: false,
             kept: None,
+            ended: Vec::new(),
             revision: 0,
             items: VecDeque::new(),
         }
@@ -131,14 +133,46 @@ impl Tracker {
             else {
                 continue;
             };
+            let key = format!("{source}:{id}");
+            // What core says is approved now: allowed automatically, with
+            // no card, and its answer confirmed delivered. Asked at every
+            // look; nothing of an earlier look's answer is used.
+            let no_names = Vec::new();
+            let allowed = heard.approved.get(&key).unwrap_or(&no_names);
             let now_requests = requests::requests(session, source, id, heard);
             if session["state"] != "waiting" && now_requests.is_empty() {
                 continue;
             }
-            let key = format!("{source}:{id}");
             let previous = self.waits.remove(&key);
+            let before = previous.as_ref();
             let mut told = None;
+            // The requests its channel says the wait is for, and which of
+            // them are approved: by their ids, and by nothing else.
+            let named = heard.waits.get(&key).map_or(&[][..], Vec::as_slice);
+            let is_approved = |request: &&String| allowed.contains(request);
+            let approved: Vec<String> = named.iter().filter(is_approved).cloned().collect();
+            let over = before.into_iter().flat_map(|p| &p.approved);
+            let over = over.filter(|r| !approved.contains(r));
+            self.ended.extend(over.map(|r| (key.clone(), r.clone())));
+            // The requests it names that show no card and are not approved:
+            // allowed automatically, their answer on its way, failed, or
+            // confirmed by nobody. Each waits for the person as its card
+            // would, and goes by the name its card would have.
+            let carded = |r: &&String| now_requests.iter().any(|q| q.card && q.names.contains(r));
+            let is_waiting = |r: &&String| !allowed.contains(r) && !carded(r);
+            let waiting: Vec<&String> = named.iter().filter(is_waiting).collect();
+            let names = self.request_names(before, named, &key, now);
+            // A wait with no card, for approved requests alone, is theirs:
+            // it makes no sound. One that names no request always sounds.
+            let silent = now_requests.is_empty() && !named.is_empty() && waiting.is_empty();
             for request in &now_requests {
+                // A transcript sighting that goes by an approved request's
+                // name is that request, which showed no card: silent while
+                // core says so, and not decided, so it sounds if core says
+                // so no longer. A card always waits for the person.
+                if !request.card && request.names.iter().any(|n| allowed.contains(n)) {
+                    continue;
+                }
                 let names: Vec<String> = request
                     .names
                     .iter()
@@ -154,19 +188,29 @@ impl Tracker {
                 }
                 // A wait already told without a card is the same wait once
                 // its card comes. The look's first new request names the alert.
-                if new && !previous.as_ref().is_some_and(|p| p.requests.is_empty()) {
+                if new && !before.is_some_and(|p| p.unnamed) {
                     told.get_or_insert(names[0].clone());
                 }
             }
-            if now_requests.is_empty() {
-                let facts = &session["liveFacts"];
-                let since = [&facts["attention"]["at"], &facts["observedAt"]]
-                    .into_iter()
-                    .find_map(Value::as_str)
-                    .or(session["updatedAt"].as_str())
-                    .unwrap_or("");
-                let identity = format!("needs-you:{source}:{id}:{since}");
-                if self.first(&identity, now) && previous.is_none() {
+            // A request that newly waits with no card is a new wait: it
+            // sounds whatever the session's wait sounded for before, and
+            // once, under its own name, so its card would not sound again.
+            for (_, name) in names.iter().filter(|(r, _)| waiting.contains(&r)) {
+                if self.first(name, now) {
+                    told.get_or_insert(name.clone());
+                }
+            }
+            // Nothing of its own waits in it: a wait known only as a wait.
+            let unnamed = now_requests.is_empty() && waiting.is_empty() && !silent;
+            // The name a wait with no card had here goes on with the wait.
+            let mut lent = before.and_then(|p| p.lent.clone());
+            if silent {
+                // The approved requests' wait: the one before it is over.
+                self.over(lent.take(), now);
+            } else if unnamed {
+                let (identity, borrowed) = self.bare_name(session, source, id);
+                lent = borrowed.then(|| identity.clone());
+                if self.first(&identity, now) && before.is_none_or(|p| p.silent) {
                     told = Some(identity);
                 }
             }
@@ -181,11 +225,25 @@ impl Tracker {
             waits.insert(
                 key,
                 Wait {
-                    requests: now_requests,
+                    unnamed,
+                    named: names,
+                    approved,
+                    silent,
+                    lent,
                 },
             );
         }
-        self.waits = waits;
+        // A session that waits no more: what its wait was for is over, and
+        // so is the name it borrowed.
+        for (key, wait) in std::mem::replace(&mut self.waits, waits) {
+            let over = wait.approved.into_iter();
+            self.ended
+                .extend(over.map(|request| (key.clone(), request)));
+            self.over(wait.lent, now);
+            for (_, name) in wait.named {
+                self.over(Some(name), now);
+            }
+        }
         let decided = self.decided.len();
         self.decided.retain(|_, at| now - *at < KEPT_MS);
         self.changed |= self.decided.len() != decided;
@@ -216,6 +274,19 @@ impl Tracker {
         }
         json!({"revision":self.revision,"items":self.items})
     }
+}
+
+/// Whether a setting names a sound: a name, never a path. The host looks it
+/// up among the system's own sounds.
+pub(crate) fn names_a_sound(value: &Value) -> bool {
+    value.as_str().is_some_and(|name| {
+        !name.is_empty()
+            && name.trim() == name
+            && name.len() <= 64
+            && name
+                .chars()
+                .all(|c| c.is_alphanumeric() || " -_".contains(c))
+    })
 }
 
 #[cfg(test)]

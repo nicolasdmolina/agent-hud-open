@@ -50,6 +50,19 @@ impl Host for AccountContext {
             Err(error) => answer(error),
         }
     }
+    fn read_tail(&self, path: &Path, limit: u64) -> Answer<Vec<u8>> {
+        use std::io::{Seek, SeekFrom};
+        let mut bytes = Vec::new();
+        let read = fs::File::open(path).and_then(|mut file| {
+            let len = file.metadata()?.len();
+            file.seek(SeekFrom::Start(len.saturating_sub(limit)))?;
+            file.take(limit).read_to_end(&mut bytes)
+        });
+        match read {
+            Ok(_) => Answer::Found(bytes),
+            Err(error) => answer(error),
+        }
+    }
     fn canonical(&self, path: &Path) -> Option<PathBuf> {
         fs::canonicalize(path).ok()
     }
@@ -80,7 +93,7 @@ impl Host for AccountContext {
         crate::os::app_cookie(&self.folder(Base::AppData), app, site, name)
     }
     fn unseal_safe_storage(&self, app: &str, encrypted: &[u8]) -> Answer<String> {
-        crate::os::unseal_safe_storage(app, encrypted)
+        crate::os::unseal_safe_storage(&self.folder(Base::AppData), app, encrypted)
     }
     fn saved_credential(&self, agent: &str) -> Result<Option<Value>, String> {
         if agent == agent_hud_agents::relays::MANUAL {

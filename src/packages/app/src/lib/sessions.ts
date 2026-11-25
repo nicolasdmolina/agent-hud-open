@@ -1,6 +1,13 @@
 // How the Statistics window names a session's client and place, as
 // agent-hud-native-open's session list (SessionCard) and session page do.
 
+import {
+  listSeparator,
+  translate,
+  type Language,
+  type Translate,
+} from "@agent-hud/ui/format";
+
 interface ClientFacts {
   source: string;
   client?: string | null;
@@ -115,19 +122,22 @@ export function sessionMoney(session: MoneyFacts): ListMoney {
 /** What a cost leaves out, as its tooltip says it; undefined when nothing. */
 export function unpricedHelp(
   unpriced: number,
-  zh = false,
+  lang: Language = "en",
   models: string[] = [],
 ): string | undefined {
   if (unpriced <= 0) return undefined;
-  const count = new Intl.NumberFormat("en").format(unpriced);
-  const named = models.length
-    ? zh
-      ? `：${models.join("、")}`
-      : `: ${models.join(", ")}`
-    : "";
-  return zh
-    ? `另有 ${count} 个 Token 来自没有 API 价格的模型，未计入${named}`
-    : `${count} more tokens came from models with no API list price and are not included${named}`;
+  const tokens = new Intl.NumberFormat("en").format(unpriced);
+  return models.length
+    ? translate(
+        lang,
+        "{{tokens}} more tokens came from models with no API list price and are not included: {{models}}",
+        { tokens, models: models.join(listSeparator(lang)) },
+      )
+    : translate(
+        lang,
+        "{{tokens}} more tokens came from models with no API list price and are not included",
+        { tokens },
+      );
 }
 
 interface MessagePage<M> {
@@ -158,12 +168,12 @@ export function withMessagePage<M, D extends MessagePage<M>>(
 /** What a session page's way back is called: Core's name for an app link that stands in for the session's own (Hermes desktop), else "Return to session", else revealing its log. */
 export function returnLabel(
   session: { navigationTarget?: unknown; navigationLabel?: string },
-  zh: boolean,
+  t: Translate,
   macos: boolean,
 ): string {
   if (session.navigationTarget) {
-    return session.navigationLabel || (zh ? "回到会话" : "Return to session");
+    return session.navigationLabel || t("Return to session");
   }
-  if (macos) return zh ? "在访达中显示日志" : "Reveal log in Finder";
-  return zh ? "显示日志" : "Reveal log";
+  if (macos) return t("Reveal log in Finder");
+  return t("Reveal log");
 }

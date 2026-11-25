@@ -21,6 +21,7 @@ pub mod process;
 pub mod protobuf;
 pub mod relays;
 pub mod replies;
+pub mod split;
 pub mod sqlite;
 pub mod transcript;
 
@@ -29,7 +30,8 @@ pub use agent::{account_provider, by_id, session_target, Agent, ACCOUNTS, ALL};
 pub use agent_hud_l10n as l10n;
 pub use change::{Change, Why};
 pub use channel::{
-    Carries, Channel, LiveState, LiveStates, MachineState, MachineStatus, Machines, SOLE_READER,
+    answered_by_hand, Carries, Channel, LiveState, LiveStates, MachineState, MachineStatus,
+    Machines, SOLE_READER,
 };
 pub use discovery::{Discovery, Look, SessionTarget};
 pub use location::{everywhere, Base, Location, Places, Profiles, Source};
@@ -59,6 +61,7 @@ pub mod grok;
 pub mod hermes;
 pub mod kimi;
 pub mod minimax;
+pub mod minimax_code;
 pub mod openclaw;
 pub mod opencode;
 pub mod pi;

@@ -1,3 +1,4 @@
+import { useT } from "@agent-hud/ui/format-context";
 import { useState } from "react";
 import type { Approval, RequestDecision } from "@agent-hud/protocol";
 import { PermissionPlanCard } from "./permissions/PermissionPlanCard";
@@ -13,10 +14,9 @@ import { Unplug } from "lucide-react";
 export interface RequestActionsProps {
   request: Approval;
   onDecision?: (decision: RequestDecision) => void | Promise<void>;
-  /** Settings, on a page such as "agent-plugins". */
+  /** Settings, on a page such as "agents/claude". */
   onOpenSettings?: (page: string) => void;
   light?: boolean;
-  language?: string;
 }
 
 /**
@@ -28,10 +28,8 @@ export function RequestActions({
   onDecision,
   onOpenSettings,
   light = false,
-  language,
 }: RequestActionsProps) {
-  const zh = language?.startsWith("zh") ?? false;
-  const t = (en: string, cn: string) => (zh ? cn : en);
+  const t = useT();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useHeldEnterStop();
@@ -111,7 +109,6 @@ export function RequestActions({
             canDismiss={canDismiss}
             pending={pending}
             light={light}
-            zh={zh}
             answer={answer}
             openSettings={onOpenSettings}
           />
@@ -121,7 +118,6 @@ export function RequestActions({
             disabled={disabled}
             canDismiss={canDismiss}
             light={light}
-            zh={zh}
             answer={answer}
           />
         ) : (
@@ -130,14 +126,13 @@ export function RequestActions({
             disabled={disabled}
             pending={pending}
             light={light}
-            zh={zh}
             answer={answer}
           />
         )}
       </div>
       {!onDecision && (
         <p style={{ margin: 0, fontSize: 11, opacity: 0.6 }}>
-          {t("Approval delivery is not connected.", "尚未连接审批处理。")}
+          {t("Approval delivery is not connected.")}
         </p>
       )}
       {error && (

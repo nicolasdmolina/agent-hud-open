@@ -1,6 +1,7 @@
 //! One session in full: its head, totals, turns and calls, and where its
 //! transcript is.
 use super::log_session;
+use crate::l10n::tr;
 use crate::*;
 
 impl AgentHudCore {
@@ -61,17 +62,40 @@ impl AgentHudCore {
         let family = session_breakdown::Family::new(&every);
         let currency = self.deepseek_account_currency();
         let subagents = family.descendants(&source, id);
+        // The session's own logs: each segment of a session Codex split
+        // across several rollouts, earliest first, else its one log.
+        let segments = family.own(selected);
         let breakdown = match &self.database {
-            Some(db) => Self::session_breakdown(db, selected, &subagents, params["turn"].as_str())?,
+            Some(db) => {
+                Self::session_breakdown(db, &segments, &subagents, params["turn"].as_str())?
+            }
             None => None,
         };
         let mut totals = json!({});
         Self::session_totals(&mut totals, selected, &family, currency.as_deref());
         // The sub-agents' part of the session's tokens (agent-hud-native-open's
-        // "含子 agent" note), from the same logs as the total.
-        let (_, subagent_usage) = family.usage(selected);
-        // The session's own log apart from its sub-agents', which `usage` adds.
-        let own = subagent_usage.map(|_| crate::session_usage::tokens_json(selected.usage));
+        // "含子 agent" note) and Codex's auto-reviews' apart, from the same
+        // logs as the total.
+        let (_, helped) = family.usage(selected);
+        let (subagent_usage, reviews) = family.parts(selected);
+        let tokens = crate::session_usage::tokens_json;
+        // The session's own logs apart from the logs under it, which `usage` adds.
+        let own = helped.map(|_| tokens(family.own_usage(selected)));
+        let reviews = reviews.map(|(count, usage)| json!({"count":count,"tokens":tokens(usage)}));
+        // A split session began when its first segment did.
+        let started_at = segments
+            .first()
+            .filter(|first| first.path != path)
+            .and_then(|first| first.live.started_at());
+        let own_paths = segments
+            .iter()
+            .map(|log| log.path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        // Its messages read on from one segment into the next.
+        let earlier = segments[..segments.len() - 1]
+            .iter()
+            .map(|log| log.path.clone())
+            .collect::<Vec<_>>();
         let credits = self.session_credits(id);
         let parent = selected
             .live
@@ -143,9 +167,8 @@ impl AgentHudCore {
         for (key, value) in totals.as_object().unwrap() {
             session[key] = value.clone();
         }
-        session["startedAt"] = log
-            .live
-            .started_at()
+        session["startedAt"] = started_at
+            .or_else(|| log.live.started_at())
             .and_then(DateTime::<Utc>::from_timestamp_millis)
             .map(|at| json!(at.to_rfc3339()))
             .unwrap_or(Value::Null);
@@ -167,8 +190,13 @@ impl AgentHudCore {
             .transpose()?
             .unwrap_or(100)
             .min(200) as usize;
-        let page = conversation::page(
-            log.origin_path.as_deref().unwrap_or(&path),
+        let paths = earlier
+            .iter()
+            .map(PathBuf::as_path)
+            .chain([log.origin_path.as_deref().unwrap_or(&path)])
+            .collect::<Vec<_>>();
+        let page = conversation::segmented_page(
+            &paths,
             &source,
             &log.id,
             cursor,
@@ -178,7 +206,7 @@ impl AgentHudCore {
             &mut self.conversation_context,
         );
         let usage = session["usage"].clone();
-        let mut result = json!({"session":session,"usage":usage,"own":own,"subagents":subagent_usage.map(crate::session_usage::tokens_json),"turns":log.turns,"calls":[],"parent":parent,"children":children,"credits":credits});
+        let mut result = json!({"session":session,"usage":usage,"own":own,"subagents":subagent_usage.map(tokens),"reviews":reviews,"turns":log.turns,"calls":[],"parent":parent,"children":children,"credits":credits});
         // The ledger's breakdown replaces the parser's recent usage entries.
         if let Some(breakdown) = breakdown {
             for (key, value) in breakdown.as_object().unwrap() {
@@ -213,13 +241,8 @@ impl AgentHudCore {
                 .transpose()?
                 .unwrap_or(200)
                 .min(500);
-            let (total, calls) = metering::session_calls(
-                database,
-                path.to_string_lossy().as_ref(),
-                &source,
-                offset,
-                limit,
-            )?;
+            let (total, calls) =
+                metering::session_calls(database, &own_paths, &source, offset, limit)?;
             let next = offset + calls.len() as u64;
             result["calls"] = json!(calls);
             result["callsTotal"] = json!(total);
@@ -232,16 +255,14 @@ impl AgentHudCore {
 
 impl crate::AgentHudCore {
     pub fn transcript_path(&self, id: &str) -> Result<PathBuf, String> {
+        // Of a session Codex split across several rollouts, the newest
+        // segment, the one Codex goes on writing.
         let log = self
             .selected()
             .into_iter()
-            .find(|log| log.id == id)
-            .ok_or_else(|| {
-                l10n::text(
-                    "找不到这个会话，请先刷新",
-                    "Session was not found; refresh first",
-                )
-            })?;
+            .filter(|log| log.id == id)
+            .max_by_key(|log| crate::usage::segment(log))
+            .ok_or_else(|| tr!("Session was not found; refresh first"))?;
         let path = log
             .origin_path
             .as_ref()
@@ -254,9 +275,8 @@ impl crate::AgentHudCore {
             .filter_map(|(root, _)| root.canonicalize().ok())
             .any(|root| path.starts_with(root));
         if !allowed {
-            return Err(l10n::text(
-                "这个会话日志已不在已启用客户端的目录中",
-                "Transcript no longer belongs to an enabled local provider directory",
+            return Err(tr!(
+                "Transcript no longer belongs to an enabled local provider directory"
             ));
         }
         Ok(path)

@@ -5,8 +5,8 @@
 import { useEffect, useState } from "react";
 import { Laptop, Server, TriangleAlert } from "lucide-react";
 import type { Provider, Snapshot } from "@agent-hud/protocol";
-import { snapshotLanguage } from "@agent-hud/ui/format";
-import { Notice, Row, Section, type Text } from "../SettingsPrimitives";
+import { snapshotLanguage, type Translate } from "@agent-hud/ui/format";
+import { Notice, Row, Section } from "../SettingsPrimitives";
 import { machineTimes, showsMachines } from "./machines-list";
 
 export function MachinesSection({
@@ -14,7 +14,7 @@ export function MachinesSection({
   snapshot,
   source,
 }: {
-  t: Text;
+  t: Translate;
   snapshot: Snapshot;
   source: Provider;
 }) {
@@ -28,7 +28,7 @@ export function MachinesSection({
   if (!showsMachines(list, note)) return null;
   const language = snapshotLanguage(snapshot);
   return (
-    <Section title={t("Machines", "机器")}>
+    <Section title={t("Machines")}>
       {note && (
         <Notice tone="warning">
           <span style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>

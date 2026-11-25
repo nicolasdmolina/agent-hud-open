@@ -1,12 +1,11 @@
 import type { PanelLayout, SourcePreferences } from "@agent-hud/protocol";
 import type { NativeHUDMonitor } from "./lib/use-hud-geometry";
 import AgentsPage from "./settings/agents/AgentsPage";
+import { useT } from "@agent-hud/ui/format-context";
 import { LoadingState } from "./LoadingState";
-import {
-  AgentPluginsPane,
-  type AgentPluginItem,
-} from "./settings/AgentPluginsPane";
+import type { AgentPluginItem } from "./settings/agent-plugins/types";
 import { DisplayPane } from "./settings/DisplayPane";
+import { ExperimentalPane } from "./settings/ExperimentalPane";
 import { GeneralPane } from "./settings/GeneralPane";
 import { LocalNetworkPane } from "./settings/LocalNetworkPane";
 import { PricesPane } from "./settings/PricesPane";
@@ -21,13 +20,13 @@ export default function SettingsPane({
   selectedId,
   monitors,
   selectScreen,
-  chinese,
   layout,
   onLayout,
   preferences,
   onPreferences,
   agentPlugins = [],
   request,
+  agent,
 }: {
   page: string;
   settingsProps: SettingsPaneProps;
@@ -35,19 +34,22 @@ export default function SettingsPane({
   selectedId: string;
   monitors: NativeHUDMonitor[];
   selectScreen: (id: string) => void;
-  chinese: boolean;
   layout: PanelLayout;
   onLayout: (layout: PanelLayout) => Promise<unknown>;
   preferences: Record<string, SourcePreferences>;
   onPreferences: (source: string, patch: SourcePreferences) => Promise<unknown>;
   agentPlugins?: AgentPluginItem[];
   request: (method: string, params?: unknown) => Promise<unknown>;
+  /** On Agents, the client whose page a link opened. */
+  agent?: string | null;
 }) {
+  const t = useT();
   if (page === "general") return <GeneralPane {...settingsProps} />;
   if (page === "prices") return <PricesPane {...settingsProps} />;
   if (page === "relays") return <RelaysPane {...settingsProps} />;
   if (page === "local-network") return <LocalNetworkPane {...settingsProps} />;
   if (page === "updates") return <UpdatesPane {...settingsProps} />;
+  if (page === "experimental") return <ExperimentalPane {...settingsProps} />;
   if (page === "display")
     return ready && selectedId ? (
       <DisplayPane
@@ -58,11 +60,13 @@ export default function SettingsPane({
         onSelectScreen={selectScreen}
       />
     ) : (
-      <LoadingState label={chinese ? "正在读取显示器…" : "Reading displays…"} />
+      <LoadingState label={t("Reading displays…")} />
     );
   if (page === "agents")
     return (
       <AgentsPage
+        key={agent ?? ""}
+        open={agent}
         snapshot={settingsProps.snapshot}
         action={settingsProps.action}
         active={settingsProps.active}
@@ -70,14 +74,6 @@ export default function SettingsPane({
         onLayout={onLayout}
         preferences={preferences}
         onPreferences={onPreferences}
-      />
-    );
-  if (page === "agent-plugins")
-    return (
-      <AgentPluginsPane
-        snapshot={settingsProps.snapshot}
-        action={settingsProps.action}
-        active={settingsProps.active}
         items={agentPlugins}
         request={request}
       />

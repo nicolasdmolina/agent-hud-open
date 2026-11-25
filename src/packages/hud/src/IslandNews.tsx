@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Approval, IslandEvent, Snapshot } from "@agent-hud/protocol";
+import type { Translate } from "@agent-hud/ui/format";
 import { usePanelServices } from "./PanelContext";
-import { agentVendorName, sourceID, vendorKey } from "./model";
+import { agentVendorName, clientID, vendorKey } from "./model";
 import type { EndSide } from "./ends/end-geometry";
 import { PARK_AFTER_MS, type ParkedCard } from "./ends/end-queue";
 import { CLAIM_GRACE_MS } from "./ends/ends-link";
@@ -139,6 +140,15 @@ export function useIslandNews(
       if (!activeRequestIds.has(id)) seenRequests.current.delete(id);
     }
     for (const request of requests) seenRequests.current.add(request.id);
+    // A completion reminds while its client's live status and reminders are on.
+    const remindsOf = (source: string, sessionId?: string) => {
+      const prefs = services?.sources?.[clientID(snapshot, source, sessionId)];
+      return (
+        snapshot.settings.liveStatus !== false &&
+        prefs?.live !== false &&
+        prefs?.reminders !== false
+      );
+    };
     const eligible = silenced
       ? []
       : fresh.filter(
@@ -146,10 +156,7 @@ export function useIslandNews(
             event.islandAlert !== false &&
             shown.includes(vendorKey(event.source)) &&
             (event.kind !== "completion" ||
-              (services?.sources?.[sourceID(snapshot, event.source)]?.live !==
-                false &&
-                services?.sources?.[sourceID(snapshot, event.source)]
-                  ?.reminders !== false)),
+              remindsOf(event.source, event.sessionId)),
         );
     const coming = startup ? [] : freshRequests;
     const visible = underPointer ? eligible : [];
@@ -251,30 +258,18 @@ export function useIslandNews(
   };
 }
 
-export const newsTitle = (event: IslandEvent, zh = false) =>
+export const newsTitle = (event: IslandEvent, t: Translate) =>
   event.kind === "completion"
-    ? zh
-      ? "有新回复"
-      : "New reply"
+    ? t("New reply")
     : event.kind === "quota-reset"
-      ? zh
-        ? "额度已重置"
-        : "Quota reset"
+      ? t("Quota reset")
       : event.kind === "reset-credits"
-        ? zh
-          ? "获得使用重置"
-          : "Usage resets added"
+        ? t("Usage resets added")
         : event.kind === "sign-in-needed"
-          ? zh
-            ? "需要重新登录"
-            : "Sign in again"
+          ? t("Sign in again")
           : event.kind === "hooks-review-needed"
-            ? zh
-              ? "回调待允许"
-              : "Allow its hooks"
-            : zh
-              ? "额度预警"
-              : "Running low";
+            ? t("Allow its hooks")
+            : t("Running low");
 
 export const compactDuration = (seconds: number) => {
   const total = Math.max(0, Math.round(seconds)),
