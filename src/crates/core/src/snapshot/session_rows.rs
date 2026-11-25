@@ -116,6 +116,7 @@ impl crate::AgentHudCore {
             .collect::<Vec<_>>();
         let children = Self::active_subagents(&logs, now);
         let family = session_breakdown::Family::new(&every);
+        let counting = crate::sessions::no_usage::counting(&self.logs);
         let rows = logs
             .iter()
             .filter(|log| !self.is_claude_project_worker(log))
@@ -142,6 +143,13 @@ impl crate::AgentHudCore {
                     session["contextPercent"] = json!(*pct);
                 }
                 Self::session_totals(&mut session, log, &family, currency);
+                // A session that used no AI says so: the panel's first paint
+                // leaves it out, and its turn sounds no `finished`.
+                let tokens = session["tokens"].as_u64().unwrap_or(0);
+                let state = session["state"].as_str().unwrap_or("");
+                if crate::sessions::no_usage::used_none(&counting, &log.source, tokens, state) {
+                    session["usedNoAi"] = json!(true);
+                }
                 (log.path.clone(), session)
             })
             .collect();

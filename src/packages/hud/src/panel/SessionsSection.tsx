@@ -54,6 +54,8 @@ export function SourceSessions({
     {
       scope: week ? "recent" : "active",
       limit,
+      // Sessions that used no AI stay on the Sessions page only.
+      leaveOutUnused: true,
       ...(selectedSources ? { sources: selectedSources } : {}),
       ...(layout.projects?.length ? { projects: layout.projects } : {}),
     },
@@ -67,6 +69,7 @@ export function SourceSessions({
   const fallback = snapshot.sessions
     .filter(
       (session) =>
+        !session.usedNoAi &&
         (!selectedSources ||
           selectedSources.includes(sourceID(snapshot, session.source))) &&
         (!layout.projects?.length ||

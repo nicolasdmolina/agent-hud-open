@@ -1,5 +1,6 @@
 //! The session list: a page of the sessions a scope, its filters and a search
 //! select, with the day totals and projects they fall under.
+use super::no_usage::Row;
 use crate::*;
 
 fn session_project(target: &Value, cwd: Option<&str>) -> Option<String> {
@@ -247,10 +248,6 @@ impl AgentHudCore {
             })
             .collect::<Vec<_>>();
         // Keep the complete history as cheap heads; serialize only this page.
-        enum Row<'a> {
-            Log(&'a LogHead),
-            Extra(Value),
-        }
         let mut rows = filtered
             .into_iter()
             .map(Row::Log)
@@ -316,11 +313,21 @@ impl AgentHudCore {
         };
         // Order the complete persisted heads before paging. Rendering a small
         // HUD page must not silently cap its scope at the first 200 rows.
+        let selected = self.selected();
+        let family = session_breakdown::Family::new(&selected);
+        // The panel's short list leaves out the sessions that used no AI.
+        let counting =
+            super::no_usage::asked(&params)?.then(|| super::no_usage::counting(&self.logs));
         let mut rows = rows
             .drain(..)
             .map(|row| {
                 let state = state(&row);
                 (row, state)
+            })
+            .filter(|(row, state)| {
+                counting
+                    .as_ref()
+                    .is_none_or(|c| !row.used_none(c, &family, state))
             })
             .collect::<Vec<_>>();
         rows.sort_unstable_by(|(a, _), (b, _)| {
@@ -330,8 +337,6 @@ impl AgentHudCore {
         });
         let total = rows.len();
         let claude_shares = self.claude_window_shares(now);
-        let selected = self.selected();
-        let family = session_breakdown::Family::new(&selected);
         let currency = self.deepseek_account_currency();
         // What every matching session spent, not only this page's, by the
         // local day of its last message (a later one under today): the

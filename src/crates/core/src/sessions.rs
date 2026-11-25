@@ -6,6 +6,7 @@ use std::hash::{Hash, Hasher};
 
 mod detail;
 mod list;
+pub(crate) mod no_usage;
 mod search;
 
 /// A log as the session list shows it, before its head is written. The
