@@ -249,15 +249,11 @@ fn only_a_note_proven_to_be_the_forks_is_its_own() {
     assert!(!names_this_fork(&folder.join("missing.json"), running));
 }
 
-#[cfg(unix)]
 #[test]
-fn a_linked_note_stays() {
+fn what_is_not_a_plain_file_stays() {
     let root = tempfile::tempdir().unwrap();
-    let real = root.path().join("real");
-    write_note(&real, FORK);
     let folder = root.path().join("NativeMessagingHosts");
-    fs::create_dir_all(&folder).unwrap();
-    std::os::unix::fs::symlink(note(&real), note(&folder)).unwrap();
+    fs::create_dir_all(note(&folder)).unwrap();
     assert!(!names_this_fork(&note(&folder), Path::new(FORK)));
 }
 
