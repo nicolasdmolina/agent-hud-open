@@ -17,9 +17,9 @@ const LOG_LIMIT: u64 = 256 * 1024;
 
 pub struct Sounds {
     /// The alert ids the last snapshot carried. An id plays unless the
-    /// snapshot before carried it: core keeps an alert in its list until
-    /// it is older than the list, and never gives a later wait the id of
-    /// an alert the list still carries (Agent HUD Fork, ticket 75).
+    /// snapshot before carried it. Core keeps the last 32 alerts in its
+    /// list and adds none under an id the list still carries (Agent HUD
+    /// Fork, ticket 75), so each new alert plays.
     played: Mutex<HashSet<String>>,
     log: PathBuf,
 }

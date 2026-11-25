@@ -134,15 +134,15 @@ fn after_a_relaunch_a_wait_a_day_after_the_last_one_ended_sounds_under_a_new_id(
     }
 }
 
-/// What the day keeps past its end is only the mark that a name an alert
-/// still goes by is over: the names themselves go after a day.
+/// What outlives a wait seen to end is a count of the waits under its
+/// name, which goes a day later with the name.
 #[test]
-fn only_the_marks_of_names_the_snapshot_carries_outlive_the_day() {
+fn a_count_of_ended_waits_outlives_the_wait_and_goes_after_a_day() {
     let mut tracker = started();
     told(&mut tracker, &[waiting("s1", &[])], &[], false, T + 1);
     told(&mut tracker, &[running("s1")], &[], false, T + 2);
+    let counts: Vec<u32> = tracker.ends.values().map(|(count, _)| *count).collect();
+    assert_eq!((counts, tracker.decided.len()), (vec![1], 1));
     told(&mut tracker, &[], &[], false, T + 2 + DAY);
-    let kept: Vec<&String> = tracker.decided.keys().collect();
-    assert_eq!(kept.len(), 1, "{kept:?}");
-    assert!(kept[0].ends_with("/over"), "{kept:?}");
+    assert_eq!((tracker.ends.len(), tracker.decided.len()), (0, 0));
 }

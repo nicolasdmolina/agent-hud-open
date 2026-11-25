@@ -12,6 +12,7 @@ mod asks;
 mod bare;
 mod kept;
 mod look;
+mod open;
 mod requests;
 mod setting;
 mod wait;
@@ -26,6 +27,13 @@ pub(crate) struct Tracker {
     /// Every identity already decided, sounded or not, and when it was
     /// last among the inputs; one gone for a day is forgotten.
     decided: HashMap<String, i64>,
+    /// How many waits under each base name were seen to end, and when the
+    /// base was last among the inputs (`bare.rs`).
+    ends: HashMap<String, (u32, i64)>,
+    /// When the look before this one was (`bare.rs`, `forget`).
+    last: i64,
+    /// The waits open when the app last quit, by session (`open.rs`).
+    restored: open::Open,
     /// Whether an identity was decided or forgotten since the file that
     /// keeps them across a relaunch was last told (`kept.rs`).
     changed: bool,
@@ -48,7 +56,7 @@ pub(crate) const FINISHED_SOUND: &str = "Hero";
 
 /// One alert before it is told: its kind, the session it belongs to, and the
 /// identity it is played under once.
-struct Alert {
+pub(super) struct Alert {
     kind: &'static str,
     source: Value,
     session: Value,
@@ -61,6 +69,9 @@ impl Tracker {
             primed: false,
             waits: HashMap::new(),
             decided: HashMap::new(),
+            ends: HashMap::new(),
+            last: 0,
+            restored: HashMap::new(),
             changed: false,
             kept: None,
             ended: Vec::new(),
@@ -73,12 +84,16 @@ impl Tracker {
     /// there what it decides. A request decided before a relaunch does
     /// not sound after it, whenever its card comes back.
     pub fn kept(file: std::path::PathBuf, now: i64) -> Self {
-        let (kept, decided) = kept::Kept::load(file, now, KEPT_MS);
-        Self {
+        let (kept, (decided, ends, restored)) = kept::Kept::load(file, now, KEPT_MS);
+        let mut tracker = Self {
             decided,
+            ends,
+            restored,
             kept: Some(kept),
             ..Self::new()
-        }
+        };
+        tracker.adopt_marks();
+        tracker
     }
     /// Whether `id` is new, noting it as seen now either way.
     fn first(&mut self, id: &str, now: i64) -> bool {
@@ -97,6 +112,7 @@ impl Tracker {
         settings: &Value,
         now: i64,
     ) -> Value {
+        self.forget(now, self.last);
         let mut alerts = Vec::new();
         // A subagent's turn ending is a step of another's turn: only a
         // top-level session's turn end is `finished`. The island's
@@ -144,6 +160,7 @@ impl Tracker {
             let allowed = heard.approved.get(&key).unwrap_or(&no_names);
             let now_requests = requests::requests(session, source, id, heard);
             if session["state"] != "waiting" && now_requests.is_empty() {
+                self.reopen(&key, &[], now);
                 continue;
             }
             let previous = self.waits.remove(&key);
@@ -181,7 +198,7 @@ impl Tracker {
                 let names: Vec<String> = request
                     .names
                     .iter()
-                    .map(|name| self.current(format!("needs-you:{source}:{id}:{name}")))
+                    .map(|name| format!("needs-you:{source}:{id}:{name}"))
                     .collect();
                 // New only if it goes by no name decided before; all its
                 // names are decided now. Every name is checked before any is
@@ -190,6 +207,7 @@ impl Tracker {
                 let new = names.iter().all(|name| !self.decided.contains_key(name));
                 for name in &names {
                     self.first(name, now);
+                    self.touch(name, now);
                 }
                 // A wait already told without a card is the same wait once
                 // its card comes. The look's first new request names the alert.
@@ -212,6 +230,10 @@ impl Tracker {
             };
             let asked = self.sound_asks(&asks, quiet, now);
             told = told.or(asked);
+            let no_card = names.iter().filter(|(r, _)| waiting.contains(&r));
+            let no_card = no_card.map(|(_, name)| name);
+            let asked = asks.iter().filter(|a| !quiet(a)).map(|a| &a.name);
+            let uncarded = no_card.chain(asked).cloned().collect();
             // Nothing of its own waits in it: a wait known only as a wait.
             let unnamed =
                 now_requests.is_empty() && waiting.is_empty() && asks.is_empty() && !silent;
@@ -219,13 +241,15 @@ impl Tracker {
             let mut lent = before.and_then(|p| p.lent.clone());
             if silent {
                 // The approved requests' wait: the one before it is over.
-                self.over(lent.take(), now);
+                self.end(lent.take(), now);
             } else if unnamed {
-                let (identity, borrowed) = self.bare_name(session, source, id, before);
-                lent = borrowed.then(|| identity.clone());
+                let (identity, base) = self.bare_name(session, source, id, now);
+                lent = base;
                 if self.first(&identity, now) && before.is_none_or(|p| p.silent) {
                     told = Some(identity);
                 }
+            } else if let Some(base) = &lent {
+                self.touch(base, now);
             }
             if let Some(identity) = told {
                 alerts.push(Alert {
@@ -235,57 +259,32 @@ impl Tracker {
                     id: identity,
                 });
             }
-            waits.insert(
-                key,
-                Wait {
-                    unnamed,
-                    named: names,
-                    asks,
-                    approved,
-                    silent,
-                    lent,
-                },
-            );
+            let wait = Wait {
+                unnamed,
+                named: names,
+                asks,
+                approved,
+                silent,
+                lent,
+                uncarded,
+            };
+            self.reopen(&key, &wait.bases(&key), now);
+            waits.insert(key, wait);
         }
         // A session that waits no more: what its wait was for is over, and
         // so is the name it borrowed.
         for (key, wait) in std::mem::replace(&mut self.waits, waits) {
-            let over = wait.approved.into_iter();
-            self.ended
-                .extend(over.map(|request| (key.clone(), request)));
-            self.over(wait.lent, now);
-            let asks = wait.asks.into_iter().map(|ask| (ask.request, ask.name));
-            for (_, name) in wait.named.into_iter().chain(asks) {
-                self.over(Some(name), now);
-            }
+            self.close(key, wait, now);
         }
-        self.forget(now);
+        self.forget(now, now);
+        self.last = now;
+        let open = self.open(now);
         if let Some(kept) = &mut self.kept {
-            kept.keep(&self.decided, std::mem::take(&mut self.changed), now);
+            let changed = std::mem::take(&mut self.changed);
+            let saved = (&self.decided, &self.ends, &open);
+            kept.keep(saved, changed, now);
         }
-        // What waits at the first look was there before the app: noted only.
-        let primed = std::mem::replace(&mut self.primed, true);
-        if settings["sound"] != true {
-            self.items.clear();
-        } else {
-            let mut added = 0;
-            for alert in alerts {
-                if alert.kind == "needs-you" && !primed {
-                    continue;
-                }
-                let (key, default) = match alert.kind {
-                    "needs-you" => ("soundNeedsYou", NEEDS_YOU_SOUND),
-                    _ => ("soundFinished", FINISHED_SOUND),
-                };
-                added += 1;
-                self.revision = self.revision.wrapping_add(1);
-                self.items.push_back(json!({"id":alert.id,"kind":alert.kind,"source":alert.source,"sessionId":alert.session,"sound":settings[key].as_str().unwrap_or(default),"at":iso(now)}));
-            }
-            while self.items.len() > KEPT_ITEMS + added {
-                self.items.pop_front();
-            }
-        }
-        json!({"revision":self.revision,"items":self.items})
+        self.tell(alerts, settings, now)
     }
 }
 

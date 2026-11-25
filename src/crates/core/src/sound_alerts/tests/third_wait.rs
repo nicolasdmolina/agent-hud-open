@@ -3,8 +3,8 @@
 //! go through a copy of the host's filter (`host/src/system/sound.rs`,
 //! `fresh`: an id plays unless the snapshot before carried it), so every
 //! count here is what would be heard. A wait that goes on keeps the name it
-//! was decided under, and the mark that sent it there stays while it is
-//! remembered: the wait after it never lands on a name decided for it.
+//! was decided under, and the wait after it gets a name no wait had
+//! (`bare.rs`).
 use super::*;
 
 const HOUR: i64 = 3_600_000;
@@ -71,12 +71,9 @@ impl Lab {
     fn end(&mut self, after: i64, kind: (&[&str], bool)) -> usize {
         self.at(after, &no_events(), &[running("s1")], &[], kind.1)
     }
+    /// The counts of ended waits held (`bare.rs`).
     fn marks(&self) -> usize {
-        self.tracker
-            .decided
-            .keys()
-            .filter(|k| k.ends_with("/over"))
-            .count()
+        self.tracker.ends.len()
     }
 }
 
@@ -190,10 +187,10 @@ fn a_card_a_day_after_the_wait_of_its_request_ended_sounds() {
 }
 
 /// Memory: 600 waits in 300 sessions over 60 days, each ended, with turn
-/// ends of other sessions. The marks held stay few, and a day after the
+/// ends of other sessions. The counts held stay few, and a day after the
 /// last none outlives its alerts.
 #[test]
-fn the_marks_held_stay_few_over_sixty_days() {
+fn the_counts_held_stay_few_over_sixty_days() {
     let mut lab = Lab::new();
     let mut most = 0;
     for round in 0..600 {
@@ -211,7 +208,7 @@ fn the_marks_held_stay_few_over_sixty_days() {
     }
     lab.at(DAY + 1, &no_events(), &[], &[], false);
     println!(
-        "most marks held: {most}; a day after the last: {}",
+        "most counts held: {most}; a day after the last: {}",
         lab.marks()
     );
     assert!(most <= 32, "{most}");

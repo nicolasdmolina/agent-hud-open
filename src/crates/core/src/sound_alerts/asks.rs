@@ -21,9 +21,9 @@ pub(super) struct Ask {
 
 impl Tracker {
     /// The name each ask in the session goes by at this look. An ask the
-    /// look `before` held whose request waits in no ask now is over: its
-    /// name is marked, so the same ask waiting again later goes by the name
-    /// after it and sounds again, as a wait that names no request does. A
+    /// look `before` held whose request waits in no ask now is over, so
+    /// the same ask waiting again later goes by the name after it and
+    /// sounds again, as a wait that names no request does (`bare.rs`). A
     /// request asked anew is not over: its name stays as it was, and so
     /// does the name its wait has where its channel names it.
     pub(super) fn ask_names(
@@ -33,23 +33,17 @@ impl Tracker {
         session: &str,
         now: i64,
     ) -> Vec<Ask> {
+        let base = |ask: &String| format!("needs-you:{session}:{ask}");
         for old in before.into_iter().flat_map(|wait| &wait.asks) {
             if !asks.iter().any(|(request, _)| *request == old.request) {
-                self.over(Some(old.name.clone()), now);
+                self.spent(before, &base(&old.ask));
+                self.end(Some(base(&old.ask)), now);
             }
         }
-        // An ask the look before held keeps its name while it waits.
-        let kept = |ask: &String| {
-            let mut was = before.into_iter().flat_map(|wait| &wait.asks);
-            was.find(|old| old.ask == *ask).map(|old| old.name.clone())
-        };
-        let name = |ask: &String| {
-            kept(ask).unwrap_or_else(|| self.past(format!("needs-you:{session}:{ask}")))
-        };
         let named = asks.iter().map(|(request, ask)| Ask {
             request: request.clone(),
             ask: ask.clone(),
-            name: name(ask),
+            name: self.named(&base(ask), now),
         });
         named.collect()
     }

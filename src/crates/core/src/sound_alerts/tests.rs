@@ -2,8 +2,13 @@ use super::*;
 
 mod again;
 mod approved;
+mod lab;
 mod later_wait;
+mod lives;
+mod probes_round1;
+mod probes_round2;
 mod relaunch;
+mod saved;
 mod third_wait;
 
 const T: i64 = 1_800_000_000_000;
