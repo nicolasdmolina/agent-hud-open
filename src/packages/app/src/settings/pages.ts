@@ -138,8 +138,11 @@ export function sidebarPages(
   const chinese = (page: AppExtensionPage) =>
     isChinese(language) ? page.zh : undefined;
   // Agent HUD Fork (ticket 08, FORK.md): the phone pairing page is hidden;
-  // its pane and the LAN code stay.
-  const shown = builtInPages(t).filter((page) => page.id !== "local-network");
+  // its pane and the LAN code stay. Ticket 78: so is Experimental, which
+  // holds only the inspector's switches; the host keeps the inspector off
+  // (`host/src/inspect/fork.rs`).
+  const hidden = ["local-network", "experimental"];
+  const shown = builtInPages(t).filter((page) => !hidden.includes(page.id));
   const list: SidebarPage[] = shown.map((page) => {
     const replacement = extensionPages.find(
       (item) => item.replaces === page.id,

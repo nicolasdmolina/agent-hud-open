@@ -14,6 +14,7 @@ mod commands;
 mod compose;
 mod content;
 mod draft;
+mod fork;
 mod hosts;
 pub(crate) mod marking;
 mod page;
@@ -68,19 +69,22 @@ pub(crate) fn install(app: &tauri::AppHandle, demo: bool) -> Result<(), String> 
             .join("tmp")
     };
     content::prune(&pictures, KEEP_DAYS);
+    let parts = fork::parts(demo);
     if !demo {
-        if let Ok(executable) = std::env::current_exe() {
-            hosts::install(&executable);
+        if let (Ok(home), Ok(executable)) =
+            (agent_hud_runtime::home_directory(), std::env::current_exe())
+        {
+            fork::browser_notes(&home, &executable);
         }
     }
     app.manage(Inspect {
         draft: Mutex::new(Draft::default()),
         folder,
         pictures,
-        watch: Mutex::new((!demo).then(|| watch::start(app.clone())).flatten()),
-        browser: Mutex::new((!demo).then(|| browser::listen(app, &data)).flatten()),
+        watch: Mutex::new(parts.watch.then(|| watch::start(app.clone())).flatten()),
+        browser: Mutex::new(parts.relay.then(|| browser::listen(app, &data)).flatten()),
     });
-    if !demo {
+    if parts.shortcut {
         if let Some(presentation) = app.try_state::<agent_hud_hud::presentation::Presentation>() {
             shortcut::apply(app, &presentation.view());
         }

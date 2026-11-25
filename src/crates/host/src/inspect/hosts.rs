@@ -31,10 +31,7 @@ pub(crate) fn store_url() -> Option<String> {
 }
 
 /// Writes the note into every browser folder there is, where it differs.
-pub(super) fn install(executable: &Path) {
-    let Ok(home) = agent_hud_runtime::home_directory() else {
-        return;
-    };
+pub(super) fn install(home: &Path, executable: &Path) {
     let note = json!({
         "name": NAME,
         "description": "Agent HUD: sends what the browser extension picks to an agent session",
@@ -46,7 +43,7 @@ pub(super) fn install(executable: &Path) {
             .collect::<Vec<_>>(),
     });
     let bytes = serde_json::to_vec_pretty(&note).unwrap_or_default();
-    for folder in host::folders(&home) {
+    for folder in folders(home) {
         let file = folder.join(format!("{NAME}.json"));
         if std::fs::read(&file).is_ok_and(|current| current == bytes) {
             continue;
@@ -55,6 +52,11 @@ pub(super) fn install(executable: &Path) {
             let _ = std::fs::write(&file, &bytes);
         }
     }
+}
+
+/// The browsers' host-manifest folders, where they exist.
+pub(super) fn folders(home: &Path) -> Vec<PathBuf> {
+    host::folders(home)
 }
 
 /// The browser folders under `root` that exist, each with its host-manifest
