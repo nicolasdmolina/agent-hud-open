@@ -86,10 +86,14 @@ fn an_automatic_allow_the_hook_did_not_take_whole_is_not_told_to_core() {
 #[test]
 fn a_reply_handed_over_and_never_written_is_not_told_to_core() {
     // How the Windows handler takes the reply, which this Mac cannot
-    // compile: held to the one call that tells core nothing.
+    // compile: held to the one call, which never says the hook took it.
     let windows = include_str!("../windows.rs");
-    assert!(windows.contains(".map(|answer| answer.into_reply())"));
-    assert!(!windows.contains("deliver("), "Windows counts a hand-over");
+    let call = ".map(|answer| answer.deliver(&requests, |_| false))";
+    assert!(
+        windows.contains(call),
+        "Windows hands the reply over otherwise"
+    );
+    assert_eq!(windows.matches("deliver(").count(), 1);
 
     let root = tempfile::tempdir().unwrap();
     let mut core = agent_hud_core::AgentHudCore::new(vec![], root.path().join("app"));
@@ -106,7 +110,7 @@ fn a_reply_handed_over_and_never_written_is_not_told_to_core() {
         super::super::wait_for_answer(&requests, &reminders, "claude", flag, &payload, || true)
             .expect("an automatic Allow");
     let (mut listener_end, hook_end) = UnixStream::pair().unwrap();
-    let reply = answer.into_reply();
+    let reply = answer.deliver(&requests, |_| false);
     drop(hook_end);
     assert!(!written(&mut listener_end, &reply));
     assert!(

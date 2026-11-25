@@ -8,6 +8,8 @@ use agent_hud_core::requests::Requests;
 
 mod answer;
 pub(crate) use answer::Answer;
+#[cfg(test)]
+mod windows_shape_tests;
 
 /// Waits for the HUD's answer to a permission request a client's hook sent,
 /// while `keep_waiting` holds and until the request's deadline. None when the
