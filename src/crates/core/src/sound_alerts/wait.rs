@@ -14,6 +14,10 @@ pub(super) struct Wait {
     /// it went by: kept to mark that name as over once the wait names the
     /// request no more (`Tracker::request_names`).
     pub named: Vec<(String, String)>,
+    /// Every ask its channel said waited in it, each with the name it went
+    /// by: kept to mark that name as over once its request is gone
+    /// (`asks.rs`).
+    pub asks: Vec<super::asks::Ask>,
     /// The requests its channel said the wait was for that core said were
     /// allowed automatically, their answer confirmed. Kept only to tell
     /// core when their wait is seen to end (`ended`): no decision reads it.

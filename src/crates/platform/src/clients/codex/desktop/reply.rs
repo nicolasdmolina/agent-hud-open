@@ -57,6 +57,12 @@ impl Shared {
                         if result.is_ok() {
                             let now = crate::hooks::now_ms();
                             shared.requests.auto_answer_delivered(wait, now);
+                            // Ticket 74: seen again after sight is lost, it is asked anew.
+                            let mut state =
+                                shared.state.lock().unwrap_or_else(PoisonError::into_inner);
+                            if let Some(live) = state.pending.get_mut(&item.id) {
+                                live.answered = true;
+                            }
                         }
                         match result {
                             Ok(()) => shared.requests.note_native_delivery(
