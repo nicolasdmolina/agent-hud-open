@@ -24,29 +24,31 @@ fn a_wait_that_ended_just_before_a_relaunch_lets_the_next_sound() {
 }
 
 /// The app quits while a wait goes on; the wait ends while it is closed.
-/// The first look that lists the session sees it at work: that wait is
-/// over, and the next sounds. A session not listed yet keeps its wait.
+/// Every wait open at the quit is taken as over when the file is loaded,
+/// so the next wait sounds. A wait still there at the first look is only
+/// noted; one first seen later (its client reached late) is told again.
 #[test]
 fn a_wait_that_ended_while_the_app_was_closed_lets_the_next_sound() {
     let folder = tempfile::tempdir().unwrap();
     for kind in NO_CARD {
-        let file = folder.path().join(format!("{kind:?}.json"));
-        let mut lab = Lab::kept(&file, T);
-        lab.idle(0);
-        let first = lab.wait(1, kind);
-        lab.wait(1_000, kind);
-        let mut lab = Lab::kept(&file, lab.now + 60_000);
+        let launch = |name: &str| {
+            let file = folder.path().join(format!("{kind:?}-{name}.json"));
+            let mut lab = Lab::kept(&file, T);
+            lab.idle(0);
+            let first = lab.wait(1, kind);
+            lab.wait(1_000, kind);
+            (first, Lab::kept(&file, lab.now + 60_000))
+        };
+        let (first, mut lab) = launch("ended");
         let (unlisted, at_work) = (lab.idle(0), lab.run(1_000));
         let next = lab.wait(1_000, kind);
         assert_eq!((first, unlisted, at_work, next), (1, 0, 0, 1), "{kind:?}");
-        // The control: not listed at first, then listed and still waiting.
-        let file = folder.path().join(format!("{kind:?}-on.json"));
-        let mut lab = Lab::kept(&file, T);
-        lab.idle(0);
-        let first = lab.wait(1, kind);
-        let mut lab = Lab::kept(&file, lab.now + 60_000);
-        let later = lab.idle(0) + lab.idle(20_000) + lab.wait(1_000, kind);
-        assert_eq!((first, later), (1, 0), "{kind:?}");
+        let (first, mut lab) = launch("on");
+        let still = lab.wait(0, kind) + lab.wait(1_000, kind);
+        assert_eq!((first, still), (1, 0), "{kind:?}");
+        let (first, mut lab) = launch("late");
+        let late = lab.idle(0) + lab.idle(20_000) + lab.wait(1_000, kind);
+        assert_eq!((first, late), (1, 1), "{kind:?}");
     }
 }
 

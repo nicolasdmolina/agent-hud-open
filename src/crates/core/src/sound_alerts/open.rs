@@ -1,13 +1,12 @@
-//! The waits open when the app quits, kept across a relaunch (Agent HUD
-//! Fork, ticket 75). A wait is seen to end when a look no longer sees it;
-//! one that ends while the app is closed is not, and the next wait under
-//! its base would go by the same name, decided within the day, and make
-//! no sound. So the base names each session's wait goes by are saved, and
-//! at the first look after a relaunch that lists the session, each it no
-//! longer waits under is taken as ended. A session no look lists yet (its
-//! client not reached) keeps its waits open, as a request decided before
-//! a relaunch does not sound after it (ticket 33).
-use super::{Tracker, Wait, KEPT_MS};
+//! The waits open when the app quits (Agent HUD Fork, ticket 75). A wait
+//! is seen to end when a look no longer sees it; one that ends while the
+//! app is closed is not, and the next wait under its base would go by the
+//! same name, decided within the day, and make no sound. So the base names
+//! each session's wait goes by are saved, and when the file is loaded each
+//! is taken as ended. A wait still there at the first look is only noted,
+//! as everything that waits at that look is; one seen only later (its
+//! client reached after the launch) is told again: an extra ping at most.
+use super::{Tracker, Wait};
 use std::collections::HashMap;
 
 /// The base names of each session's open wait, and when they were saved.
@@ -41,23 +40,16 @@ impl Tracker {
             .extend(approved.map(|request| (key.clone(), request)));
     }
 
-    /// At the first look since a relaunch that lists session `key`, which
-    /// waits under the bases `current`: each base its wait went by when
-    /// the app quit and goes by no more is over.
-    pub(super) fn reopen(&mut self, key: &str, current: &[String], now: i64) {
-        let Some((bases, _)) = self.restored.remove(key) else {
-            return;
-        };
-        for base in bases.into_iter().filter(|base| !current.contains(base)) {
+    /// The waits open after a relaunch: each saved one is over.
+    pub(super) fn reopen(&mut self, open: Open, now: i64) {
+        for base in open.into_values().flat_map(|(bases, _)| bases) {
             self.end(Some(base), now);
         }
     }
 
-    /// The open waits to save: this look's, and those restored whose
-    /// session no look has listed since, for a day.
-    pub(super) fn open(&mut self, now: i64) -> Open {
-        self.restored.retain(|_, (_, at)| now - *at < KEPT_MS);
-        let mut open = self.restored.clone();
+    /// The open waits to save: this look's.
+    pub(super) fn open(&self, now: i64) -> Open {
+        let mut open = Open::new();
         for (key, wait) in &self.waits {
             let bases = wait.bases(key);
             if !bases.is_empty() {

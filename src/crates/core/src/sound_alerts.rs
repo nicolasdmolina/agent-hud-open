@@ -32,8 +32,6 @@ pub(crate) struct Tracker {
     ends: HashMap<String, (u32, i64)>,
     /// When the look before this one was (`bare.rs`, `forget`).
     last: i64,
-    /// The waits open when the app last quit, by session (`open.rs`).
-    restored: open::Open,
     /// Whether an identity was decided or forgotten since the file that
     /// keeps them across a relaunch was last told (`kept.rs`).
     changed: bool,
@@ -71,7 +69,6 @@ impl Tracker {
             decided: HashMap::new(),
             ends: HashMap::new(),
             last: 0,
-            restored: HashMap::new(),
             changed: false,
             kept: None,
             ended: Vec::new(),
@@ -84,15 +81,15 @@ impl Tracker {
     /// there what it decides. A request decided before a relaunch does
     /// not sound after it, whenever its card comes back.
     pub fn kept(file: std::path::PathBuf, now: i64) -> Self {
-        let (kept, (decided, ends, restored)) = kept::Kept::load(file, now, KEPT_MS);
+        let (kept, (decided, ends, open)) = kept::Kept::load(file, now, KEPT_MS);
         let mut tracker = Self {
             decided,
             ends,
-            restored,
             kept: Some(kept),
             ..Self::new()
         };
         tracker.adopt_marks();
+        tracker.reopen(open, now);
         tracker
     }
     /// Whether `id` is new, noting it as seen now either way.
@@ -160,7 +157,6 @@ impl Tracker {
             let allowed = heard.approved.get(&key).unwrap_or(&no_names);
             let now_requests = requests::requests(session, source, id, heard);
             if session["state"] != "waiting" && now_requests.is_empty() {
-                self.reopen(&key, &[], now);
                 continue;
             }
             let previous = self.waits.remove(&key);
@@ -268,7 +264,6 @@ impl Tracker {
                 lent,
                 uncarded,
             };
-            self.reopen(&key, &wait.bases(&key), now);
             waits.insert(key, wait);
         }
         // A session that waits no more: what its wait was for is over, and
