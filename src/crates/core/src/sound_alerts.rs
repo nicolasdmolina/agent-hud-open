@@ -154,10 +154,16 @@ impl Tracker {
             let over = before.into_iter().flat_map(|p| &p.approved);
             let over = over.filter(|r| !approved.contains(r));
             self.ended.extend(over.map(|r| (key.clone(), r.clone())));
+            // The requests it names that show no card and are not approved:
+            // allowed automatically, their answer on its way, failed, or
+            // confirmed by nobody. Each waits for the person as its card
+            // would, and goes by the name its card would have.
+            let carded = |r: &&String| now_requests.iter().any(|q| q.card && q.names.contains(r));
+            let is_waiting = |r: &&String| !allowed.contains(r) && !carded(r);
+            let waiting: Vec<&String> = named.iter().filter(is_waiting).collect();
             // A wait with no card, for approved requests alone, is theirs:
             // it makes no sound. One that names no request always sounds.
-            let silent =
-                now_requests.is_empty() && !named.is_empty() && approved.len() == named.len();
+            let silent = now_requests.is_empty() && !named.is_empty() && waiting.is_empty();
             for request in &now_requests {
                 // A transcript sighting that goes by an approved request's
                 // name is that request, which showed no card: silent while
@@ -181,17 +187,27 @@ impl Tracker {
                 }
                 // A wait already told without a card is the same wait once
                 // its card comes. The look's first new request names the alert.
-                let told_bare = |p: &Wait| p.requests.is_empty() && !p.silent && p.may_be(request);
-                if new && !before.is_some_and(told_bare) {
+                if new && !before.is_some_and(|p| p.unnamed) {
                     told.get_or_insert(names[0].clone());
                 }
             }
+            // A request that newly waits with no card is a new wait: it
+            // sounds whatever the session's wait sounded for before, and
+            // once, under its own name, so its card would not sound again.
+            for request in &waiting {
+                let name = format!("needs-you:{source}:{id}:{request}");
+                if self.first(&name, now) {
+                    told.get_or_insert(name);
+                }
+            }
+            // Nothing of its own waits in it: a wait known only as a wait.
+            let unnamed = now_requests.is_empty() && waiting.is_empty() && !silent;
             // The name a wait with no card had here goes on with the wait.
             let mut lent = before.and_then(|p| p.lent.clone());
             if silent {
                 // The approved requests' wait: the one before it is over.
                 self.over(lent.take(), now);
-            } else if now_requests.is_empty() {
+            } else if unnamed {
                 let (identity, borrowed) = self.bare_name(session, source, id);
                 lent = borrowed.then(|| identity.clone());
                 if self.first(&identity, now) && before.is_none_or(|p| p.silent) {
@@ -209,8 +225,7 @@ impl Tracker {
             waits.insert(
                 key,
                 Wait {
-                    requests: now_requests,
-                    named: named.to_vec(),
+                    unnamed,
                     approved,
                     silent,
                     lent,

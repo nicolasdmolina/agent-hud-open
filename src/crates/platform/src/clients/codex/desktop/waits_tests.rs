@@ -343,3 +343,80 @@ fn a_card_that_returns_after_its_unconfirmed_wait_sounded_is_the_same_wait() {
     assert_eq!(replay.look(), ("waiting".to_owned(), 1, 1));
     replay.observer.stop();
 }
+
+/// The round 6 verifier's replacement probe, through the real channel. One
+/// approval waits, the app looks, and in the next frame that approval is
+/// done and another one waits: both of a kind the channel shows, both
+/// under `waitingOnApproval`, with no frame between that says the thread
+/// is at work. They are two requests, so two sounds, as before the sync,
+/// where each showed its card. With Approve automatically on neither
+/// answer has left (the stand-in owner never answers), so neither is
+/// approved, and the second one's wait must sound though the first one's
+/// did. A failed receipt for the second then adds nothing: the same wait.
+/// Before round 7 the second approval waited with no sound.
+#[test]
+fn a_second_approval_that_takes_the_place_of_the_first_sounds_too() {
+    for automatic in [true, false] {
+        let mut replay = Replay::new();
+        let requests = replay.core.requests();
+        let auto = json!({"key": "autoApprove", "value": automatic});
+        replay.core.request("set_setting", auto).unwrap();
+        let cards = usize::from(!automatic);
+        let first = state(&["waitingOnApproval"], true);
+        let mut second = first.clone();
+        let mut done = first["requests"][0].clone();
+        done["completed"] = json!(true);
+        second["requests"] = json!([done, another(&first, 8, |_| {})]);
+
+        replay.streams(first);
+        let seventh = named(&requests).unwrap();
+        assert_eq!(
+            replay.look(),
+            ("waiting".to_owned(), cards, 1),
+            "{automatic}"
+        );
+        replay.streams(second);
+        let eighth = named(&requests).unwrap();
+        assert_eq!((seventh.len(), eighth.len()), (1, 1));
+        assert_ne!(seventh, eighth, "the two approvals go by one id");
+        assert!(requests.deliveries(crate::hooks::now_ms()).is_empty());
+        assert_eq!(
+            replay.look(),
+            ("waiting".to_owned(), cards, 2),
+            "automatic: {automatic}; the second approval made no sound"
+        );
+        assert_eq!(replay.look(), ("waiting".to_owned(), cards, 2));
+        if automatic {
+            let now = crate::hooks::now_ms();
+            let why = Some("fixture refusal".to_owned());
+            requests.note_native_delivery(&eighth[0], AGENT.id, THREAD, "failed", why, now);
+            assert_eq!(
+                replay.look(),
+                ("waiting".to_owned(), 0, 2),
+                "it sounded again"
+            );
+        }
+        replay.observer.stop();
+    }
+}
+
+/// The same pair where the first answer was confirmed before the app
+/// looked: its wait is silent, and the second approval, not confirmed, is
+/// the first sound.
+#[test]
+fn a_second_approval_after_a_confirmed_one_sounds() {
+    let mut replay = Replay::new();
+    let first = state(&["waitingOnApproval"], true);
+    let mut second = first.clone();
+    let mut done = first["requests"][0].clone();
+    done["completed"] = json!(true);
+    second["requests"] = json!([done, another(&first, 8, |_| {})]);
+    replay.streams(first);
+    replay.owner_confirms();
+    assert_eq!(replay.look(), ("waiting".to_owned(), 0, 0));
+    replay.streams(second);
+    assert_eq!(replay.look(), ("waiting".to_owned(), 0, 1));
+    replay.owner_confirms();
+    assert_eq!(replay.look(), ("waiting".to_owned(), 0, 1));
+    replay.observer.stop();
+}

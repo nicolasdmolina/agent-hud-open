@@ -150,9 +150,10 @@ fn a_card_that_goes_by_an_approved_requests_name_sounds() {
     );
 }
 
-/// A wait with no card that named its requests has sounded. A card that
-/// then comes for a request the wait did not name is another request, and
-/// sounds; the card of a request it did name is that wait, and does not.
+/// A request its channel names for the wait, that shows no card and is
+/// not approved, has sounded under its own name. Its card, if it comes,
+/// is that request and does not sound again. A card for a request the
+/// wait did not name is another request, and sounds.
 #[test]
 fn a_card_the_sounded_wait_did_not_name_is_new_and_one_it_named_is_not() {
     for (card, sounds) in [("r2", 1), ("r1", 0)] {
@@ -163,10 +164,88 @@ fn a_card_the_sounded_wait_did_not_name_is_new_and_one_it_named_is_not() {
             [needs_you("s1")]
         );
         let carded = [waiting("s1", &[(card, "question")])];
-        let both = [(S1, &["r1", "r2"][..])];
-        let alerts = look_with(&mut tracker, &carded, &[], &both, T + 2);
+        let now = [(S1, &["r1", card][..])];
+        let alerts = look_with(&mut tracker, &carded, &[], &now, T + 2);
         assert_eq!(alerts.len(), sounds, "{card}");
     }
+}
+
+/// Round 7 (the round 6 verifier's replacement probe, at the decision). A
+/// request that newly waits with no card is a new wait. It sounds though
+/// the session's wait already sounded for another request at the look
+/// before, with no look between that saw the session at work. Once: the
+/// same request at the next look is the same wait.
+#[test]
+fn a_request_that_takes_the_place_of_another_with_no_card_sounds_too() {
+    let mut tracker = started();
+    let sessions = [told_waiting("s1")];
+    let first = [(S1, &["r1"][..])];
+    let second = [(S1, &["r2"][..])];
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &[], &first, T + 1),
+        [needs_you("s1")]
+    );
+    assert_eq!(look_with(&mut tracker, &sessions, &[], &first, T + 2), []);
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &[], &second, T + 3),
+        [needs_you("s1")],
+        "the second request waited with no sound"
+    );
+    assert_eq!(look_with(&mut tracker, &sessions, &[], &second, T + 4), []);
+    // A third beside the second: one more.
+    let both = [(S1, &["r2", "r3"][..])];
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &[], &both, T + 5),
+        [needs_you("s1")]
+    );
+    // The first again, which already sounded: the same request.
+    assert_eq!(look_with(&mut tracker, &sessions, &[], &first, T + 6), []);
+}
+
+/// The same after a wait that named no request, which sounded under a
+/// name of the session's: the request that then waits is new, whatever
+/// sounded before. And after an approved request's silent wait.
+#[test]
+fn a_request_with_no_card_sounds_whatever_the_wait_before_it_was() {
+    let sessions = [told_waiting("s1")];
+    let named = [(S1, &["r1"][..])];
+    let mut tracker = started();
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &[], &[], T + 1),
+        [needs_you("s1")]
+    );
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &[], &named, T + 2),
+        [needs_you("s1")]
+    );
+    // Back to a wait that names nothing: the wait already told.
+    assert_eq!(look_with(&mut tracker, &sessions, &[], &[], T + 3), []);
+
+    let mut tracker = started();
+    let other = [(S1, &["r0"][..])];
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &other, &other, T + 1),
+        []
+    );
+    assert_eq!(
+        look_with(&mut tracker, &sessions, &other, &named, T + 2),
+        [needs_you("s1")]
+    );
+}
+
+/// A request that shows its card is told by the card, as before the sync:
+/// the card of a wait already told with no card and no name is that wait.
+/// The name its channel gives it changes nothing for a card.
+#[test]
+fn a_card_after_a_wait_that_named_nothing_is_still_that_wait() {
+    let mut tracker = started();
+    assert_eq!(
+        look_with(&mut tracker, &[told_waiting("s1")], &[], &[], T + 1),
+        [needs_you("s1")]
+    );
+    let carded = [waiting("s1", &[("r1", "permission")])];
+    let named = [(S1, &["r1"][..])];
+    assert_eq!(look_with(&mut tracker, &carded, &[], &named, T + 2), []);
 }
 
 /// A wait that names no request always sounds, though a request was just
