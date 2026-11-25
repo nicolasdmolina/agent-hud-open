@@ -26,12 +26,16 @@ pub(super) struct Wait {
     /// without a sound: a card that comes in it is new, and so is a wait
     /// that names no request. It only ever lets what follows sound.
     pub silent: bool,
-    /// The name it was decided under while it was unnamed, where that name
-    /// is only the time of the session's last event and not a time of the
-    /// wait's own (a channel's waiting flag has none). Once the wait is
-    /// seen to end the name is marked as over, and the next wait goes by
-    /// the name after it, so it is new though nothing was written between
-    /// the two. The host plays an alert once by its name: the same name
-    /// again would never be heard.
+    /// The base of the name it was decided under while it was unnamed,
+    /// where that is only the time of the session's last event and not a
+    /// time of the wait's own (a channel's waiting flag has none). Once the
+    /// wait is seen to end, the base's count goes up, and the next wait
+    /// goes by a name no wait had, though nothing was written between the
+    /// two (`bare.rs`).
     pub lent: Option<String>,
+    /// The names of its requests and asks that waited with no card and
+    /// were not approved: once one of them ends under its plain name, the
+    /// name is forgotten, so a card of that request afterwards is another
+    /// wait and sounds (`Tracker::spent`).
+    pub uncarded: Vec<String>,
 }

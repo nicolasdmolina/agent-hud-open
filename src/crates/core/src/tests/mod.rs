@@ -16,6 +16,7 @@ mod hermes_live;
 mod hermes_mirror;
 mod hermes_questions;
 mod ingestion;
+mod later_wait_sound;
 mod machines;
 mod native_card_codex_as_fork;
 mod native_card_rows;
