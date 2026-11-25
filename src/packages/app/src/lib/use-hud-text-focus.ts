@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Approval } from "@agent-hud/protocol";
+import { pressedChoice } from "@agent-hud/hud/permissions/enter-submit";
 
 /** Whether the HUD holds the keyboard for its text: the HUD window takes the
- * keyboard while one of its text fields, or words selected in it, are in use,
+ * keyboard while one of its text fields, or words selected in it, are in use
+ * (or a question card's answer was just picked, so Enter can submit it),
  * and gives it back when that ends, when the request a field belongs to goes,
  * or when the pointer leaves the HUD. */
 export function useHUDTextFocus(
@@ -60,6 +62,10 @@ export function useHUDTextFocus(
     // leaves the panel's opening and closing alone.
     let selecting = false,
       pressed = false;
+    // A question card's offered answer just chosen, which also takes the
+    // keyboard so Enter can submit it. Like a selection, it leaves the
+    // panel's opening and closing alone and ends when the pointer leaves.
+    let choice: Element | null = null;
     const selected = (): Element | null => {
       const selection = document.getSelection();
       if (!selection || selection.isCollapsed || !selection.rangeCount)
@@ -82,6 +88,7 @@ export function useHUDTextFocus(
       if (!wanted) return;
       wanted = false;
       selecting = false;
+      choice = null;
       setTextFocused(false);
       changed.disconnect();
       epoch += 1;
@@ -98,7 +105,7 @@ export function useHUDTextFocus(
             console.error("HUD keyboard focus release failed", error);
         });
     };
-    const verified = (target: TextControl | null) => {
+    const verified = (target: Element | null) => {
       if (!target?.isConnected || target.closest("[inert], [aria-hidden=true]"))
         return false;
       const requestId =
@@ -108,13 +115,13 @@ export function useHUDTextFocus(
     const owner = {
       verify: () => {
         if (!wanted || (selecting && pressed)) return;
-        if (selecting ? !selected() : !verified(element)) release();
+        if (selecting ? !selected() : !verified(element ?? choice)) release();
       },
       // The pointer left the HUD: its panel closes, so the selection goes
       // and the keys go back.
       leave: () => {
-        if (!selecting) return;
-        document.getSelection()?.removeAllRanges();
+        if (!selecting && !choice) return;
+        if (selecting) document.getSelection()?.removeAllRanges();
         release();
       },
     };
@@ -123,6 +130,7 @@ export function useHUDTextFocus(
       element = target;
       wanted = true;
       selecting = false;
+      choice = null;
       setTextFocused(true);
       const root = document.getElementById("root");
       if (root) changed.observe(root, { childList: true, subtree: true });
@@ -176,17 +184,54 @@ export function useHUDTextFocus(
           }
         });
     };
+    const holdChoice = (target: Element) => {
+      if (wanted && choice === target) return;
+      choice = target;
+      element = null;
+      wanted = true;
+      selecting = false;
+      setTextFocused(false);
+      const root = document.getElementById("root");
+      if (root) changed.observe(root, { childList: true, subtree: true });
+      const captured = ++epoch;
+      serial = serial
+        .catch(() => undefined)
+        .then(async () => {
+          if (disposed || !wanted || captured !== epoch || !verified(target))
+            return;
+          await invoke("hud_text_focus", { active: true, leaseId });
+        })
+        .catch((error) => {
+          if (!disposed && captured === epoch) {
+            console.error("HUD keyboard focus failed", error);
+            release();
+          }
+        });
+    };
     const pointerDown = (event: PointerEvent) => {
       if (!event.isTrusted || event.button !== 0) return;
       pressed = true;
       const target = editable(event.target);
       if (!target || !verified(target)) {
+        // A press on an offered answer takes the keyboard only once it
+        // chooses the answer (`chosen`); a press dragged off takes nothing.
+        const option = pressedChoice(
+          event.target instanceof Element ? event.target : null,
+        );
+        if (option && verified(option)) return;
         // A press may start a new selection: a selection's keys wait for it
         // to end rather than going back mid-drag.
         if (!selecting) release();
         return;
       }
       acquire(target, true);
+    };
+    const chosen = (event: MouseEvent) => {
+      if (!event.isTrusted) return;
+      const option = pressedChoice(
+        event.target instanceof Element ? event.target : null,
+      );
+      if (option && verified(option)) holdChoice(option);
     };
     const pointerUp = (event: PointerEvent) => {
       if (!event.isTrusted || event.button !== 0) return;
@@ -204,7 +249,7 @@ export function useHUDTextFocus(
     };
     const focusOut = () =>
       queueMicrotask(() => {
-        if (disposed || !wanted || selecting) return;
+        if (disposed || !wanted || selecting || choice) return;
         const next = editable(document.activeElement);
         if (next && verified(next)) element = next;
         else release();
@@ -212,6 +257,7 @@ export function useHUDTextFocus(
     const changed = new MutationObserver(owner.verify);
     document.addEventListener("pointerdown", pointerDown, true);
     document.addEventListener("pointerup", pointerUp, true);
+    document.addEventListener("click", chosen, true);
     document.addEventListener("selectionchange", selectionChange);
     document.addEventListener("focusin", focusIn, true);
     document.addEventListener("focusout", focusOut, true);
@@ -223,6 +269,7 @@ export function useHUDTextFocus(
       changed.disconnect();
       document.removeEventListener("pointerdown", pointerDown, true);
       document.removeEventListener("pointerup", pointerUp, true);
+      document.removeEventListener("click", chosen, true);
       document.removeEventListener("selectionchange", selectionChange);
       document.removeEventListener("focusin", focusIn, true);
       document.removeEventListener("focusout", focusOut, true);

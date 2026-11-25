@@ -36,6 +36,17 @@ pub(crate) struct Demo {
 impl Runtime {
     /// A demo in `data_dir`, which is emptied first, playing `script` if any.
     pub fn demo(data_dir: PathBuf, script: Option<DemoScript>) -> Result<Self, String> {
+        Self::demo_at(data_dir, script, None)
+    }
+
+    /// The demo as if launched at `at`, in milliseconds since the epoch, or
+    /// now once it is set up: its year of tokens, quotas and requests all
+    /// count back from it.
+    fn demo_at(
+        data_dir: PathBuf,
+        script: Option<DemoScript>,
+        at: Option<i64>,
+    ) -> Result<Self, String> {
         let _ = std::fs::remove_dir_all(&data_dir);
         std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
         let platform = NativePlatform::new()?;
@@ -46,9 +57,11 @@ impl Runtime {
             core.requests(),
             Arc::new(|| {}),
         )?));
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_millis() as i64);
+        let now = at.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_millis() as i64)
+        });
         let mut demo = Demo {
             sessions: DemoSessions::default(),
             used: script
@@ -347,7 +360,12 @@ mod tests {
         assert_eq!(runtime.demo_next_at(), None);
         assert_eq!(waiting(&mut runtime), DEMO_REQUESTS.len());
         // The Statistics window reads the demo's month of usage from the ledger.
-        let now = chrono::Utc::now();
+        // The sample rests on some days (`day_pace`), so how many of a month's
+        // days are used depends on the date: the month is read from a fixed
+        // launch, whose requests have long expired.
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:00:00Z").unwrap();
+        let path = folder.path().join("fixed");
+        let mut runtime = Runtime::demo_at(path, None, Some(now.timestamp_millis())).unwrap();
         let statistics = runtime
             .core
             .request(
