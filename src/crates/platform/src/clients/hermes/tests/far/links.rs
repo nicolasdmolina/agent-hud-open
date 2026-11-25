@@ -228,15 +228,28 @@ fn a_snapshot_and_an_answer_each_take_a_new_ticket_on_the_existing_forward() {
     until("the card goes", || far.cards().is_empty());
     let answered = gateway.world().calls("clarify.respond");
     assert_eq!(answered.len(), 1);
-    let after = counts(&far, &gateway);
+    // A snapshot after the answer may still be opening its socket, and
+    // the route notes each step before the gateway sees it. So the
+    // gateway's counts and the route's steps are taken together, at a
+    // moment no socket is part way open: each ticket asked was granted,
+    // and each one granted was spent on a socket the route dialled.
+    let mut seen = None;
+    until("every ticket asked is granted and spent", || {
+        let after = counts(&far, &gateway);
+        let steps = far.inner().route.all_steps();
+        let of = |step: &str| steps.iter().filter(|(said, _)| *said == step).count();
+        let whole = after.0 == after.1 && of("ticket") == after.0 && of("dial") == after.1;
+        seen = Some((after, steps));
+        whole
+    });
+    let (after, steps) = seen.unwrap();
     assert_eq!((after.2, after.3), (1, 2), "the one forward, no login");
     // The answer's own ticket and socket; a snapshot after it may be one more.
-    assert!(after.0 >= 4 && after.0 == after.1, "{after:?}");
+    assert!(after.0 >= 4, "{after:?}");
     assert_eq!(far.log().matches("link up").count(), 1);
 
     // Every socket: prepared, then its ticket, then its dial, as each
     // thread that opens one asked for them.
-    let steps = far.inner().route.all_steps();
     let of = |step: &str| steps.iter().filter(|(said, _)| *said == step).count();
     assert_eq!(of("ticket"), after.0, "{steps:?}");
     assert_eq!(of("dial"), after.1, "{steps:?}");
