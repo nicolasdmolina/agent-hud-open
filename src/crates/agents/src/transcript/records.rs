@@ -21,6 +21,10 @@ pub struct Record {
     /// from its gateway while it runs. It is shown (`Log::live_total`)
     /// and never metered; `usage` is all that counts.
     pub live_total: Option<u64>,
+    /// Whether the session holds a reply of a model, where the client's
+    /// store says (Hermes's stored assistant messages); None when the
+    /// record does not say. Agent HUD fork, ticket 70.
+    pub replied: Option<bool>,
     /// Where the client says the session was started, in its own word
     /// (Hermes's stored `source`: `desktop`, `telegram`, `cli`); None when
     /// it does not say. `naming::surfaces` makes it a surface.

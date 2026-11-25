@@ -143,11 +143,10 @@ impl crate::AgentHudCore {
                 }
                 Self::session_totals(&mut session, log, &family, currency);
                 // A session that used no AI says so: the panel's first paint
-                // leaves it out, and a turn that ends while it says so may be
-                // silent (`no_usage::silent_at_turn_end`).
+                // leaves it out (`sessions/no_usage.rs`).
                 let tokens = session["tokens"].as_u64().unwrap_or(0);
                 let state = session["state"].as_str().unwrap_or("");
-                if crate::sessions::no_usage::used_none(&log.source, tokens, state) {
+                if crate::sessions::no_usage::used_none(log, tokens, state) {
                     session["usedNoAi"] = json!(true);
                 }
                 (log.path.clone(), session)

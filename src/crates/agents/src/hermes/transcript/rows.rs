@@ -74,6 +74,14 @@ impl<'a> Sessions<'a> {
         };
         let print = session_counts::sql(&s, &u);
         let live = mirror::live_sql(db, mirror.as_ref())?;
+        // Whether it holds a reply of the model: a stored assistant message,
+        // in this machine's database. A mirror holds no messages: NULL.
+        let m = sql_columns(db, "messages")?;
+        let replied = if mirror.is_none() && m.contains("session_id") && m.contains("role") {
+            "EXISTS(SELECT 1 FROM messages m WHERE m.session_id=s.id AND m.role='assistant')"
+        } else {
+            "NULL"
+        };
         // A `state.db` under a Hermes home is this machine's, and its folder
         // says whose: a named profile's in `profiles/<name>`, else the default
         // profile's of whatever root holds it. A mirror's own table says whose
@@ -85,7 +93,7 @@ impl<'a> Sessions<'a> {
         Ok(Self {
             db,
             select: format!(
-                "SELECT s.rowid,s.id,s.started_at,{},{last_seen},{print},{live} FROM sessions s",
+                "SELECT s.rowid,s.id,s.started_at,{},{last_seen},{print},{live},{replied} FROM sessions s",
                 fields.join(",")
             ),
             usage: u,
@@ -165,7 +173,12 @@ impl<'a> Sessions<'a> {
                 .chain(Some(started))
                 .max()
                 .unwrap_or(started);
+            // A reply stored since the last read reads the session again.
             let counts = sql_text(row, 18).unwrap_or_default();
+            let counts = match replied(row)? {
+                Some(found) => format!("{counts}/{found}"),
+                None => counts,
+            };
             let print = mirror::print(label.as_deref(), counts, live_total(row)?);
             if !wanted(rowid, updated, &print) {
                 continue;
@@ -177,6 +190,12 @@ impl<'a> Sessions<'a> {
         span.more = span.seen == looked || taken == read;
         Ok(span)
     }
+}
+
+/// Whether the session `row` holds a reply of the model; None where its
+/// database cannot say (a mirror's).
+pub(super) fn replied(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<bool>> {
+    Ok(row.get::<_, Option<i64>>(20)?.map(|found| found != 0))
 }
 
 /// What a mirror's `hud_live` says the session `row` holds has used so

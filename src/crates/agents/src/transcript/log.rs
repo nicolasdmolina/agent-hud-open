@@ -43,6 +43,10 @@ pub struct Log {
     /// quota, and it never goes down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_total: Option<u64>,
+    /// Whether the session holds a reply of a model, as its store said at
+    /// the last read (`Record::replied`); None when it says nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replied: Option<bool>,
     /// The session's first and latest prompts, for where each was typed
     /// (`naming::surfaces`).
     #[serde(default)]
@@ -144,6 +148,7 @@ impl Log {
             client: None,
             machine: None,
             live_total: None,
+            replied: None,
             prompts: PromptStamps::default(),
             id,
             model: "Unknown".into(),

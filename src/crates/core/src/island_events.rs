@@ -97,12 +97,6 @@ impl Tracker {
                 continue;
             }
             let mut event = json!({"kind":"completion","at":iso(at),"startedAt":session["liveFacts"]["turnStartedAt"],"source":session["source"],"sessionId":session["id"],"turnId":session["liveFacts"]["turnId"],"title":session["title"],"model":session["model"],"message":session["liveFacts"]["message"],"navigationTarget":session["navigationTarget"],"cwd":session["cwd"],"logPath":session["logPath"]});
-            // Whether the turn is silent, as its session was when it ended,
-            // kept with it: its `finished` is decided by that, never by the
-            // row later (`sessions/no_usage.rs`).
-            if crate::sessions::no_usage::silent_at_turn_end(session) {
-                event["finishedSilent"] = json!(true);
-            }
             // The way back's name goes with it, where its client names it.
             if let Some(label) = session.get("navigationLabel") {
                 event["navigationLabel"] = label.clone();

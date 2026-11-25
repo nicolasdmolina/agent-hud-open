@@ -121,10 +121,7 @@ impl Tracker {
                 continue;
             };
             let id = format!("finished:{source}:{session}:{turn}");
-            // A turn that ended silent is decided and silent, by what its
-            // session was when it ended (`finishedSilent`).
-            let silent = children.contains(&(source, session)) || event["finishedSilent"] == true;
-            if self.first(&id, now) && !silent {
+            if self.first(&id, now) && !children.contains(&(source, session)) {
                 alerts.push(Alert {
                     kind: "finished",
                     source: event["source"].clone(),

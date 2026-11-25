@@ -122,8 +122,6 @@ export interface IslandEvent {
   source: string;
   sessionId?: string;
   turnId?: string;
-  /** From Core, on a completion: its session had used no AI when the turn ended, with a count final at that moment (this Mac's Hermes), so it sounds no `finished`. Absent otherwise. */
-  finishedSilent?: boolean;
   title?: string;
   model?: string;
   message?: string | null;

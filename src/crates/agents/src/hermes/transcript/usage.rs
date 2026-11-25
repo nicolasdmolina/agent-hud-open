@@ -36,6 +36,7 @@ impl Sessions<'_> {
     ) -> rusqlite::Result<()> {
         let label = self.mirror.as_ref().map(|mirror| mirror.label.clone());
         let live_total = super::rows::live_total(row)?;
+        let replied = super::rows::replied(row)?;
         let profile = match &self.of {
             Profile::Named(name) => Some(name.as_str().to_owned()),
             Profile::Default => None,
@@ -79,6 +80,7 @@ impl Sessions<'_> {
                     client: client.clone(),
                     machine: label.clone(),
                     live_total,
+                    replied,
                     started_in: started_in.clone(),
                     cwd: cwd.clone(),
                     model: routed(
@@ -126,6 +128,7 @@ impl Sessions<'_> {
                 client,
                 machine: label.clone(),
                 live_total,
+                replied,
                 started_in: started_in.clone(),
                 cwd,
                 model: routed(
