@@ -81,14 +81,20 @@ impl Kept {
             .into_iter()
             .flatten()
             .filter_map(|(session, entry)| {
-                let bases = entry[0].as_array()?.iter();
-                let bases = bases.map(|b| b.as_str().map(str::to_owned));
+                let names = |at: usize| {
+                    let names = entry[at].as_array().into_iter().flatten();
+                    let names = names.map(|b| b.as_str().map(str::to_owned));
+                    names.collect::<Option<Vec<_>>>()
+                };
+                entry[0].as_array()?;
+                let at = entry[1].as_i64()?.min(now);
+                // Written by ticket 81 on: the names it went by with no card.
                 Some((
                     session.clone(),
-                    (bases.collect::<Option<_>>()?, entry[1].as_i64()?.min(now)),
+                    (names(0)?, at, names(2).unwrap_or_default()),
                 ))
             })
-            .filter(|(_, (_, at))| now - *at < lifetime)
+            .filter(|(_, (_, at, _))| now - *at < lifetime)
             .collect();
         let kept = Self {
             path,
@@ -122,7 +128,7 @@ impl Kept {
         if !ended.is_empty() {
             file["ended"] = json!(ended);
         }
-        let open: BTreeMap<&String, &(Vec<String>, i64)> = open.iter().collect();
+        let open: BTreeMap<&String, &(Vec<String>, i64, Vec<String>)> = open.iter().collect();
         if !open.is_empty() {
             file["open"] = json!(open);
         }

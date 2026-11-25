@@ -6,11 +6,15 @@
 //! is taken as ended. A wait still there at the first look is only noted,
 //! as everything that waits at that look is; one seen only later (its
 //! client reached after the launch) is told again: an extra ping at most.
+//! A plain name an open wait went by with no card is forgotten at load, as
+//! when a look sees such a wait end (`spent`), so a card of its request
+//! after the relaunch is another wait and sounds (ticket 81).
 use super::{Tracker, Wait};
 use std::collections::HashMap;
 
-/// The base names of each session's open wait, and when they were saved.
-pub(super) type Open = HashMap<String, (Vec<String>, i64)>;
+/// The base names of each session's open wait, when they were saved, and
+/// those of them it went by with no card.
+pub(super) type Open = HashMap<String, (Vec<String>, i64, Vec<String>)>;
 
 impl Wait {
     /// The base names this wait of session `key` goes by (`bare.rs`).
@@ -28,10 +32,13 @@ impl Wait {
 }
 
 impl Tracker {
-    /// A wait no look sees any more: each name it went by is over, and
-    /// core is told which approved requests' wait ended.
+    /// A wait no look sees any more: each name it went by is over, its
+    /// cards' too, and core is told which approved requests' wait ended.
     pub(super) fn close(&mut self, key: String, wait: Wait, now: i64) {
-        for base in wait.bases(&key) {
+        let mut bases = wait.bases(&key);
+        let cards = wait.cards.iter().filter(|card| !bases.contains(card));
+        bases.extend(cards.cloned().collect::<Vec<_>>());
+        for base in bases {
             self.spent(Some(&wait), &base);
             self.end(Some(base), now);
         }
@@ -42,8 +49,13 @@ impl Tracker {
 
     /// The waits open after a relaunch: each saved one is over.
     pub(super) fn reopen(&mut self, open: Open, now: i64) {
-        for base in open.into_values().flat_map(|(bases, _)| bases) {
-            self.end(Some(base), now);
+        for (bases, _, uncarded) in open.into_values() {
+            for name in uncarded {
+                self.changed |= self.decided.remove(&name).is_some();
+            }
+            for base in bases {
+                self.end(Some(base), now);
+            }
         }
     }
 
@@ -52,8 +64,11 @@ impl Tracker {
         let mut open = Open::new();
         for (key, wait) in &self.waits {
             let bases = wait.bases(key);
+            let went = |b: &&String| wait.uncarded.iter().any(|n| super::bare::under(b, n));
+            let uncarded = bases.iter().filter(went);
+            let uncarded = uncarded.cloned().collect();
             if !bases.is_empty() {
-                open.insert(key.clone(), (bases, now));
+                open.insert(key.clone(), (bases, now, uncarded));
             }
         }
         open

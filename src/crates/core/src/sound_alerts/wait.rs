@@ -38,4 +38,23 @@ pub(super) struct Wait {
     /// name is forgotten, so a card of that request afterwards is another
     /// wait and sounds (`Tracker::spent`).
     pub uncarded: Vec<String>,
+    /// The names of its requests that showed a card. Once the wait is seen
+    /// to end at a look they are over too, as its other names are: a wait
+    /// of that request with no card afterwards goes by the name after and
+    /// sounds, also where the client did not name it for the wait; a card
+    /// shown again within the day is still the same card (ticket 81).
+    pub cards: Vec<String>,
+}
+
+impl Wait {
+    /// Whether one of `names` (a card's, in session `key`) is the plain
+    /// name of a request or ask that waited in this wait with no card: the
+    /// card is then that same wait, whatever count its no-card name had.
+    pub(super) fn uncarded_as(&self, key: &str, names: &[String]) -> bool {
+        let quiet = |name: &String| !self.uncarded.contains(name);
+        let requests = self.named.iter().filter(|(_, n)| !quiet(n)).map(|(r, _)| r);
+        let asks = self.asks.iter().filter(|a| !quiet(&a.name)).map(|a| &a.ask);
+        let mut bases = requests.chain(asks).map(|r| format!("needs-you:{key}:{r}"));
+        bases.any(|base| names.contains(&base))
+    }
 }

@@ -27,6 +27,16 @@ use super::{Tracker, KEPT_MS};
 use serde_json::Value;
 use std::collections::HashSet;
 
+/// Whether `name` is `base` or a name after it (`base+N`).
+pub(super) fn under(base: &str, name: &str) -> bool {
+    let count = |rest: &str| {
+        rest.strip_prefix('+')
+            .is_some_and(|n| n.parse::<u32>().is_ok())
+    };
+    name.strip_prefix(base)
+        .is_some_and(|rest| rest.is_empty() || count(rest))
+}
+
 /// How the fork's earlier builds saved that a wait went by a name and was
 /// seen to end: `<name>/over`, the name being the base and one `+` for
 /// each earlier end. Read once, when the saved file is loaded.
@@ -84,11 +94,13 @@ impl Tracker {
     }
 
     /// A wait under `base` ends that, at the look `before`, went by the
-    /// plain base with no card: the base is forgotten. A card of its
-    /// request that comes afterwards is then another wait, and sounds; a
-    /// card shown again after its own wait ended is still the same card.
+    /// base or a name after it with no card: the base is forgotten. A card
+    /// of its request that comes afterwards is then another wait, and
+    /// sounds; a card shown again after its own wait ended is still the
+    /// same card.
     pub(super) fn spent(&mut self, before: Option<&super::Wait>, base: &str) {
-        if before.is_some_and(|wait| wait.uncarded.iter().any(|name| name == base)) {
+        let under = |name: &String| under(base, name);
+        if before.is_some_and(|wait| wait.uncarded.iter().any(under)) {
             self.changed |= self.decided.remove(base).is_some();
         }
     }
@@ -98,17 +110,19 @@ impl Tracker {
     /// has one. A request the wait named at the look `before` and names
     /// no more is over (it was settled, or the channel lost sight of it),
     /// and whatever the channel names under that id afterwards is another
-    /// wait (ticket 66, rounds 4 and 9).
+    /// wait (ticket 66, rounds 4 and 9); not while an ask under the same
+    /// name still waits in it (`asks`), which is the same wait going on.
     pub(super) fn request_names(
         &mut self,
         before: Option<&super::Wait>,
         named: &[String],
+        asks: &[(String, String)],
         session: &str,
         now: i64,
     ) -> Vec<(String, String)> {
         let base = |request: &String| format!("needs-you:{session}:{request}");
         for (request, _) in before.into_iter().flat_map(|wait| &wait.named) {
-            if !named.contains(request) {
+            if !named.contains(request) && !asks.iter().any(|(_, ask)| ask == request) {
                 self.spent(before, &base(request));
                 self.end(Some(base(request)), now);
             }

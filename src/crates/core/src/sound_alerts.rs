@@ -177,12 +177,13 @@ impl Tracker {
             let carded = |r: &&String| now_requests.iter().any(|q| q.card && q.names.contains(r));
             let is_waiting = |r: &&String| !allowed.contains(r) && !carded(r);
             let waiting: Vec<&String> = named.iter().filter(is_waiting).collect();
-            let names = self.request_names(before, named, &key, now);
             let asks = heard.asks.get(&key).map_or(&[][..], Vec::as_slice);
-            let asks = self.ask_names(before, asks, &key, now);
+            let names = self.request_names(before, named, asks, &key, now);
+            let asks = self.ask_names(before, asks, named, &key, now);
             // A wait with no card, for approved requests alone, is theirs:
             // it makes no sound. One that names no request always sounds.
             let silent = now_requests.is_empty() && !named.is_empty() && waiting.is_empty();
+            let mut cards = Vec::new();
             for request in &now_requests {
                 // A transcript sighting that goes by an approved request's
                 // name is that request, which showed no card: silent while
@@ -205,9 +206,13 @@ impl Tracker {
                     self.first(name, now);
                     self.touch(name, now);
                 }
+                cards.extend(names.iter().filter(|_| request.card).cloned());
                 // A wait already told without a card is the same wait once
-                // its card comes. The look's first new request names the alert.
-                if new && !before.is_some_and(|p| p.unnamed) {
+                // its card comes, and so is a request or ask of it that
+                // waited with no card. The look's first new request names
+                // the alert.
+                let same = before.is_some_and(|p| p.unnamed || p.uncarded_as(&key, &names));
+                if new && !same {
                     told.get_or_insert(names[0].clone());
                 }
             }
@@ -263,6 +268,7 @@ impl Tracker {
                 silent,
                 lent,
                 uncarded,
+                cards,
             };
             waits.insert(key, wait);
         }
