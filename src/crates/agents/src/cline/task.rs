@@ -197,6 +197,7 @@ pub(super) fn task(path: &Path, source: &str) -> Option<Vec<Record>> {
                 client: None,
                 machine: None,
                 live_total: None,
+                replied: None,
                 started_in: None,
                 title_fallback: None,
                 cwd: cwd.clone(),

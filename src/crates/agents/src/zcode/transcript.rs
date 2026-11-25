@@ -200,6 +200,7 @@ fn record(id: &str, session: Option<&Session>, key: String, at: i64, usage: Usag
         client: None,
         machine: None,
         live_total: None,
+        replied: None,
         started_in: None,
         title_fallback: None,
         cwd: session.and_then(|s| s.cwd.clone()),

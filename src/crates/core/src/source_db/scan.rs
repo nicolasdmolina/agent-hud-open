@@ -155,6 +155,7 @@ impl AgentHudCore {
             }
             // Shown and never counted, and it only goes up.
             log.live_total = log.live_total.max(record.live_total);
+            log.replied = record.replied; // What its store says at this read, unknown or not.
             if record.started_in.is_some() {
                 log.prompts.started_in = record.started_in.clone();
             }

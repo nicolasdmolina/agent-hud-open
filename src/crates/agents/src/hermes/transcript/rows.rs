@@ -8,6 +8,8 @@ use crate::hermes::session_counts;
 use crate::transcript::records::Record;
 use crate::transcript::{sql_column, sql_columns, sql_text, sql_time};
 use rusqlite::Connection;
+use std::cell::Cell;
+use std::time::{Duration, Instant};
 use std::{collections::HashSet, path::Path};
 
 /// The columns a session is read by after its rowid, id and start, in
@@ -38,7 +40,16 @@ pub(super) struct Sessions<'a> {
     pub(super) usage: HashSet<String>,
     pub(super) mirror: Option<Mirror>,
     pub(super) of: Profile,
+    /// Whether its sessions' replies can be asked for (`replied`).
+    replies: bool,
+    /// How long this read's questions about replies took so far.
+    asked: Cell<Duration>,
 }
+
+/// About the most time one `transcript::read` call's questions about replies
+/// may take together, all its spans: past it a session's reply is not asked
+/// for and is unknown (`Sessions::replied` says how it is held).
+const REPLY_BUDGET: Duration = Duration::from_millis(50);
 
 /// The rows one stretch held.
 #[derive(Clone, Copy, Default)]
@@ -74,6 +85,10 @@ impl<'a> Sessions<'a> {
         };
         let print = session_counts::sql(&s, &u);
         let live = mirror::live_sql(db, mirror.as_ref())?;
+        // Whether its sessions' replies can be asked for: a stored assistant
+        // message, in this machine's database. A mirror holds no messages.
+        let m = sql_columns(db, "messages").unwrap_or_default();
+        let replies = mirror.is_none() && m.contains("session_id") && m.contains("role");
         // A `state.db` under a Hermes home is this machine's, and its folder
         // says whose: a named profile's in `profiles/<name>`, else the default
         // profile's of whatever root holds it. A mirror's own table says whose
@@ -91,12 +106,40 @@ impl<'a> Sessions<'a> {
             usage: u,
             mirror,
             of,
+            replies,
+            asked: Cell::new(Duration::ZERO),
         })
     }
 
     /// Whether these are a mirror's sessions.
     pub(super) fn of_a_mirror(&self) -> bool {
         self.mirror.is_some()
+    }
+
+    /// Whether the session Hermes calls `raw` holds a reply of the model: a
+    /// stored assistant message. None where its database cannot say, the
+    /// question fails, or the read's questions have used `REPLY_BUDGET`.
+    /// The budget is about 50 ms for one `transcript::read` call, shared by
+    /// every span read in it. It is checked at SQLite's progress callbacks
+    /// (every 1,000 VM instructions or so; the handler is set for each
+    /// question alone), so one SQLite operation can run past it until its
+    /// next callback, and the question it belongs to is then cut off. A
+    /// question that ran to its end answers truly, yes or no.
+    fn replied(&self, raw: &str) -> Option<bool> {
+        let left = REPLY_BUDGET.saturating_sub(self.asked.get());
+        if !self.replies || left.is_zero() {
+            return None;
+        }
+        let started = Instant::now();
+        let deadline = started + left;
+        let cut = move || Instant::now() >= deadline;
+        self.db.progress_handler(1_000, Some(cut)).ok()?;
+        let sql = "SELECT EXISTS(SELECT 1 FROM messages WHERE session_id=?1 AND role='assistant')";
+        let found = (self.db.prepare_cached(sql))
+            .and_then(|mut question| question.query_row([raw], |row| row.get::<_, i64>(0)));
+        let _ = self.db.progress_handler(0, None::<fn() -> bool>);
+        self.asked.set(self.asked.get() + started.elapsed());
+        found.ok().map(|found| found != 0)
     }
 
     /// The rows whose rowid is in `range`, a condition over the numbers
@@ -165,14 +208,25 @@ impl<'a> Sessions<'a> {
                 .chain(Some(started))
                 .max()
                 .unwrap_or(started);
+            // A reply stored since the last read reads the session again.
             let counts = sql_text(row, 18).unwrap_or_default();
+            // Only a session that shows no tokens anywhere the reader counts
+            // them (its own columns, its usage rows, a live count) is asked.
+            let unused = session_counts::none(&counts);
+            let replied = (unused && live_total(row)?.is_none_or(|n| n == 0))
+                .then(|| self.replied(&raw))
+                .flatten();
+            let counts = match replied {
+                Some(found) => format!("{counts}/{found}"),
+                None => counts,
+            };
             let print = mirror::print(label.as_deref(), counts, live_total(row)?);
             if !wanted(rowid, updated, &print) {
                 continue;
             }
             taken += 1;
             let whose = (id.as_str(), raw.as_str());
-            self.records(row, whose, (started, updated), records)?;
+            self.records(row, whose, (started, updated), replied, records)?;
         }
         span.more = span.seen == looked || taken == read;
         Ok(span)

@@ -80,6 +80,7 @@ pub fn read(db: &Connection, cursor: &Value) -> rusqlite::Result<Page> {
             client: None,
             machine: None,
             live_total: None,
+            replied: None,
             started_in: None,
             title_fallback: None,
             cwd: sql_text(row, 5),

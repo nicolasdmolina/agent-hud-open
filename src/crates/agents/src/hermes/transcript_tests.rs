@@ -927,3 +927,118 @@ fn a_database_that_is_no_mirror_gives_no_live_total() {
     let page = read(&db, &path, &Value::Null).unwrap();
     assert_eq!(page.records[0].live_total, Some(i64::MAX as u64));
 }
+
+/// A `state.db` of `count` sessions with no tokens and a prompt each, as
+/// scheduled jobs that called no model leave, and `messages` as Hermes
+/// keeps it, with its index (ticket 70).
+fn jobs(path: &Path, count: i64) -> Connection {
+    let db = state_db(path, None);
+    db.execute_batch(
+        "DELETE FROM session_model_usage; DELETE FROM sessions;
+         CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT);
+         CREATE INDEX idx_messages_session_id ON messages(session_id);",
+    )
+    .unwrap();
+    for n in 0..count {
+        db.execute(
+            "INSERT INTO sessions (id, source, model, started_at) VALUES (?1, 'cron', 'claude-test', ?2)",
+            rusqlite::params![format!("job-{n}"), 1_760_000_000 + n],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO messages (session_id, role, content) VALUES (?1, 'user', 'Synthetic prompt')",
+            [format!("job-{n}")],
+        )
+        .unwrap();
+    }
+    db
+}
+
+/// Each record's session and what it says of a reply.
+fn replies(db: &Connection, path: &Path) -> Vec<(String, Option<bool>)> {
+    let records = read(db, path, &Value::Null).unwrap().records;
+    records.into_iter().map(|r| (r.id, r.replied)).collect()
+}
+
+#[test]
+fn a_session_with_no_tokens_is_asked_whether_it_holds_a_reply() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("state.db");
+    let db = jobs(&path, 2);
+    db.execute(
+        "INSERT INTO messages (session_id, role, content) VALUES ('job-1', 'assistant', 'Synthetic reply')",
+        [],
+    )
+    .unwrap();
+    // One that counted tokens is not asked: it says nothing of replies.
+    db.execute(
+        "UPDATE sessions SET input_tokens = 5 WHERE id = 'job-0'",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO sessions (id, source, model, started_at) VALUES ('job-2', 'cron', 'claude-test', 1760000002)",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        replies(&db, &path),
+        [
+            ("hermes:job-0".to_owned(), None),
+            ("hermes:job-1".to_owned(), Some(true)),
+            ("hermes:job-2".to_owned(), Some(false)),
+        ]
+    );
+}
+
+#[test]
+fn questions_about_replies_that_take_too_long_end_within_the_reads_budget() {
+    // `messages` is a view whose every question reads the whole of a large
+    // table, then fails: the round-5 verifier's case. The read still returns
+    // every session, soon, and says nothing of any reply.
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("state.db");
+    let db = jobs(&path, 100);
+    db.execute_batch(
+        "ALTER TABLE messages RENAME TO raw_messages;
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100000)
+           INSERT INTO raw_messages (session_id, role, content) SELECT 'other', 'user', 'Synthetic filler text' FROM n;
+         CREATE VIEW messages AS SELECT id, session_id,
+           json_extract((SELECT group_concat(content, '') FROM raw_messages), '$.role') AS role, content
+           FROM raw_messages;",
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let found = replies(&db, &path);
+    let took = started.elapsed();
+    assert_eq!(found.len(), 100);
+    assert!(
+        found.iter().all(|(_, replied)| replied.is_none()),
+        "{found:?}"
+    );
+    assert!(took < std::time::Duration::from_millis(250), "{took:?}");
+}
+
+#[test]
+fn a_session_whose_usage_rows_count_tokens_is_not_asked_about_its_reply() {
+    // Hermes can keep a session's tokens in its per-model usage rows alone,
+    // its own columns at zero: such a session used a model, and asking about
+    // its reply would only spend the read's budget. Each session holds a
+    // prompt and no reply, so a question asked would answer `Some(false)`:
+    // no answer at all for every one means none was asked.
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("state.db");
+    let db = jobs(&path, 100);
+    db.execute_batch(
+        "INSERT INTO session_model_usage (session_id, model, input_tokens, output_tokens, first_seen, last_seen)
+           SELECT id, 'claude-test', 15, 5, 1760000010, 1760000600 FROM sessions;",
+    )
+    .unwrap();
+    let found = replies(&db, &path);
+    assert_eq!(found.len(), 100);
+    let asked = found
+        .iter()
+        .filter(|(_, replied)| replied.is_some())
+        .count();
+    assert_eq!(asked, 0, "{found:?}");
+}

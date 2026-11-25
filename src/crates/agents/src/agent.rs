@@ -117,6 +117,24 @@ pub static ACCOUNTS: &[&crate::account::Provider] = &[
     &trae::account::TRAE_CN,
 ];
 
+/// The clients whose sessions say whether they hold a reply of a model
+/// (`Log::replied`) and count tokens beside it, so a session of theirs that
+/// shows no tokens and holds no reply, as core reads it now, called no model:
+/// the panel's short list may leave it out, and takes it back at the read
+/// that finds a reply or tokens (Agent HUD fork, ticket 70; FORK.md,
+/// "Sessions that used no AI"). Hermes: its reader looks for a stored
+/// assistant message in this machine's database; a far machine's mirror
+/// holds no messages, so its sessions say nothing and are never left out.
+/// Not here: a client that can record a reply with no tokens and says
+/// nothing of replies (Qoder's credits-only replies, TRAE, Kilo's moved
+/// tasks), and every client not checked.
+pub static ZERO_MEANS_NO_MODEL: &[&Agent] = &[&hermes::AGENT];
+
+/// Whether the client `id` is one of `ZERO_MEANS_NO_MODEL`.
+pub fn zero_means_no_model(id: &str) -> bool {
+    ZERO_MEANS_NO_MODEL.iter().any(|agent| agent.id == id)
+}
+
 /// Where a session of `source` opens, as its agent says (`Discovery::session_target`):
 /// the target the session list and `open_session` both use. None for an
 /// agent with no rule or a session with no place of its own.

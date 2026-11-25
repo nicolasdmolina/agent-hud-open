@@ -40,6 +40,9 @@ pub(crate) struct LogHead {
     /// (`Log::live_total`): shown by `shown_tokens`, counted nowhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_total: Option<u64>,
+    /// Whether the session holds a reply of a model (`Log::replied`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replied: Option<bool>,
     /// The session's first and latest prompts (`Log::prompts`).
     #[serde(default)]
     pub prompts: crate::naming::surfaces::PromptStamps,
@@ -114,6 +117,7 @@ impl LogHead {
             client: log.client.clone(),
             machine: log.machine.clone(),
             live_total: log.live_total,
+            replied: log.replied,
             prompts: log.prompts.clone(),
             updated: log.updated.clone(),
             usage: log.usage,
@@ -173,6 +177,7 @@ impl LogHead {
         self.cwd.hash(&mut hash);
         self.machine.hash(&mut hash);
         self.live_total.hash(&mut hash);
+        self.replied.hash(&mut hash);
         self.prompts.started_in.hash(&mut hash);
         self.activity_at(None).hash(&mut hash);
         self.usage.total().hash(&mut hash);

@@ -20,6 +20,7 @@ mod later_wait_sound;
 mod machines;
 mod native_card_codex_as_fork;
 mod native_card_rows;
+mod no_usage;
 mod plan_value;
 mod quota_history;
 mod sessions;

@@ -51,6 +51,8 @@ export interface Session {
   state: SessionState;
   /** From Core: the session's tokens with its sub-agents' at any depth (decided 2026-10-21, as Open); a sub-agent's own row still counts once in every total. */
   tokens: number;
+  /** From Core, on the snapshot's rows: true for a session that used no AI (no tokens, from a client whose sessions record every model call's tokens) and neither waits nor runs; the panel's short list leaves it out. Absent otherwise. */
+  usedNoAi?: boolean;
   turnCount?: number | null;
   /** From Core, on the Sessions page's rows (`turnBars: true`): the newest turns a row draws. */
   turnBars?: SessionTurnBars;
@@ -141,6 +143,8 @@ export interface SessionsQuery {
   rootsOnly?: boolean;
   /** Rows also carry turnCount, turnBars, contextTokens and contextFill (the Sessions page's rows). */
   turnBars?: boolean;
+  /** Leaves out the sessions that used no AI and neither wait nor run (the panel's short list); `total` counts only the rest. */
+  leaveOutUnused?: boolean;
   /** Direct children of this parent; overrides rootsOnly. */
   parentId?: string;
   /** IANA calendar time zone the response's `days` are cut in, DST-aware; UTC when omitted. */
@@ -172,6 +176,8 @@ export interface SessionsResponse {
   /** One page, newest last message first, then source, ID and path. */
   items: Session[];
   total: number;
+  /** From Core: the sessions `leaveOutUnused` took out of the list, which `total` does not count; 0 without it. */
+  leftOut?: number;
   nextOffset: number | null;
   /** Scope/root facets before source, project and search filters are applied. */
   sources: string[];

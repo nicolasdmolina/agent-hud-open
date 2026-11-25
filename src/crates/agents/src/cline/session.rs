@@ -101,6 +101,7 @@ pub(super) fn session(path: &Path) -> Option<Vec<Record>> {
                 client: None,
                 machine: None,
                 live_total: None,
+                replied: None,
                 started_in: None,
                 title_fallback: None,
                 cwd: cwd.clone(),
