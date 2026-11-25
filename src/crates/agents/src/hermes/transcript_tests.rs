@@ -1018,3 +1018,27 @@ fn questions_about_replies_that_take_too_long_end_within_the_reads_budget() {
     );
     assert!(took < std::time::Duration::from_millis(250), "{took:?}");
 }
+
+#[test]
+fn a_session_whose_usage_rows_count_tokens_is_not_asked_about_its_reply() {
+    // Hermes can keep a session's tokens in its per-model usage rows alone,
+    // its own columns at zero: such a session used a model, and asking about
+    // its reply would only spend the read's budget. Each session holds a
+    // prompt and no reply, so a question asked would answer `Some(false)`:
+    // no answer at all for every one means none was asked.
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("state.db");
+    let db = jobs(&path, 100);
+    db.execute_batch(
+        "INSERT INTO session_model_usage (session_id, model, input_tokens, output_tokens, first_seen, last_seen)
+           SELECT id, 'claude-test', 15, 5, 1760000010, 1760000600 FROM sessions;",
+    )
+    .unwrap();
+    let found = replies(&db, &path);
+    assert_eq!(found.len(), 100);
+    let asked = found
+        .iter()
+        .filter(|(_, replied)| replied.is_some())
+        .count();
+    assert_eq!(asked, 0, "{found:?}");
+}

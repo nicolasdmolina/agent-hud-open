@@ -30,6 +30,23 @@ pub(super) fn sql(s: &HashSet<String>, u: &HashSet<String>) -> String {
     )
 }
 
+/// Whether the counts `sql` gave a session (its own four token counts, then
+/// its usage rows' count, their four sums and their latest `last_seen`)
+/// show no token at all, in its own columns or in any usage row. A text not
+/// of that shape counts as tokens.
+pub(super) fn none(counts: &str) -> bool {
+    let fields: Vec<&str> = counts.split('/').collect();
+    let tokens: Vec<&str> = match fields.len() {
+        // No usage table: the session's own four counts and an empty part.
+        5 => fields[..4].to_vec(),
+        10 => fields[..4].iter().chain(&fields[5..9]).copied().collect(),
+        _ => return false,
+    };
+    tokens
+        .iter()
+        .all(|count| count.parse::<f64>().is_ok_and(|n| n == 0.0))
+}
+
 /// The map a pass carries, and the sessions this page read.
 pub(super) struct SessionCounts {
     map: Map<String, Value>,

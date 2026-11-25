@@ -46,8 +46,9 @@ pub(super) struct Sessions<'a> {
     asked: Cell<Duration>,
 }
 
-/// The most time a read's questions about replies may take together, all
-/// pages of it: past it a session's reply is not asked for and is unknown.
+/// About the most time one `transcript::read` call's questions about replies
+/// may take together, all its spans: past it a session's reply is not asked
+/// for and is unknown (`Sessions::replied` says how it is held).
 const REPLY_BUDGET: Duration = Duration::from_millis(50);
 
 /// The rows one stretch held.
@@ -117,10 +118,13 @@ impl<'a> Sessions<'a> {
 
     /// Whether the session Hermes calls `raw` holds a reply of the model: a
     /// stored assistant message. None where its database cannot say, the
-    /// question fails, or the read's questions have used `REPLY_BUDGET`: a
-    /// question is cut off when the budget runs out (SQLite's progress
-    /// handler, set for it alone), so all of a read's questions together add
-    /// at most about that much to it, and none fails it.
+    /// question fails, or the read's questions have used `REPLY_BUDGET`.
+    /// The budget is about 50 ms for one `transcript::read` call, shared by
+    /// every span read in it. It is checked at SQLite's progress callbacks
+    /// (every 1,000 VM instructions or so; the handler is set for each
+    /// question alone), so one SQLite operation can run past it until its
+    /// next callback, and the question it belongs to is then cut off. A
+    /// question that ran to its end answers truly, yes or no.
     fn replied(&self, raw: &str) -> Option<bool> {
         let left = REPLY_BUDGET.saturating_sub(self.asked.get());
         if !self.replies || left.is_zero() {
@@ -206,9 +210,10 @@ impl<'a> Sessions<'a> {
                 .unwrap_or(started);
             // A reply stored since the last read reads the session again.
             let counts = sql_text(row, 18).unwrap_or_default();
-            // Only a session that shows no tokens is asked of its reply.
-            let counted = (10..14).any(|i| row.get::<_, Option<i64>>(i).ok().flatten() > Some(0));
-            let replied = (!counted && live_total(row)?.is_none_or(|n| n == 0))
+            // Only a session that shows no tokens anywhere the reader counts
+            // them (its own columns, its usage rows, a live count) is asked.
+            let unused = session_counts::none(&counts);
+            let replied = (unused && live_total(row)?.is_none_or(|n| n == 0))
                 .then(|| self.replied(&raw))
                 .flatten();
             let counts = match replied {
