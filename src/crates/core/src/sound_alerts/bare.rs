@@ -32,7 +32,7 @@ impl Tracker {
 
     /// `name`, or the name after it, past every wait that went by it and
     /// was seen to end.
-    fn past(&self, mut name: String) -> String {
+    pub(super) fn past(&self, mut name: String) -> String {
         while self.decided.contains_key(&format!("{name}{OVER}")) {
             name.push('+');
         }

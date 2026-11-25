@@ -536,3 +536,7 @@ fn a_request_the_channel_kept_in_sight_is_not_answered_twice() {
     assert_eq!(replay.look(), ("waiting".to_owned(), 0, 0));
     replay.observer.stop();
 }
+
+// Agent HUD Fork (ticket 74): two requests one after the other in one wait.
+#[path = "asks_tests.rs"]
+mod asks;

@@ -12,6 +12,9 @@ use std::{
     sync::PoisonError,
 };
 
+#[path = "native_asks.rs"]
+mod asks;
+
 /// How long a native channel's reading of its sessions is believed after it
 /// came back. The channel that tells states today reads its client every
 /// second while anything runs and every ten seconds when all is idle;
@@ -82,6 +85,9 @@ pub(super) struct Readers {
     /// session a reader lists with none is waiting on something it does
     /// not name.
     named: HashMap<(String, String), HashMap<String, Vec<String>>>,
+    /// Every request a reader says waits in a session, by source and
+    /// reader, then by session (`asks.rs`).
+    asks: HashMap<(String, String), asks::Asks>,
     states: NativeReadings,
 }
 
@@ -147,6 +153,7 @@ impl Readers {
     }
     fn end_waiting(&mut self, source: &str, reader: &str) -> bool {
         self.set_named(source, reader, HashMap::new());
+        self.set_asks(source, reader, HashMap::new());
         let Some(readers) = self.waiting.get_mut(source) else {
             return false;
         };
@@ -203,7 +210,8 @@ impl Requests {
             .collect();
         self.native(|readers| {
             let named = readers.set_named(source, reader, HashMap::new());
-            readers.set_waiting(source, reader, next) || named
+            let asks = readers.set_asks(source, reader, HashMap::new());
+            readers.set_waiting(source, reader, next) || named || asks
         });
     }
     /// The same whole list, each session with the requests its wait is for
@@ -213,16 +221,7 @@ impl Requests {
     /// decision matches an automatically approved request to its wait by
     /// these ids, and by nothing else (`sound_alerts`).
     pub fn set_native_waits(&self, source: &str, reader: &str, waits: &[(String, Vec<String>)]) {
-        let waits = waits.iter().filter(|(id, _)| !id.is_empty());
-        let next: HashSet<String> = waits.clone().map(|(id, _)| id.clone()).collect();
-        let named: HashMap<String, Vec<String>> = waits
-            .filter(|(_, requests)| !requests.is_empty())
-            .cloned()
-            .collect();
-        self.native(|readers| {
-            let named = readers.set_named(source, reader, named);
-            readers.set_waiting(source, reader, next) || named
-        });
+        self.set_native_waits_asked(source, reader, waits, &[]);
     }
     /// The requests each waiting session's wait is for, by `source:session`:
     /// only where every reader that lists the session names them. A session
@@ -230,28 +229,6 @@ impl Requests {
     pub fn native_wait_requests(&self) -> HashMap<String, Vec<String>> {
         let state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.native.wait_requests()
-    }
-}
-impl Readers {
-    /// The requests each waiting session's wait is for (`native_wait_requests`).
-    pub(super) fn wait_requests(&self) -> HashMap<String, Vec<String>> {
-        let mut all: HashMap<String, Option<Vec<String>>> = HashMap::new();
-        for (source, readers) in &self.waiting {
-            for (reader, sessions) in readers {
-                let named = self.named.get(&(source.clone(), reader.clone()));
-                for session in sessions {
-                    let told = named.and_then(|named| named.get(session));
-                    let entry = all.entry(format!("{source}:{session}"));
-                    match (entry.or_insert_with(|| Some(Vec::new())), told) {
-                        (Some(requests), Some(told)) => requests.extend(told.iter().cloned()),
-                        (requests, _) => *requests = None,
-                    }
-                }
-            }
-        }
-        all.into_iter()
-            .filter_map(|(key, requests)| Some((key, requests?)))
-            .collect()
     }
 }
 impl Requests {

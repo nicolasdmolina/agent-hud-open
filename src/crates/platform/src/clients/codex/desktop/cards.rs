@@ -30,6 +30,7 @@ impl Shared {
         }
         let parsed = pending::parse(&state_value, thread, owner);
         let named = super::waits::named(&state_value, thread, parsed.as_deref().ok());
+        let asked = super::waits::asked(&state_value, thread, owner, parsed.as_deref().ok());
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if !self.active.load(Ordering::Acquire) {
             return;
@@ -40,6 +41,7 @@ impl Shared {
                 owner: owner.into(),
                 state: state_value,
                 named,
+                asked,
             },
         );
         let Ok(items) = parsed else {
@@ -49,6 +51,7 @@ impl Shared {
                     // Agent HUD Fork (ticket 66): as where the stream drops.
                     self.requests.auto_approval_lost(id);
                     pending.ticket = None;
+                    pending.lost();
                 }
             }
             drop(state);
@@ -87,7 +90,7 @@ impl Shared {
                 None => {
                     state
                         .pending
-                        .insert(item.id.clone(), LivePending { item, ticket });
+                        .insert(item.id.clone(), LivePending::new(item, ticket));
                 }
             }
         }
@@ -105,6 +108,7 @@ pub(super) fn unknown(shared: &Shared, thread: &str) {
             // Agent HUD Fork (ticket 66): as where the stream drops.
             shared.requests.auto_approval_lost(id);
             live.ticket = None;
+            live.lost();
         }
     }
     drop(state);

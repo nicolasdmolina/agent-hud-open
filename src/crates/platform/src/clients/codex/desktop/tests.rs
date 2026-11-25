@@ -13,6 +13,8 @@ mod auto_answer;
 mod receipt_reuse;
 // Agent HUD Fork (ticket 66): the same request asked again after a reconnect.
 mod reconnect;
+// Agent HUD Fork (ticket 74): a request answered, lost from sight, asked again.
+mod asked_again;
 
 const THREAD: &str = "00000000-0000-4000-8000-000000000001";
 fn permission(connector: &str, persist: Value) -> Value {

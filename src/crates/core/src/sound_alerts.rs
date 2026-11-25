@@ -8,12 +8,15 @@
 //! them is decided then, so none sounds on its own later.
 use super::*;
 
+mod asks;
 mod bare;
 mod kept;
 mod look;
 mod requests;
+mod setting;
 mod wait;
 pub(crate) use requests::Heard;
+pub(crate) use setting::names_a_sound;
 use wait::Wait;
 
 pub(crate) struct Tracker {
@@ -162,6 +165,8 @@ impl Tracker {
             let is_waiting = |r: &&String| !allowed.contains(r) && !carded(r);
             let waiting: Vec<&String> = named.iter().filter(is_waiting).collect();
             let names = self.request_names(before, named, &key, now);
+            let asks = heard.asks.get(&key).map_or(&[][..], Vec::as_slice);
+            let asks = self.ask_names(before, asks, &key, now);
             // A wait with no card, for approved requests alone, is theirs:
             // it makes no sound. One that names no request always sounds.
             let silent = now_requests.is_empty() && !named.is_empty() && waiting.is_empty();
@@ -200,8 +205,16 @@ impl Tracker {
                     told.get_or_insert(name.clone());
                 }
             }
+            // Every ask with no card of its own that is not approved sounds
+            // once, though a card sounded in the session's wait before.
+            let quiet = |a: &asks::Ask| {
+                allowed.contains(&a.request) || (a.ask == a.request && carded(&&a.request))
+            };
+            let asked = self.sound_asks(&asks, quiet, now);
+            told = told.or(asked);
             // Nothing of its own waits in it: a wait known only as a wait.
-            let unnamed = now_requests.is_empty() && waiting.is_empty() && !silent;
+            let unnamed =
+                now_requests.is_empty() && waiting.is_empty() && asks.is_empty() && !silent;
             // The name a wait with no card had here goes on with the wait.
             let mut lent = before.and_then(|p| p.lent.clone());
             if silent {
@@ -227,6 +240,7 @@ impl Tracker {
                 Wait {
                     unnamed,
                     named: names,
+                    asks,
                     approved,
                     silent,
                     lent,
@@ -240,7 +254,8 @@ impl Tracker {
             self.ended
                 .extend(over.map(|request| (key.clone(), request)));
             self.over(wait.lent, now);
-            for (_, name) in wait.named {
+            let asks = wait.asks.into_iter().map(|ask| (ask.request, ask.name));
+            for (_, name) in wait.named.into_iter().chain(asks) {
                 self.over(Some(name), now);
             }
         }
@@ -274,19 +289,6 @@ impl Tracker {
         }
         json!({"revision":self.revision,"items":self.items})
     }
-}
-
-/// Whether a setting names a sound: a name, never a path. The host looks it
-/// up among the system's own sounds.
-pub(crate) fn names_a_sound(value: &Value) -> bool {
-    value.as_str().is_some_and(|name| {
-        !name.is_empty()
-            && name.trim() == name
-            && name.len() <= 64
-            && name
-                .chars()
-                .all(|c| c.is_alphanumeric() || " -_".contains(c))
-    })
 }
 
 #[cfg(test)]
