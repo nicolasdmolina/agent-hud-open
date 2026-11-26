@@ -38,4 +38,58 @@ pub(super) struct Wait {
     /// name is forgotten, so a card of that request afterwards is another
     /// wait and sounds (`Tracker::spent`).
     pub uncarded: Vec<String>,
+    /// The names of its requests that showed a card at any look of it. Once
+    /// the wait is seen to end they are over too, as its other names are: a
+    /// wait
+    /// of that request with no card afterwards goes by the name after and
+    /// sounds, also where the client did not name it for the wait; a card
+    /// shown again within the day is still the same card (ticket 81).
+    pub cards: Vec<String>,
+    /// A look of it played a sound. Until then it is owed one, and nothing
+    /// that changes while it goes on is taken for the same wait (ticket 81).
+    pub heard: bool,
+}
+
+impl Wait {
+    /// Adds a card's `names` to `cards`, each once.
+    pub(super) fn add(cards: &mut Vec<String>, names: &[String]) {
+        for name in names {
+            if !cards.contains(name) {
+                cards.push(name.clone());
+            }
+        }
+    }
+
+    /// Whether one of `names` (a card's, in session `key`) is the plain
+    /// name of a request or ask that waited in this wait with no card: the
+    /// card is then that same wait, whatever count its no-card name had.
+    pub(super) fn uncarded_as(&self, key: &str, names: &[String]) -> bool {
+        let quiet = |name: &String| !self.uncarded.contains(name);
+        let requests = self.named.iter().filter(|(_, n)| !quiet(n)).map(|(r, _)| r);
+        let asks = self.asks.iter().filter(|a| !quiet(&a.name)).map(|a| &a.ask);
+        let mut bases = requests.chain(asks).map(|r| format!("needs-you:{key}:{r}"));
+        bases.any(|base| names.contains(&base))
+    }
+}
+
+impl super::Tracker {
+    /// The wait ends its name `base` at this look, unless it still waits
+    /// under that name another way (`still`): then the name goes on. A wait
+    /// not heard yet is owed a sound for the change, as the name after
+    /// would have given it (`owed`).
+    pub(super) fn over(
+        &mut self,
+        before: Option<&Wait>,
+        base: String,
+        still: bool,
+        owed: &mut Vec<String>,
+        now: i64,
+    ) {
+        if !still {
+            self.spent(before, &base);
+            self.end(Some(base), now);
+        } else if !before.is_some_and(|wait| wait.heard) {
+            owed.push(base);
+        }
+    }
 }

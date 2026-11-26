@@ -99,7 +99,11 @@ fn the_file_holds_counts_and_open_waits_only_when_there_are_some() {
     lab.idle(0);
     lab.wait(1, Kind::Named);
     let saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-    let open = json!([["needs-you:claude:s1:req-1"], T + 1]);
+    let open = json!([
+        ["needs-you:claude:s1:req-1"],
+        T + 1,
+        ["needs-you:claude:s1:req-1"]
+    ]);
     assert_eq!(
         (saved.get("ended"), &saved["open"]["claude:s1"]),
         (None, &open)

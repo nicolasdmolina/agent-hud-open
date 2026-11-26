@@ -25,19 +25,22 @@ impl Tracker {
     /// the same ask waiting again later goes by the name after it and
     /// sounds again, as a wait that names no request does (`bare.rs`). A
     /// request asked anew is not over: its name stays as it was, and so
-    /// does the name its wait has where its channel names it.
+    /// does the name its wait has where its channel names it. Nor is an
+    /// ask whose name is that of a request its channel still `named` for
+    /// the wait: that wait goes on, and so does its name (`Tracker::over`).
     pub(super) fn ask_names(
         &mut self,
         before: Option<&Wait>,
-        asks: &[(String, String)],
+        (asks, named): (&[(String, String)], &[String]),
         session: &str,
+        owed: &mut Vec<String>,
         now: i64,
     ) -> Vec<Ask> {
         let base = |ask: &String| format!("needs-you:{session}:{ask}");
         for old in before.into_iter().flat_map(|wait| &wait.asks) {
             if !asks.iter().any(|(request, _)| *request == old.request) {
-                self.spent(before, &base(&old.ask));
-                self.end(Some(base(&old.ask)), now);
+                let named = named.contains(&old.ask);
+                self.over(before, base(&old.ask), named, owed, now);
             }
         }
         let named = asks.iter().map(|(request, ask)| Ask {

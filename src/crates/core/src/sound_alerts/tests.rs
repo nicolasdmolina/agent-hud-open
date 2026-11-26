@@ -2,6 +2,7 @@ use super::*;
 
 mod again;
 mod approved;
+mod kind_change;
 mod lab;
 mod later_wait;
 mod lives;

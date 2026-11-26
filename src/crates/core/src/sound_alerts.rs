@@ -177,12 +177,14 @@ impl Tracker {
             let carded = |r: &&String| now_requests.iter().any(|q| q.card && q.names.contains(r));
             let is_waiting = |r: &&String| !allowed.contains(r) && !carded(r);
             let waiting: Vec<&String> = named.iter().filter(is_waiting).collect();
-            let names = self.request_names(before, named, &key, now);
             let asks = heard.asks.get(&key).map_or(&[][..], Vec::as_slice);
-            let asks = self.ask_names(before, asks, &key, now);
+            let mut owed = Vec::new();
+            let names = self.request_names(before, (named, asks), &key, &mut owed, now);
+            let asks = self.ask_names(before, (asks, named), &key, &mut owed, now);
             // A wait with no card, for approved requests alone, is theirs:
             // it makes no sound. One that names no request always sounds.
             let silent = now_requests.is_empty() && !named.is_empty() && waiting.is_empty();
+            let mut cards = before.map_or_else(Vec::new, |p| p.cards.clone());
             for request in &now_requests {
                 // A transcript sighting that goes by an approved request's
                 // name is that request, which showed no card: silent while
@@ -205,9 +207,15 @@ impl Tracker {
                     self.first(name, now);
                     self.touch(name, now);
                 }
-                // A wait already told without a card is the same wait once
-                // its card comes. The look's first new request names the alert.
-                if new && !before.is_some_and(|p| p.unnamed) {
+                if request.card {
+                    Wait::add(&mut cards, &names);
+                }
+                // A wait told without a card, or a heard one whose request
+                // waited with no card, is the same wait once its card comes.
+                // The look's first new request names the alert.
+                let same = |p: &Wait| p.unnamed || p.heard && p.uncarded_as(&key, &names);
+                let same = before.is_some_and(same);
+                if new && !same {
                     told.get_or_insert(names[0].clone());
                 }
             }
@@ -247,6 +255,9 @@ impl Tracker {
             } else if let Some(base) = &lent {
                 self.touch(base, now);
             }
+            let told = told.or_else(|| owed.first().map(|base| self.named(base, now)));
+            let played = told.is_some() && settings["sound"] == true && self.primed;
+            let heard = played || before.is_some_and(|p| p.heard);
             if let Some(identity) = told {
                 alerts.push(Alert {
                     kind: "needs-you",
@@ -263,6 +274,8 @@ impl Tracker {
                 silent,
                 lent,
                 uncarded,
+                cards,
+                heard,
             };
             waits.insert(key, wait);
         }

@@ -8,6 +8,8 @@ use super::*;
 pub(super) const HOUR: i64 = 3_600_000;
 /// The plain name a card of the session's request goes by.
 pub(super) const CARD: &str = "needs-you:claude:s1:req-1";
+/// The plain name of the other request's card.
+pub(super) const OTHER: &str = "needs-you:claude:s1:card-9";
 
 /// How the session's wait is told.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -20,6 +22,14 @@ pub(super) enum Kind {
     Ask,
     /// By the request's card, its channel naming it too.
     Card,
+    /// By the request's card, its channel naming it and listing its ask.
+    CardAsk,
+    /// By an ask its channel lists, with no card, the request not named.
+    Asked,
+    /// By the request's card, from a client that does not name it.
+    CardOnly,
+    /// By another request's card, from a client that names neither.
+    Other,
 }
 pub(super) const NO_CARD: [Kind; 3] = [Kind::Bare, Kind::Named, Kind::Ask];
 
@@ -57,14 +67,18 @@ impl Lab {
         self.now += after;
         let key = "claude:s1".to_owned();
         let waits = row.as_ref().is_some_and(|r| r["state"] == "waiting");
-        let named: Vec<String> = match waits && kind != Kind::Bare {
+        let unnamed = matches!(kind, Kind::Bare | Kind::CardOnly | Kind::Other);
+        let request: Vec<String> = match waits && !unnamed {
             true => vec!["req-1".into()],
             false => vec![],
         };
         let asked = match kind {
-            Kind::Ask => named.iter().map(|w| (w.clone(), w.clone())).collect(),
+            Kind::Ask | Kind::CardAsk | Kind::Asked => {
+                request.iter().map(|w| (w.clone(), w.clone())).collect()
+            }
             _ => vec![],
         };
+        let named = if kind == Kind::Asked { vec![] } else { request };
         let heard = Heard {
             waits: HashMap::from([(key.clone(), named)]),
             asks: HashMap::from([(key, asked)]),
@@ -114,7 +128,8 @@ impl Lab {
 /// The session's row as it waits, told as `kind`, its last event at `since`.
 pub(super) fn row(kind: Kind, since: Option<&str>) -> Value {
     let mut row = match kind {
-        Kind::Card => waiting("s1", &[("req-1", "permission")]),
+        Kind::Other => waiting("s1", &[("card-9", "permission")]),
+        Kind::Card | Kind::CardAsk | Kind::CardOnly => waiting("s1", &[("req-1", "permission")]),
         _ => waiting("s1", &[]),
     };
     if let Some(since) = since {
