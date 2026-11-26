@@ -29,16 +29,21 @@ impl Wait {
             .map(|a| format!("needs-you:{key}:{}", a.ask));
         self.lent.iter().cloned().chain(named).chain(asks).collect()
     }
+
+    /// The names that are over once this wait ends: its bases, and the
+    /// names of every card shown in it.
+    pub(super) fn ended(&self, key: &str) -> Vec<String> {
+        let mut names = self.bases(key);
+        Wait::add(&mut names, &self.cards);
+        names
+    }
 }
 
 impl Tracker {
     /// A wait no look sees any more: each name it went by is over, its
     /// cards' too, and core is told which approved requests' wait ended.
     pub(super) fn close(&mut self, key: String, wait: Wait, now: i64) {
-        let mut bases = wait.bases(&key);
-        let cards = wait.cards.iter().filter(|card| !bases.contains(card));
-        bases.extend(cards.cloned().collect::<Vec<_>>());
-        for base in bases {
+        for base in wait.ended(&key) {
             self.spent(Some(&wait), &base);
             self.end(Some(base), now);
         }
@@ -63,13 +68,15 @@ impl Tracker {
     pub(super) fn open(&self, now: i64) -> Open {
         let mut open = Open::new();
         for (key, wait) in &self.waits {
-            let bases = wait.bases(key);
-            let went = |b: &&String| wait.uncarded.iter().any(|n| super::bare::under(b, n));
-            let uncarded = bases.iter().filter(went);
-            let uncarded = uncarded.cloned().collect();
-            if !bases.is_empty() {
-                open.insert(key.clone(), (bases, now, uncarded));
+            // A wait told by a card alone is not saved (ticket 33's file);
+            // one saved goes with its cards' names, which end at the load.
+            if wait.bases(key).is_empty() {
+                continue;
             }
+            let bases = wait.ended(key);
+            let went = |b: &&String| wait.uncarded.iter().any(|n| super::bare::under(b, n));
+            let uncarded = bases.iter().filter(went).cloned().collect();
+            open.insert(key.clone(), (bases, now, uncarded));
         }
         open
     }

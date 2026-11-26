@@ -11,13 +11,14 @@
 //! A wait is new when a look sees the session wait and the look before,
 //! in the same run of the app, did not. Every new wait heard with sound
 //! on is heard, but one rule of ticket 66: a card of a request decided
-//! within the day before is that request (`CARD`), and is silent. No
-//! other look plays anything: a wait that goes on, across sleeps, sound
-//! off and on, alerts leaving the list and relaunches, sounds once. Where
-//! its kind changes, a wait whose card was silent by that rule may sound
-//! once at a later look with no card (`late`), as on the base; and a look
-//! with no card right after a card of the request can ping again
-//! (`after_card`): an extra ping, counted, not fixed (ticket 81).
+//! within the day before is that request (`CARD`), and is silent. Over
+//! whole waits: one with sound on and the app running at every look of it
+//! is heard at some look (`never`), but a wait that began as such a card.
+//! A wait already heard plays nothing more, across sleeps, sound off and
+//! on, alerts leaving the list, relaunches and kind changes, but a look
+//! with no card right after a card of the request (`after_card`: an extra
+//! ping, counted, not changed). A wait not heard yet may sound at a later
+//! look (`owed`), as on the base.
 use super::lab::*;
 use super::*;
 
@@ -37,15 +38,43 @@ struct Counts {
     heard: usize,
     same_request: usize,
     silent: usize,
-    extra: usize,
-    late: usize,
+    /// Whole waits with sound on and the app running at every look of
+    /// them that no look of them was heard, but ticket 66's cards.
+    never: usize,
+    /// The same, for a wait that began as a card of a request decided
+    /// within the day (ticket 66): silent by design, as on the base.
+    never_by_ticket_66: usize,
+    /// A ping in a wait no look of which had been heard yet.
+    owed: usize,
+    /// A ping in a wait already heard, after a relaunch or a look with
+    /// sound off inside it (a wait listed again late after a relaunch
+    /// sounds again: ticket 75).
+    not_whole: usize,
+    /// A ping in a wait already heard, at a look with no card right after
+    /// a card of the request (ticket 81, measured, not changed).
     after_card: usize,
+    /// A ping in a wait already heard where the look names another request
+    /// than the one before (a flag alone, another card): a new request in
+    /// the wait sounds (ticket 66).
+    other_request: usize,
+    /// Any other ping in a wait already heard, or with no wait.
+    extra: usize,
     changes: usize,
     most_counts: usize,
     most_bytes: usize,
 }
 
 const LOOKS: usize = 150;
+
+/// One wait as it goes: whether a look of it was heard, whether every look
+/// had sound on and the app running, and whether it began as ticket 66's
+/// card.
+#[derive(Default)]
+struct Going {
+    heard: bool,
+    whole: bool,
+    by_ticket_66: bool,
+}
 
 fn live(
     mode: &str,
@@ -61,9 +90,8 @@ fn live(
     lab.idle(0);
     let (mut waits, mut was, mut relaunched, mut kind, mut written) =
         (false, false, false, kinds[0], 0);
-    // The wait's first look was silent by ticket 66's rule, and the look
-    // before showed a card.
-    let (mut quiet_start, mut carded) = (false, false);
+    let (mut going, mut carded): (Option<Going>, bool) = (None, false);
+    let mut before = kind;
     for _ in 0..LOOKS {
         let gap = match rng.below(100) {
             0..=39 => 1_000,
@@ -100,38 +128,83 @@ fn live(
             running("s1")
         };
         let at = lab.now + gap;
-        let decided = lab.tracker.decided.get(CARD).is_some_and(|t| at - t < DAY);
+        let card_name = if kind == Kind::Other { OTHER } else { CARD };
+        let decided = lab
+            .tracker
+            .decided
+            .get(card_name)
+            .is_some_and(|t| at - t < DAY);
         let pings = lab.see(gap, Some(row), kind, others, sound);
-        let card = matches!(kind, Kind::Card | Kind::CardAsk | Kind::CardOnly);
-        if waits && !was && !relaunched && sound {
-            counts.new += 1;
-            match (pings, card && decided) {
-                (0, true) => counts.same_request += 1,
-                (0, false) => counts.silent += 1,
-                _ => counts.heard += 1,
+        let card = matches!(
+            kind,
+            Kind::Card | Kind::CardAsk | Kind::CardOnly | Kind::Other
+        );
+        let audible = sound && !relaunched;
+        if !waits || !was {
+            if let Some(ended) = going.take() {
+                end(ended, counts);
             }
-            quiet_start = pings == 0;
-        } else if waits && was && !relaunched && quiet_start && pings == 1 {
-            counts.late += 1;
-            quiet_start = false;
-        } else if waits && was && !relaunched && carded && !card {
-            counts.after_card += pings;
+        }
+        if waits && !was {
+            let by_ticket_66 = card && decided;
+            if audible {
+                counts.new += 1;
+                match (pings, by_ticket_66) {
+                    (0, true) => counts.same_request += 1,
+                    (0, false) => counts.silent += 1,
+                    _ => counts.heard += 1,
+                }
+            }
+            let (heard, whole) = (pings > 0, audible);
+            going = Some(Going {
+                heard,
+                whole,
+                by_ticket_66,
+            });
+        } else if let Some(wait) = going.as_mut().filter(|_| waits) {
+            wait.whole &= audible;
+            let other = kind != before && (unrelated(kind) || unrelated(before));
+            match (wait.heard, other, carded && !card) {
+                (false, ..) => counts.owed += pings,
+                _ if !wait.whole => counts.not_whole += pings,
+                (true, true, _) => counts.other_request += pings,
+                (true, false, true) => counts.after_card += pings,
+                (true, false, false) => counts.extra += pings,
+            }
+            wait.heard |= pings > 0;
         } else {
             counts.extra += pings;
         }
-        quiet_start &= waits;
-        carded = waits && card;
+        (carded, before) = (waits && card, kind);
         (was, relaunched) = (waits, false);
         let held = lab.held();
         counts.most_counts = counts.most_counts.max(held.0);
         counts.most_bytes = counts.most_bytes.max(held.1);
+    }
+    if let Some(ended) = going {
+        end(ended, counts);
+    }
+}
+
+/// A way of telling the wait that names no request, or another one.
+fn unrelated(kind: Kind) -> bool {
+    matches!(kind, Kind::Bare | Kind::Other)
+}
+
+/// A wait is over: one heard at no look, with sound on and the app running
+/// at all of them, is counted.
+fn end(wait: Going, counts: &mut Counts) {
+    match (wait.heard || !wait.whole, wait.by_ticket_66) {
+        (true, _) => {}
+        (false, true) => counts.never_by_ticket_66 += 1,
+        (false, false) => counts.never += 1,
     }
 }
 
 #[test]
 fn every_new_wait_is_heard_and_a_wait_that_goes_on_sounds_once() {
     use Kind::*;
-    const CHANGING: [Kind; 6] = [Named, Ask, Asked, Card, CardAsk, CardOnly];
+    const CHANGING: [Kind; 8] = [Named, Ask, Asked, Card, CardAsk, CardOnly, Bare, Other];
     let modes: [(&str, &[Kind], (bool, bool)); 8] = [
         ("bare", &[Bare], (false, false)),
         ("named", &[Named], (false, false)),
@@ -162,9 +235,11 @@ fn every_new_wait_is_heard_and_a_wait_that_goes_on_sounds_once() {
     });
     for (mode, counts) in all {
         println!("lives {mode}: {counts:?}");
-        assert_eq!((counts.silent, counts.extra), (0, 0), "{mode}: {counts:?}");
+        let wanted = (0, 0, 0);
+        let got = (counts.silent, counts.never, counts.extra);
+        assert_eq!(got, wanted, "{mode}: {counts:?}");
         let changing = mode == "changing";
-        let changed = counts.late + counts.after_card;
+        let changed = counts.owed + counts.after_card + counts.other_request + counts.not_whole;
         assert!(changing || changed == 0, "{mode}: {counts:?}");
         assert!(!changing || counts.changes > 1000, "{mode}: {counts:?}");
         assert!(

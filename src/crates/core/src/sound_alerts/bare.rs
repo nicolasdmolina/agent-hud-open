@@ -111,20 +111,21 @@ impl Tracker {
     /// no more is over (it was settled, or the channel lost sight of it),
     /// and whatever the channel names under that id afterwards is another
     /// wait (ticket 66, rounds 4 and 9); not while an ask under the same
-    /// name still waits in it (`asks`), which is the same wait going on.
+    /// name still waits in it (`asks`), which is the same wait going on
+    /// (`Tracker::over`).
     pub(super) fn request_names(
         &mut self,
         before: Option<&super::Wait>,
-        named: &[String],
-        asks: &[(String, String)],
+        (named, asks): (&[String], &[(String, String)]),
         session: &str,
+        owed: &mut Vec<String>,
         now: i64,
     ) -> Vec<(String, String)> {
         let base = |request: &String| format!("needs-you:{session}:{request}");
         for (request, _) in before.into_iter().flat_map(|wait| &wait.named) {
-            if !named.contains(request) && !asks.iter().any(|(_, ask)| ask == request) {
-                self.spent(before, &base(request));
-                self.end(Some(base(request)), now);
+            let asked = asks.iter().any(|(_, a)| a == request);
+            if !named.contains(request) {
+                self.over(before, base(request), asked, owed, now);
             }
         }
         let named = named.iter().map(|r| (r.clone(), base(r)));

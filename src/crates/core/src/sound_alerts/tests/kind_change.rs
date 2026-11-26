@@ -140,3 +140,51 @@ fn a_card_after_its_requests_wait_with_no_card_under_a_later_name_sounds() {
         assert_eq!(pings, [1, 1, 1, 1], "{card:?} and {told:?}");
     }
 }
+
+/// The round 1 verifier's cases (ticket 81, P2 and P4): a card goes while
+/// the session still waits (a flag alone, another card), and the wait ends
+/// after that. The request's next wait is heard once, whatever its kinds.
+#[test]
+fn the_wait_after_one_whose_card_went_before_it_ended_is_heard_once() {
+    use Kind::*;
+    let cases: [(&[Kind], &[Kind]); 5] = [
+        (&[CardOnly, Bare], &[Ask, Asked]),
+        (&[CardOnly, Bare], &[Ask, Named, Named]),
+        (&[CardOnly, Other], &[Named, Card]),
+        (&[Card, Other], &[Ask, CardAsk, CardAsk]),
+        (&[CardOnly, Bare], &[Named, Named]),
+    ];
+    for (first, next) in cases {
+        let mut lab = Lab::new();
+        let first: Vec<usize> = first.iter().map(|k| lab.wait(1000, *k)).collect();
+        assert_eq!(first[0], 1, "{first:?}");
+        lab.run(1000);
+        let pings: Vec<usize> = next.iter().map(|k| lab.wait(1000, *k)).collect();
+        assert_eq!(pings.iter().sum::<usize>(), 1, "{next:?}: {pings:?}");
+    }
+}
+
+/// A wait that began with sound off was not heard. When its kind changes
+/// with sound on (its ask stops being listed, or its card comes), it is
+/// owed that sound, as on the base; and it is heard once.
+#[test]
+fn a_wait_not_heard_yet_sounds_once_when_its_kind_changes() {
+    use Kind::*;
+    let cases: [(&[Kind], usize); 4] = [
+        (&[Ask, Named, Named, Named], 0),
+        (&[Ask, Asked, Asked], 0),
+        (&[Named, Card, Card], 1),
+        (&[Ask, CardAsk, CardAsk], 1),
+    ];
+    for (kinds, earlier) in cases {
+        let mut lab = Lab::new();
+        for _ in 0..earlier {
+            lab.wait(1000, kinds[0]);
+            lab.run(1000);
+        }
+        let row = |k: Kind| Some(row(k, None));
+        assert_eq!(lab.see(1000, row(kinds[0]), kinds[0], 0, false), 0);
+        let pings: Vec<usize> = kinds[1..].iter().map(|k| lab.wait(1000, *k)).collect();
+        assert_eq!(pings.iter().sum::<usize>(), 1, "{kinds:?}: {pings:?}");
+    }
+}
