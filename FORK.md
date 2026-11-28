@@ -1540,6 +1540,7 @@ Phase 2's acceptance ran the installed fork (`a048206`) against the Mac Mini on 
 - **Priority** (ticket 71's fix): 31 to 54 with the screen unlocked, the panel open or closed, another app in front, and through 42 s behind a closed lid; 20 once the screen had been locked a while, where it was 4 before the fix.
 - **A session the Hermes desktop app holds on the Mini** is a row with "Open in Hermes desktop" and no card, and the machines list says where its questions are answered. Seen on 0.23.1 with an old chat the app reopened, not a new one.
 - **Counted once**: the ledger's totals for Nicky's Telegram session equal the Mini's own usage rows for it, model by model.
+- **A scheduled job that did work** (2026-11-28 09:30) was a row that said running 1 s after it started, with its count rising, and idle when it ended 18 s later. No `finished` played for it, though the HUD watched the whole turn: the log holds no turn start or end for it (ticket 87). The same job sounded on other days.
 
 ## Upstream syncs
 
