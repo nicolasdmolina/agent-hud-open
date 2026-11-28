@@ -1527,6 +1527,20 @@ Phase 2's acceptance ran the installed fork (`a048206`) against the Mac Mini on 
 
 **The timing suite on the finished fork**, with the looks, the count calls and history reads back to back: `far_timing` 11 of 11, twice. Every bound of spec section 10 held in the row cases too. One row case's last check did not allow for history reads and was corrected in the test (`row_when_the_gateway_was_busy_and_counts_move` counts the busy sessions' rows only), and the 5,000-row label case sits on its own 2 s in the test build and is at 0.4 s in the optimized one (ticket 68).
 
+**With Nicky, on the build with tickets 67 to 73 in (`1388a4e`), 2026-11-24 to 2026-11-28.** Five questions from the Mini's Telegram session, each on a card tagged with the Mini's label. The numbers are in ticket 40's Answer; what they showed of the design:
+
+- **A card and its answer on a real far machine.** Hermes asked, the card showed, Nicky answered on it, Hermes went on. `needs-you` once, `finished` once at the turn's end, the row running, waiting, running, idle, and its token count rising while the turn still ran.
+- **The card's time is the link's time.** Over a link of 0.1 s a round trip the card showed 1.1 to 1.2 s after Hermes asked. Over in-flight Wi-Fi (0.8 to 1.0 s a round trip, polls of 1.6 to 3.5 s) it showed 8.4 s after, twice: inside the 13 s of a quiet gateway and outside the 4 s of a working session, which that link cannot give. An answer took 12.7 s to reach Hermes over it.
+- **Hermes keeps a question for 90 s** on the Mini (`agent.clarify_timeout`, not set there). Everything that takes time comes out of that: after a quit and relaunch over the slow link the card was back in 53.6 s, with no second sound, and 24 s were left.
+- **A quit and relaunch with a card waiting**: the same request came back and `needs-you` did not play again (ticket 33's saved identities). Its creation time is the relaunch's: a request does not outlive the process that held it.
+- **An answer that loses the race** (spec section 9) on the real route: with the network just back, Nicky's answer could not be sent; the request was given back with the same creation time, marked, and unmarked 6 s later by the first poll that counted. Its chosen option was not kept, and nothing sent it again.
+- **A network that drops is not noticed** (ticket 84). With Wi-Fi off for 32 s the card was not marked and the machines list said connected; in a dropout of two minutes every poll ran to its 5 s limit and nothing was marked. The master's TCP connection had not failed yet.
+- **A closed lid is not an outage on this Mac**: other apps hold it awake, the polls went on and the app stayed at normal priority. The sound waited for the lid (ticket 85) and the card was folded into the badge when it opened (ticket 86).
+- **The island can go blank** (ticket 83): for half an hour the HUD's window drew nothing while everything behind it worked, and a question that came then was heard and never seen.
+- **Priority** (ticket 71's fix): 31 to 54 with the screen unlocked, the panel open or closed, another app in front, and through 42 s behind a closed lid; 20 once the screen had been locked a while, where it was 4 before the fix.
+- **A session the Hermes desktop app holds on the Mini** is a row with "Open in Hermes desktop" and no card, and the machines list says where its questions are answered. Seen on 0.23.1 with an old chat the app reopened, not a new one.
+- **Counted once**: the ledger's totals for Nicky's Telegram session equal the Mini's own usage rows for it, model by model.
+
 ## Upstream syncs
 
 | Date | Upstream | Conflicts | What was checked |
